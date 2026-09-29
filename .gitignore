@@ -1,0 +1,20 @@
+# ===== Godot 4 本地缓存与导入产物 =====
+# .godot/ 是引擎自动生成的缓存（class_name 索引 / uid 缓存 / 导入纹理 / 与显卡驱动
+# 绑定的 shader 二进制缓存，本机约 3.3 MB）。它不该进版本库：
+# 换机器或换 Godot 版本后本来就会失效，克隆后首次打开编辑器会自动重建。
+.godot/
+
+# ===== Godot 导出 / 构建产物 =====
+/build/
+/export/
+*.translation
+
+# ===== macOS =====
+.DS_Store
+._*
+
+# ===== 编辑器 / IDE =====
+.vscode/
+.idea/
+*.swp
+*~

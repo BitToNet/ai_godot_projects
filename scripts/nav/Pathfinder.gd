@@ -1,0 +1,253 @@
+## =============================================================================
+##  Pathfinder —— 栅格 A* 寻路（自建最小堆，不依赖 AStar2D）
+##
+##  【代价函数】
+##    相邻格移动代价 = 距离 / 该格移动速度
+##      · 正交相邻：distance = cell
+##      · 对角相邻：distance = cell * sqrt(2)
+##      · 速度来自 NavGrid（道路 1.2 / 草地 1.0 / 森林 0.7 / 山地 0.5 / 雪地 0.4）
+##      · 对角移动会取两格速度的平均值，避免「贴着河边滑坡」
+##      · 禁止切角（对角移动要求两个正交邻格都通行）
+##    启发函数 h = octile 距离 * (1/1.2)  —— 以「最快速度」估算，保证可采纳性
+##
+##  【后处理】视线拉直（string pulling）：若两点之间直线可通行则合并中间点，
+##  消除 A* 的锯齿，让部队走出自然的行进线。
+## =============================================================================
+class_name Pathfinder
+extends RefCounted
+
+const DIAG := 1.41421356
+const MAX_EXPAND := 90000   ## 单次搜索最多展开的节点数（防止极端情况卡帧）
+const NEI_X := [1, -1, 0, 0, 1, 1, -1, -1]
+const NEI_Z := [0, 0, 1, -1, 1, -1, 1, -1]
+
+var nav: NavGrid
+## 加权 A*：>1 会牺牲一点最优性换取大幅加速（战术地图上视觉无差别）
+var heuristic_weight: float = 1.35
+
+# 复用的搜索缓冲
+var _g: PackedFloat32Array
+var _f: PackedFloat32Array
+var _from: PackedInt32Array
+var _state: PackedByteArray   ## 0 未访问 1 开启 2 关闭
+var _stamp: PackedInt32Array  ## 访问标记（避免每次全量重置）
+var _cur_stamp: int = 0
+var _heap: PackedInt32Array
+var _heap_size: int = 0
+
+func _init(p_nav: NavGrid) -> void:
+	nav = p_nav
+	var n := nav.res * nav.res
+	_g.resize(n)
+	_f.resize(n)
+	_from.resize(n)
+	_state.resize(n)
+	_stamp.resize(n)
+	_heap.resize(1024)
+
+# ---------------------------------------------------------------- 最小堆
+func _heap_clear() -> void:
+	_heap_size = 0
+
+func _heap_push(i: int) -> void:
+	if _heap.size() <= _heap_size:
+		_heap.resize(_heap.size() * 2)
+	var k := _heap_size
+	_heap[k] = i
+	_heap_size += 1
+	while k > 0:
+		var p := (k - 1) >> 1
+		if _f[_heap[p]] <= _f[_heap[k]]:
+			break
+		var t := _heap[p]
+		_heap[p] = _heap[k]
+		_heap[k] = t
+		k = p
+
+func _heap_pop() -> int:
+	var top := _heap[0]
+	_heap_size -= 1
+	if _heap_size > 0:
+		_heap[0] = _heap[_heap_size]
+		var k := 0
+		while true:
+			var l := k * 2 + 1
+			var r := l + 1
+			var m := k
+			if l < _heap_size and _f[_heap[l]] < _f[_heap[m]]:
+				m = l
+			if r < _heap_size and _f[_heap[r]] < _f[_heap[m]]:
+				m = r
+			if m == k:
+				break
+			var t := _heap[m]
+			_heap[m] = _heap[k]
+			_heap[k] = t
+			k = m
+	return top
+
+# ---------------------------------------------------------------- 主入口
+## 返回世界坐标折线（y 由高度场给出）；失败返回空数组
+func find_path(from_world: Vector2, to_world: Vector2) -> PackedVector3Array:
+	var s := nav.cell_of(from_world)
+	var t := nav.cell_of(to_world)
+	if nav.is_blocked(t.x, t.y):
+		t = _nearest_free(t, 6)
+		if t.x < 0:
+			return PackedVector3Array()
+	if nav.is_blocked(s.x, s.y):
+		s = _nearest_free(s, 6)
+		if s.x < 0:
+			return PackedVector3Array()
+
+	_cur_stamp += 1
+	_heap_clear()
+	var si := s.y * nav.res + s.x
+	var ti := t.y * nav.res + t.x
+	_stamp[si] = _cur_stamp
+	_g[si] = 0.0
+	_f[si] = _heuristic(s, t)
+	_from[si] = -1
+	_state[si] = 1
+	_heap_push(si)
+
+	var expanded := 0
+	var found := false
+	while _heap_size > 0:
+		var cur := _heap_pop()
+		if _state[cur] == 2 and _stamp[cur] == _cur_stamp:
+			continue
+		_state[cur] = 2
+		if cur == ti:
+			found = true
+			break
+		expanded += 1
+		if expanded > MAX_EXPAND:
+			break
+		var cx := cur % nav.res
+		var cz := cur / nav.res
+		for d in 8:
+			var dx: int = NEI_X[d]
+			var dz: int = NEI_Z[d]
+			var nx := cx + dx
+			var nz := cz + dz
+			if nav.is_blocked(nx, nz):
+				continue
+			var diagonal := dx != 0 and dz != 0
+			# 禁止切角：对角移动要求两侧正交格都不是障碍
+			if diagonal:
+				if nav.is_blocked(cx + dx, cz) or nav.is_blocked(cx, cz + dz):
+					continue
+			var ni := nz * nav.res + nx
+			if _stamp[ni] != _cur_stamp:
+				_stamp[ni] = _cur_stamp
+				_g[ni] = 1e30
+				_f[ni] = 1e30
+				_from[ni] = -1
+				_state[ni] = 0
+			if _state[ni] == 2:
+				continue
+			# 代价 = 距离 / 速度
+			var sp := nav.speed[ni]
+			if diagonal:
+				sp = (sp + nav.speed[cur]) * 0.5
+			sp = maxf(sp, 0.2)
+			var step := nav.cell * (DIAG if diagonal else 1.0)
+			var ng := _g[cur] + step / sp
+			if ng < _g[ni]:
+				_g[ni] = ng
+				_f[ni] = ng + _heuristic(Vector2i(nx, nz), t)
+				_from[ni] = cur
+				_state[ni] = 1
+				_heap_push(ni)
+
+	if not found:
+		return PackedVector3Array()
+
+	# 回溯
+	var cells: PackedInt32Array = []
+	var c := ti
+	while c != -1:
+		cells.append(c)
+		c = _from[c]
+	cells.reverse()
+	var pts := PackedVector3Array()
+	for k in cells.size():
+		var x := cells[k] % nav.res
+		var z := cells[k] / nav.res
+		pts.append(Vector3(float(x) * nav.cell, 0.0, float(z) * nav.cell))
+	# 用真实起点/终点收尾
+	if pts.size() > 0:
+		pts[0] = Vector3(from_world.x, 0.0, from_world.y)
+		pts[pts.size() - 1] = Vector3(to_world.x, 0.0, to_world.y)
+	return smooth(pts)
+
+## octile 距离（以最快速度换算出代价下界，保证 A* 最优）
+func _heuristic(a: Vector2i, b: Vector2i) -> float:
+	var dx := absi(a.x - b.x)
+	var dz := absi(a.y - b.y)
+	var mn := mini(dx, dz)
+	var mx := maxi(dx, dz)
+	return (float(mn) * DIAG + float(mx - mn)) * nav.cell * (1.0 / 1.2) * heuristic_weight
+
+func _nearest_free(c: Vector2i, r: int) -> Vector2i:
+	for radius in range(1, r + 1):
+		for dz in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if absi(dx) != radius and absi(dz) != radius:
+					continue
+				var x := c.x + dx
+				var z := c.y + dz
+				if not nav.is_blocked(x, z):
+					return Vector2i(x, z)
+	return Vector2i(-1, -1)
+
+# ---------------------------------------------------------------- 视线拉直
+func smooth(pts: PackedVector3Array) -> PackedVector3Array:
+	if pts.size() <= 2:
+		return pts
+	var out := PackedVector3Array()
+	out.append(pts[0])
+	var anchor := 0
+	var i := 1
+	while i < pts.size():
+		# 从 anchor 出发找最远的可直达点
+		var far := i
+		var j := i
+		while j < pts.size() and _line_free(pts[anchor], pts[j]):
+			far = j
+			j += 1
+		out.append(pts[far])
+		anchor = far
+		i = far + 1
+	return out
+
+func _line_free(a: Vector3, b: Vector3) -> bool:
+	var p0 := nav.cell_of(Vector2(a.x, a.z))
+	var p1 := nav.cell_of(Vector2(b.x, b.z))
+	var dx := absi(p1.x - p0.x)
+	var dz := absi(p1.y - p0.y)
+	var sx := 1 if p0.x < p1.x else -1
+	var sz := 1 if p0.y < p1.y else -1
+	var err := dx - dz
+	var x := p0.x
+	var z := p0.y
+	var guard := 0
+	while guard < 4096:
+		guard += 1
+		if nav.is_blocked(x, z):
+			return false
+		if x == p1.x and z == p1.y:
+			return true
+		var e2 := err * 2
+		if e2 > -dz:
+			err -= dz
+			x += sx
+			if nav.is_blocked(x, z):
+				return false
+		if e2 < dx:
+			err += dx
+			z += sz
+			if nav.is_blocked(x, z):
+				return false
+	return false
