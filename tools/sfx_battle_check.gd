@@ -15,12 +15,19 @@
 extends SceneTree
 
 const FRAMES := 900
+## 关键音效清单（注意：这里是去重后的清单 —— 原来 "land" 出现了两次，
+## 白白多占一个断言位，还掩盖了本该被覆盖的其它音效）
 const KEY_IDS := [
 	"hit_light", "hit_crit", "hit_heavy", "parry", "dodge", "perfect_dodge",
 	"jump", "land", "step_a", "step_b", "step_heavy",
 	"hurt", "warn_parry", "warn_danger", "sword_wave", "charge_full",
-	"poise_break", "roar", "result_win", "land",
+	"poise_break", "roar", "result_win",
 ]
+
+## 这些音色在别的场景触发（开战 / 弹反抛射物 / 战败 / 界面返回），本自检的剧本覆盖不到，
+## 因此只做提示、不做断言 —— 免得看起来像漏测，也免得把它们误当成死音色。
+## （它们都有真实调用点；唯一真正没有调用点的是 proj_impact，见 docs/ROADMAP.md）
+const OTHER_SCENE_IDS := ["battle_start", "parry_reflect", "result_lose", "proj_impact", "ui_back"]
 
 var host: Node
 var battle: BattleScene
@@ -34,6 +41,13 @@ func _run() -> void:
 	root.add_child(host)
 	var t0 := Time.get_ticks_msec()
 	await Sfx.setup(host)
+	if not Sfx.cfg().enabled:
+		# 音效被 AudioConfig.enabled=false 关掉时既不合成也不播放，本自检无从判定：
+		# 明确报 SKIP（退出码 0），而不是既不说"通过"也不说"失败"地留个假象。
+		print("[联调] SKIP：AudioConfig.enabled = false（音效已关闭），本次自检不适用")
+		host.free()
+		quit(0)
+		return
 	print("[联调] 音效库就绪：%d 个音色 / 合成 %d ms / 音效池 %d" % [
 		SfxSynth.ids().size(), Time.get_ticks_msec() - t0, Sfx.pool_size()])
 	battle = BattleScene.new()
@@ -119,6 +133,12 @@ func _check() -> void:
 		if int(counts.get(id, 0)) == 0:
 			missing.append(id)
 	print("[联调] 累计播放 %d 次 / 触发过 %d 种音效" % [Sfx.total_plays(), rows.size()])
+	var untested: Array = []
+	for id in OTHER_SCENE_IDS:
+		if int(counts.get(id, 0)) == 0:
+			untested.append(id)
+	if not untested.is_empty():
+		print("[联调] 提示：以下音色需其它场景才会触发，本自检未覆盖 -> %s" % str(untested))
 	if missing.is_empty():
 		print("[联调] PASS：关键音效全部触发过")
 		quit(0)

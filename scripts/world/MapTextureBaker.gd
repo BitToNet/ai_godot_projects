@@ -1,7 +1,7 @@
 ## =============================================================================
 ##  MapTextureBaker —— 把生成结果烘焙成贴图
 ##   1. splat_texture  (512² RGBA8)  R=道路 G=沙漠 B=岩石 A=湿度  → 地形 Shader
-##   2. height_texture (512² RF)     R=世界高度(米)                → 水面 Shader 求水深
+##   2. height_texture (RF, 与高度场同分辨率) R=世界高度(米)         → 水面 Shader 求水深
 ##   3. minimap_texture(256² RGBA8)  生物群系 + 势力领地 + 道路     → 右上角小地图
 ##   4. territory      (128² byte)   领地归属，供 UI / 提示 / 势力着色
 ##  全部用 create_from_data 一次性写入（比 set_pixel 快一个数量级）。
@@ -11,7 +11,6 @@ extends RefCounted
 
 const SPLAT_RES := 512
 const MINIMAP_RES := 256
-const HEIGHT_RES := 512
 
 var cfg: MapConfig
 var data: MapData
@@ -129,14 +128,11 @@ func bake_splat() -> void:
 
 # ---------------------------------------------------------------- 高度
 func bake_height() -> void:
-	var res := HEIGHT_RES
-	var f := PackedFloat32Array()
-	f.resize(res * res)
-	var scale := float(res - 1) / cfg.map_size
-	for y in res:
-		for x in res:
-			f[y * res + x] = data.hm.height_at(float(x) / scale, float(y) / scale)
-	var img := Image.create_from_data(res, res, false, Image.FORMAT_RF, f.to_byte_array())
+	# 直接用高度场原始数据：height_texture 的唯一消费方是 WaterBuilder 的 height_map
+	# 采样（UV 采样，512² 与 513² 视觉无差），所以不必再按 512² 做 26 万次双线性插值
+	# （height_at 每次是 8 次 clampi + 4 次读取 + 3 次 lerp）。
+	var res: int = data.hm.res
+	var img := Image.create_from_data(res, res, false, Image.FORMAT_RF, data.hm.data.to_byte_array())
 	data.height_image = img
 	data.height_texture = ImageTexture.create_from_image(img)
 

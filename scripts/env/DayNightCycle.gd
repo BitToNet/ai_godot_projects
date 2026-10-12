@@ -27,6 +27,7 @@ var night_amount: float = 0.0
 
 var _night_lights: Array[OmniLight3D] = []
 var _shader_mats: Array = []       ## [{mat, param}]
+var _night_pushed: float = -1.0    ## 上次推给灯光/材质的 night_amount（已量化，-1 = 尚未推送）
 
 func setup(p_cfg: MapConfig, p_data: MapData) -> void:
 	cfg = p_cfg
@@ -89,12 +90,15 @@ func register_night_light(l: OmniLight3D) -> void:
 	if l.light_energy > 0.0:
 		l.visible = night_amount > 0.25
 		l.light_energy = maxf(0.001, night_amount * 1.6)
+	_night_pushed = -1.0      # 让下一次 _apply() 重新推送一次（保证新灯与统一公式一致）
 
 ## 注册需要跟随昼夜变化的 Shader 材质（参数名不同：地形/水面用 night_amount，建筑/植被用 night_glow）
 func register_shader(mat: ShaderMaterial, param: String) -> void:
 	_shader_mats.append({"mat": mat, "param": param})
-	var v := night_amount if param == "night_amount" else night_amount
-	mat.set_shader_parameter(param, v)
+	# 注意：两个参数名目前取的是同一个值（见 _apply() 末尾的统一推送）。
+	# 真想要「夜间辉光」独立于「夜间压暗」两套曲线，必须在这里分叉取值。
+	mat.set_shader_parameter(param, night_amount)
+	_night_pushed = -1.0
 
 func _process(delta: float) -> void:
 	if paused:
@@ -171,13 +175,17 @@ func _apply() -> void:
 	env.fog_depth_end = lerpf(1500.0, 2900.0, day_f)
 	env.tonemap_exposure = lerpf(1.05, 0.95, day_f)
 
-	# 夜间灯火
-	var lights_on := night_amount > 0.28
-	for l in _night_lights:
-		if l == null:
-			continue
-		l.visible = lights_on
-		l.light_energy = maxf(0.0, night_amount * 1.8)
-	# Shader
-	for e in _shader_mats:
-		e.mat.set_shader_parameter(e.param, night_amount)
+	# 夜间灯火 + Shader：只依赖 night_amount，量化到 1/512 后仅在跨档时推送。
+	# night_amount 一个昼夜的跨度是 0~1，量化后每档约 0.2% —— 肉眼无差，
+	# 但省掉了每帧对 18 盏灯和全部材质的 RenderingServer 写入（而且写的都是同一个值）。
+	var q := snappedf(night_amount, 1.0 / 512.0)
+	if not is_equal_approx(q, _night_pushed):
+		_night_pushed = q
+		var lights_on := q > 0.28
+		for l in _night_lights:
+			if l == null:
+				continue
+			l.visible = lights_on
+			l.light_energy = maxf(0.0, q * 1.8)
+		for e in _shader_mats:
+			e.mat.set_shader_parameter(e.param, q)

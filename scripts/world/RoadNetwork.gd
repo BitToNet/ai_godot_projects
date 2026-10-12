@@ -84,6 +84,11 @@ func build() -> void:
 	data.nav_coarse.apply_roads(data.roads)
 	data.nav_coarse.apply_bridges(all_bridges)
 
+	# ---- 4) 栅格至此定型，重建连通分量（供 Pathfinder 做 O(1) 可达性预判） ----
+	# 必须放在 apply_roads / apply_bridges 之后：它们会改变 blocked[]。
+	data.nav_fine.rebuild_components()
+	data.nav_coarse.rebuild_components()
+
 func _add_pair(pairs: Dictionary, a: Settlement, b: Settlement) -> void:
 	if a == null or b == null or a.id == b.id:
 		return

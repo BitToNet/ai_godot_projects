@@ -60,7 +60,8 @@ var _space_latched: bool = false       ## 本次空格按住是否已被消费�
 var _time_lock: bool = false           ## 遭遇对话 / Boss 战：强制暂停，空格无效
 var _hover_timer: float = 0.0
 var _gen_ms: int = 0
-var _label_base: Dictionary = {}   ## label -> 基础 pixel_size
+var _label_scale_applied: float = -1.0   ## 上次实际写入标签的缩放因子（-1 = 尚未应用）
+var _label_count_applied: int = -1       ## 上次应用时的标签总数（用于识别新增部队）
 
 func _ready() -> void:
 	var t0 := Time.get_ticks_msec()
@@ -492,6 +493,16 @@ func _update_label_scale() -> void:
 	if camera_rig == null:
 		return
 	var f := clampf(camera_rig.zoom_height / 90.0, 0.85, 4.2)
+	# f 只由滚轮缩放（camera_rig.zoom_height）决定，平视时每帧都是同一个值；
+	# 而写 Label3D.pixel_size 会标脏并重建字形网格 —— 原来每帧对 33 个标签白写一次，
+	# 100 部队规模下就是每帧 100+ 次。量化到 1/64 后早退，稳态开销归零。
+	# 同时比较标签数量：将来若在运行中新建部队，标签会立刻被补上缩放，不会被早退漏掉。
+	f = snappedf(f, 1.0 / 64.0)
+	var n := data.settlements.size() + ai_parties.size() + 1
+	if n == _label_count_applied and is_equal_approx(f, _label_scale_applied):
+		return
+	_label_scale_applied = f
+	_label_count_applied = n
 	for s in data.settlements:
 		if s.label != null:
 			s.label.pixel_size = 0.026 * f

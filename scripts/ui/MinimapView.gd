@@ -10,8 +10,12 @@ var data: MapData
 var player: PartyBase
 var ai_parties: Array = []
 var fog: FogOfWar
-var zoom: float = 1.0
 var _blink: float = 0.0
+var _redraw_accum: float = 0.0
+
+## 叠加层重绘间隔：整张小地图约 70~80 条绘制指令，10 Hz 与 60 Hz 肉眼无差，
+## 但绘制量降到 1/6（战斗中小地图被隐藏，原来的每帧 queue_redraw 更是纯浪费）
+const REDRAW_INTERVAL := 0.1
 
 func setup(p_data: MapData, p_player: PartyBase, p_ai: Array, p_fog: FogOfWar) -> void:
 	data = p_data
@@ -19,10 +23,17 @@ func setup(p_data: MapData, p_player: PartyBase, p_ai: Array, p_fog: FogOfWar) -
 	ai_parties = p_ai
 	fog = p_fog
 	custom_minimum_size = Vector2(300, 300)
-	mouse_filter = Control.MOUSE_FILTER_STOP
+	# 必须 IGNORE：小地图是纯展示控件。STOP 会把右上角（约 332x348）区域的左键
+	# 全部吃掉，导致「点地行军」（Main._unhandled_input）在该区域完全失效。
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	queue_redraw()
 
 func _process(delta: float) -> void:
 	_blink += delta
+	_redraw_accum += delta
+	if _redraw_accum < REDRAW_INTERVAL:
+		return
+	_redraw_accum = 0.0
 	queue_redraw()
 
 func _w2m(p: Vector2) -> Vector2:

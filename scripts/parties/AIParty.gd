@@ -11,11 +11,19 @@ extends PartyBase
 
 enum Kind { LORD, CARAVAN, BANDIT }
 
+const CHASE_REPATH := 1.4          ## 追击时的重寻路间隔（秒）
+const FAIL_BACKOFF_MIN := 3.0      ## 寻路失败后的退避下限（秒）
+const FAIL_BACKOFF_MAX := 60.0     ## 退避上限（秒）
+
 var kind: int = Kind.BANDIT
 var vision: float = 90.0
 var repath_timer: float = 0.0
 var repath_interval: float = 9.0
 var last_goal: Vector2 = Vector2(-1, -1)
+var fail_cell: Vector2i = Vector2i(-1, -1)  ## 上次寻路失败的粗栅格格子
+var fail_until: float = 0.0                 ## 该格子的退避截止时刻（_elapsed 秒）
+var fail_streak: int = 0                    ## 连续失败次数（成功一次即清零）
+var _elapsed: float = 0.0                   ## 本部队自己的计时（秒）
 var chasing: bool = false
 var wander_center: Vector2 = Vector2.ZERO
 var rng: RandomNumberGenerator
@@ -27,7 +35,6 @@ func setup_ai(p_data: MapData, p_cfg: MapConfig, p_kind: int, p_name: String, p_
 	kind = p_kind
 	setup(p_data, p_cfg, p_name, p_faction, p_count, p_speed, mat, model_mesh)
 	rng = RandomNumberGenerator.new()
-	rng.seed = p_seed
 	rng.state = hash(str(p_seed) + "|ai") | 1
 	repath_timer = rng.randf_range(0.5, 4.0)
 	repath_interval = rng.randf_range(7.0, 13.0)
@@ -46,6 +53,7 @@ func ai_kind() -> String:
 
 func step(delta: float) -> void:
 	repath_timer -= delta
+	_elapsed += delta
 	if kind == Kind.BANDIT:
 		_bandit_think(delta)
 	else:
@@ -66,13 +74,12 @@ func _bandit_think(_delta: float) -> void:
 	elif dist > vision * 2.4:
 		chasing = false
 	if chasing:
-		# 追击：频繁重算，但至少间隔 1.2 秒
-		if repath_timer <= 0.0 or last_goal.distance_to(pd) > 22.0:
-			var pts := data.path_coarse.find_path(my, pd)
-			if pts.size() >= 1:
-				set_path(pts)
-			last_goal = pd
-			repath_timer = 1.4
+		# 追击：固定节流重算。
+		# 原来这里还有一条 `or last_goal.distance_to(pd) > 22.0` 的旁路：玩家速度 46 m/s，
+		# 22 米约 0.5 秒就走完，这条旁路几乎总是成立，等于把节流彻底绕开
+		# （≈2 次 A*/秒/部队，7 支强盗同时追击就是寻路风暴）。
+		if repath_timer <= 0.0:
+			_repath_to(pd, CHASE_REPATH)
 	else:
 		chasing = false
 		if not moving and repath_timer <= 0.0:
@@ -82,11 +89,9 @@ func _bandit_think(_delta: float) -> void:
 			var g := wander_center + Vector2(cos(a), sin(a)) * r
 			g.x = clampf(g.x, 8.0, cfg.map_size - 8.0)
 			g.y = clampf(g.y, 8.0, cfg.map_size - 8.0)
-			var pts2 := data.path_coarse.find_path(my, g)
-			if pts2.size() >= 1:
-				set_path(pts2)
-				last_goal = g
-			repath_timer = rng.randf_range(6.0, 11.0)
+			# 注意：随机数必须在寻路之前抽取，才能保持与旧实现相同的 RNG 抽取顺序
+			# （地图布局的确定性依赖各部队的抽签序列不变）
+			_repath_to(g, rng.randf_range(6.0, 11.0))
 
 # ---------------------------------------------------------------- 领主 / 商队
 func _route_think() -> void:
@@ -104,13 +109,34 @@ func _route_think() -> void:
 	if goal == Vector2.INF:
 		repath_timer = 4.0
 		return
+	# 同上：随机数先取，保持 RNG 抽取顺序不变
+	_repath_to(goal, repath_interval * rng.randf_range(0.7, 1.3))
+
+## 重算路径到 goal。interval = 下一次重算的间隔（秒）。
+## 失败处理：记住失败的粗栅格格子，在 3→6→12→24→60 秒的指数退避窗口内不再对它重试；
+## 连续失败次数在成功一次后清零。这样「随机游荡点反复落在同一片不可达区域」不会
+## 每次都发起搜索。目标格一变（部队走了 / 换了个目标）就立刻正常重试。
+func _repath_to(goal: Vector2, interval: float) -> bool:
+	var gcell := data.nav_coarse.cell_of(goal)
+	if gcell == fail_cell and _elapsed < fail_until:
+		repath_timer = interval
+		return false
+	var my := Vector2(position.x, position.z)
 	var pts := data.path_coarse.find_path(my, goal)
 	if pts.size() >= 1:
 		set_path(pts)
 		last_goal = goal
-		repath_timer = repath_interval * rng.randf_range(0.7, 1.3)
-	else:
-		repath_timer = 3.0
+		fail_streak = 0
+		fail_cell = Vector2i(-1, -1)
+		fail_until = 0.0
+		repath_timer = interval
+		return true
+	fail_streak += 1
+	var backoff := minf(FAIL_BACKOFF_MIN * pow(2.0, float(fail_streak - 1)), FAIL_BACKOFF_MAX)
+	fail_cell = gcell
+	fail_until = _elapsed + backoff
+	repath_timer = interval
+	return false
 
 func _pick_goal() -> Vector2:
 	match kind:

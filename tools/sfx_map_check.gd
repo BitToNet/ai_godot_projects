@@ -36,6 +36,13 @@ func _run() -> void:
 		print("[大地图联调] FAIL：等待就绪超时（%d 帧）" % guard)
 		quit(1)
 		return
+	if not Sfx.cfg().enabled:
+		# 音效被 AudioConfig.enabled=false 关掉时既不合成也不播放，本自检无从判定：
+		# 明确报 SKIP（退出码 0），而不是既不说"通过"也不说"失败"地留个假象。
+		print("[大地图联调] SKIP：AudioConfig.enabled = false（音效已关闭），本次联调不适用")
+		main.free()
+		quit(0)
+		return
 	print("[大地图联调] 就绪：等待 %d 帧 / 音效库 %d 个音色 / 部队 %s" % [
 		guard, SfxSynth.ids().size(), str(main.player.party_name)])
 	Sfx.reset_counts()

@@ -31,7 +31,6 @@ var territory: PackedByteArray    ## 128x128，势力 id，255 = 无主
 var territory_cell: float = 8.0
 
 var player_pos: Vector2 = Vector2.ZERO
-var party_positions: Array[Vector2] = []   ## 所有部队位置（小地图/提示用）
 
 # ---------------------------------------------------------------- 便捷查询
 func height_at(x: float, z: float) -> float:

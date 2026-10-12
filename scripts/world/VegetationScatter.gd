@@ -32,8 +32,6 @@ var data: MapData
 var rng: RandomNumberGenerator
 var root: Node3D
 var counts: Dictionary = {}
-var _flags: PackedByteArray
-var _flag_res := 256
 
 func build(parent: Node3D, mat: ShaderMaterial) -> void:
 	root = Node3D.new()

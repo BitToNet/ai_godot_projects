@@ -108,17 +108,6 @@ func halt() -> void:
 	clear_path()
 	on_path_finished()
 
-func remaining_distance() -> float:
-	if not moving:
-		return 0.0
-	var d := 0.0
-	var p := Vector2(position.x, position.z)
-	for i in range(path_index, path.size()):
-		var q := Vector2(path[i].x, path[i].z)
-		d += p.distance_to(q)
-		p = q
-	return d
-
 # ---------------------------------------------------------------- 每帧推进
 func step(delta: float) -> void:
 	if moving:

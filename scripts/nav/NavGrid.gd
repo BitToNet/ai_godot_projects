@@ -27,6 +27,7 @@ var water: PackedByteArray     ## 1 = 水（海/湖/河）
 var river: PackedByteArray     ## 1 = 河流（架桥可通行；海洋/湖泊不行）
 var ford: PackedByteArray      ## 1 = 浅滩
 var bridge: PackedByteArray    ## 1 = 桥
+var component: PackedInt32Array ## 连通分量 id（-1 = 不可通行）；由 rebuild_components() 建立
 
 func _init(p_res: int, p_size: float) -> void:
 	res = p_res
@@ -41,6 +42,7 @@ func _init(p_res: int, p_size: float) -> void:
 	river.resize(n)
 	ford.resize(n)
 	bridge.resize(n)
+	component.resize(n)
 
 func ci(world: float) -> int:
 	return clampi(int(round(world / cell)), 0, res - 1)
@@ -66,6 +68,64 @@ func speed_at(cx: int, cz: int) -> float:
 
 func speed_at_world(p: Vector2) -> float:
 	return speed_at(ci(p.x), ci(p.y))
+
+# ---------------------------------------------------------------- 连通分量
+const _NB_X := [1, -1, 0, 0, 1, 1, -1, -1]
+const _NB_Z := [0, 0, 1, -1, 1, -1, 1, -1]
+
+## 重建连通分量标记：互相可达的格子打上同一个 id（-1 = 不可通行）。
+## 邻域规则必须与 Pathfinder 的移动规则完全一致（8 邻域 + 对角禁止切角），
+## 否则分量会与「A* 实际能走到的地方」不符 —— 保守方向（少连）会让合法路径被拒。
+## 道路 / 桥梁写回栅格后必须调用一次，因为那会改变 blocked[]。
+func rebuild_components() -> void:
+	var n := res * res
+	component.resize(n)
+	component.fill(-1)
+	var next_id := 0
+	var stack := PackedInt32Array()
+	for start in n:
+		if blocked[start] == 1 or component[start] != -1:
+			continue
+		component[start] = next_id
+		stack.clear()
+		stack.append(start)
+		while not stack.is_empty():
+			var cur := stack[stack.size() - 1]
+			stack.remove_at(stack.size() - 1)
+			var cx := cur % res
+			var cz := cur / res
+			for d in 8:
+				var dx: int = _NB_X[d]
+				var dz: int = _NB_Z[d]
+				var nx := cx + dx
+				var nz := cz + dz
+				if nx < 0 or nz < 0 or nx >= res or nz >= res:
+					continue
+				if blocked[nz * res + nx] == 1:
+					continue
+				if dx != 0 and dz != 0:
+					# 禁止切角（与 Pathfinder 一致）：两侧正交格都必须通行
+					if blocked[cz * res + nx] == 1 or blocked[nz * res + cx] == 1:
+						continue
+				var ni := nz * res + nx
+				if component[ni] != -1:
+					continue
+				component[ni] = next_id
+				stack.append(ni)
+		next_id += 1
+
+## 两格是否互通（不可通行的格子恒为 false）。
+## 分量表尚未建立时返回 true —— 即「不拦截」，保持旧的搜索行为。
+func same_component(a: Vector2i, b: Vector2i) -> bool:
+	if component.is_empty():
+		return true
+	if a.x < 0 or a.y < 0 or a.x >= res or a.y >= res:
+		return true
+	if b.x < 0 or b.y < 0 or b.x >= res or b.y >= res:
+		return true
+	var ca := component[a.y * res + a.x]
+	var cb := component[b.y * res + b.x]
+	return ca >= 0 and ca == cb
 
 ## 依据高度场生成通行性与速度
 ## road_mode = true 时：河流可通行但代价极高（让道路自己找到过河点去架桥）

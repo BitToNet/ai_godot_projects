@@ -17,9 +17,15 @@ class_name Pathfinder
 extends RefCounted
 
 const DIAG := 1.41421356
-const MAX_EXPAND := 90000   ## 单次搜索最多展开的节点数（防止极端情况卡帧）
 const NEI_X := [1, -1, 0, 0, 1, 1, -1, -1]
 const NEI_Z := [0, 0, 1, -1, 1, -1, 1, -1]
+
+## 单次搜索最多展开的节点数。只作「死循环兜底」用：取值 = 栅格节点总数，
+## 因此永远不可能截断一条合法路径。
+## （旧值 MAX_EXPAND = 90000 是个无效防护：细栅格 257² 只有 66049 个节点，
+##   90% 的搜索早在触发上限之前就已穷尽整个可达区域。）
+## 真正挡住「目标不可达」这类病态搜索的是下面的连通分量预判，见 find_path()。
+var max_expand: int = 0
 
 var nav: NavGrid
 ## 加权 A*：>1 会牺牲一点最优性换取大幅加速（战术地图上视觉无差别）
@@ -38,6 +44,7 @@ var _heap_size: int = 0
 func _init(p_nav: NavGrid) -> void:
 	nav = p_nav
 	var n := nav.res * nav.res
+	max_expand = n
 	_g.resize(n)
 	_f.resize(n)
 	_from.resize(n)
@@ -100,6 +107,13 @@ func find_path(from_world: Vector2, to_world: Vector2) -> PackedVector3Array:
 		if s.x < 0:
 			return PackedVector3Array()
 
+	# 连通性预判：起点与终点不在同一连通区域时，A* 无论怎么搜都到不了，只会一路展开
+	# 整个可达区域才返回失败（细栅格 66049 格 ≈ 60 万次脚本调用，足以卡掉一整帧；
+	# 玩家点到自己到不了的地方、或 AI 的随机游荡点落在被河/湖隔开的口袋里都会触发）。
+	# 分量表由 NavGrid.rebuild_components() 在道路与桥梁写回后建立，这里查询是 O(1)。
+	if not nav.same_component(s, t):
+		return PackedVector3Array()
+
 	_cur_stamp += 1
 	_heap_clear()
 	var si := s.y * nav.res + s.x
@@ -122,7 +136,7 @@ func find_path(from_world: Vector2, to_world: Vector2) -> PackedVector3Array:
 			found = true
 			break
 		expanded += 1
-		if expanded > MAX_EXPAND:
+		if expanded > max_expand:
 			break
 		var cx := cur % nav.res
 		var cz := cur / nav.res

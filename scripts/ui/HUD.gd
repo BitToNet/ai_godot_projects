@@ -20,7 +20,6 @@ var minimap: MinimapView
 var _day_label: Label
 var _speed_label: Label
 var _terrain_label: Label
-var _hover_label: Label
 var _tooltip: PanelContainer
 var _tooltip_label: Label
 var _stats_label: Label
@@ -100,6 +99,8 @@ func _build_panels() -> void:
 	mm_frame.offset_right = -16
 	mm_frame.offset_bottom = 348
 	mm_frame.add_theme_stylebox_override("panel", _style(Color(0.05, 0.05, 0.07, 0.88)))
+	# 边框纯装饰：PanelContainer 默认是 STOP，会把整块右上角区域的左键拦住 → 点地行军失效
+	mm_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(mm_frame)
 	minimap = MinimapView.new()
 	minimap.custom_minimum_size = Vector2(300, 300)
@@ -143,12 +144,6 @@ func _build_panels() -> void:
 	_stats_label.add_theme_font_size_override("font_size", 14)
 	_stats_label.add_theme_color_override("font_color", Color(0.90, 0.94, 0.86))
 	stats.add_child(_stats_label)
-
-	# ---- 悬停目标名（跟随鼠标的小字） ----
-	_hover_label = Label.new()
-	_hover_label.add_theme_font_size_override("font_size", 13)
-	_hover_label.visible = false
-	add_child(_hover_label)
 
 func _build_loading() -> void:
 	_loading_root = Control.new()
@@ -243,7 +238,6 @@ func show_encounter(title: String, info: String, color: Color) -> void:
 	_enc_info.text = info
 	_enc_root.visible = true
 	_tooltip.visible = false
-	_hover_label.visible = false
 
 func hide_encounter() -> void:
 	_enc_root.visible = false

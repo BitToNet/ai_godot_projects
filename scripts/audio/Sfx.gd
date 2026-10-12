@@ -32,8 +32,11 @@ static func cfg() -> AudioConfig:
 		_cfg = AudioConfig.create()
 	return _cfg
 
+## 是否已完成初始化。注意：关音频时（AudioConfig.enabled = false）**也算就绪** ——
+## 此时只是没有音色库、播放直接丢弃；旧实现要求 _bank 非空，于是
+## tools/sfx_*_check.gd 的等待循环会永久超时（而 README 恰恰推荐关音频省启动）。
 static func is_ready() -> bool:
-	return _ready and not _bank.is_empty()
+	return _ready and (not cfg().enabled or not _bank.is_empty())
 
 ## 建立音效池并合成全部音色（建议在 Main._ready() 里 await 一次）
 static func setup(host: Node, c: AudioConfig = null) -> void:
@@ -112,25 +115,21 @@ static func reset_counts() -> void:
 # =============================================================== 播放
 ## 非定位播放（UI / 号角 / 结算 / 全局提示）
 static func play(id: String, vol_db := 0.0, pitch := 1.0) -> void:
-	if _muted or _players.is_empty():
-		return
-	var e := _entry(id)
+	var e := _peek(id)
 	if e.is_empty():
 		return
-	var p := _players[_next]
-	_next = (_next + 1) % _players.size()
-	p.stream = e["stream"]
-	p.pitch_scale = _pitch_of(e, pitch)
-	p.volume_db = _final_db(e, vol_db)
-	p.play()
+	_commit(id)
+	_play_plain(e, vol_db, pitch)
 
 ## 按 2D 世界坐标播放（战斗场景：自带左右声像 + 距离衰减）
 static func play_2d(parent: Node, id: String, pos: Vector2, vol_db := 0.0, pitch := 1.0) -> void:
-	var e := _entry(id)
+	var e := _peek(id)
 	if e.is_empty():
 		return
+	_commit(id)
 	if parent == null or not is_instance_valid(parent) or not (parent is Node2D):
-		play(id, vol_db, pitch)
+		# 退化成非定位播放：直接用已取到的 e，不能再走 play()（那会二次节流 → 100% 丢音）
+		_play_plain(e, vol_db, pitch)
 		return
 	var p := AudioStreamPlayer2D.new()
 	p.stream = e["stream"]
@@ -145,11 +144,13 @@ static func play_2d(parent: Node, id: String, pos: Vector2, vol_db := 0.0, pitch
 
 ## 按 3D 世界坐标播放（大地图行军马蹄等）
 static func play_3d(parent: Node, id: String, pos: Vector3, vol_db := 0.0, pitch := 1.0) -> void:
-	var e := _entry(id)
+	var e := _peek(id)
 	if e.is_empty():
 		return
+	_commit(id)
 	if parent == null or not is_instance_valid(parent) or not (parent is Node3D):
-		play(id, vol_db, pitch)
+		# 退化成非定位播放：同上，避免二次节流吞掉这一声
+		_play_plain(e, vol_db, pitch)
 		return
 	var p := AudioStreamPlayer3D.new()
 	p.stream = e["stream"]
@@ -167,20 +168,36 @@ static func stop_all() -> void:
 		p.stop()
 
 # =============================================================== 内部
-## 取音色条目：未初始化或已静音时返回空字典；同时做"同音最短间隔"节流
-static func _entry(id: String) -> Dictionary:
+## 取音色条目并做"同音最短间隔"节流判定，**不写任何状态**。
+## 调用方在确认这一声一定会发出去（含下面的退化路径）之后再调 _commit()。
+## 拆成 _peek / _commit 的原因：play_2d / play_3d 在 parent 非法时会退化成非定位播放，
+## 旧实现里退化路径会再走一遍节流 —— 同一毫秒必然被拦下，等于 100% 丢音。
+static func _peek(id: String) -> Dictionary:
 	if _muted or not _ready:
 		return {}
 	if not _bank.has(id):
 		return {}
 	var e: Dictionary = _bank[id]
 	var gap := float(e["gap"])
-	var now := Time.get_ticks_msec()
-	if gap > 0.0 and now - int(_last_ms.get(id, -999999)) < int(gap * 1000.0):
+	if gap > 0.0 and Time.get_ticks_msec() - int(_last_ms.get(id, -999999)) < int(gap * 1000.0):
 		return {}
-	_last_ms[id] = now
-	_counts[id] = int(_counts.get(id, 0)) + 1
 	return e
+
+## 记账：写入播放时刻（供节流）并累加调试计数
+static func _commit(id: String) -> void:
+	_last_ms[id] = Time.get_ticks_msec()
+	_counts[id] = int(_counts.get(id, 0)) + 1
+
+## 用共享播放池放一条非定位音（不做节流 / 不计数）
+static func _play_plain(e: Dictionary, vol_db: float, pitch: float) -> void:
+	if _muted or _players.is_empty():
+		return
+	var p := _players[_next]
+	_next = (_next + 1) % _players.size()
+	p.stream = e["stream"]
+	p.pitch_scale = _pitch_of(e, pitch)
+	p.volume_db = _final_db(e, vol_db)
+	p.play()
 
 static func _final_db(e: Dictionary, extra: float) -> float:
 	return cfg().master_db + cfg().category_db(String(e["cat"])) + float(e["db"]) + extra

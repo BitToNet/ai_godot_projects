@@ -20,7 +20,6 @@ var player: Node3D
 var yaw: float = 0.0
 var zoom_height: float = 90.0
 var pitch_deg: float = 55.0
-var pitch_manual: bool = false
 var pan_offset: Vector2 = Vector2.ZERO
 
 var _dragging: bool = false
@@ -91,11 +90,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			zoom_height = clampf(zoom_height * 0.88, cfg.cam_min_height, cfg.cam_max_height)
-			pitch_manual = false
 			_update_pitch_from_zoom()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			zoom_height = clampf(zoom_height / 0.88, cfg.cam_min_height, cfg.cam_max_height)
-			pitch_manual = false
 			_update_pitch_from_zoom()
 		elif event.button_index == MOUSE_BUTTON_MIDDLE or event.button_index == MOUSE_BUTTON_RIGHT:
 			_dragging = event.pressed
@@ -103,7 +100,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and _dragging:
 		yaw -= event.relative.x * cfg.cam_rotate_speed
 		if absf(event.relative.y) > 0.0:
-			pitch_manual = true
 			pitch_deg = clampf(pitch_deg + event.relative.y * cfg.cam_rotate_speed * 90.0, 12.0, 86.0)
 	elif event is InputEventKey and event.pressed and not event.echo:
 		if event.physical_keycode == KEY_F:
@@ -156,7 +152,6 @@ func ray_to_terrain(screen_pos: Vector2) -> Vector3:
 	var t := 0.0
 	var step := 2.0
 	var prev := origin
-	var prev_diff := origin.y - data.hm.height_at(origin.x, origin.z)
 	var guard := 0
 	while t < 4000.0 and guard < 4000:
 		guard += 1
@@ -179,7 +174,6 @@ func ray_to_terrain(screen_pos: Vector2) -> Vector3:
 					hi = mid
 			return hi
 		prev = p
-		prev_diff = diff
 	return Vector3(origin.x + dir.x * t, 0.0, origin.z + dir.z * t)
 
 func focus_point() -> Vector3:
