@@ -32,6 +32,11 @@
 > 计数注意：统计行数请用 `(Get-Content $f).Count`，**不要**用 `Measure-Object -Line` —— 后者把空行算作 0 行，会少算约 10%。
 
 > 工具链注意：本工作区位于 **exFAT** 卷（`F:`，卷标 T7），**不支持硬链接**，因此依赖硬链接式原子写的写文件工具会报 `EISDIR`。新建文件请用 `Set-Content -Encoding utf8`，改已有文件用逐处替换式编辑（rename 在 exFAT 上正常）。
+>
+> 编码注意（踩过一次）：PowerShell 5.1 的 `Set-Content -Encoding utf8` / `Out-File -Encoding UTF8` 写出的文件**带 UTF-8 BOM**。用它写 `git commit -F <文件>` 的信息文件，会让 commit subject 首字节变成 `EF BB BF`（`git log --oneline` 看着像多了个不可见字符，按 `^(feat|fix|…)` 解析的工具会失配）。**信息文件必须无 BOM 写入**：
+> `[System.IO.File]::WriteAllText($p, $txt, (New-Object System.Text.UTF8Encoding($false)))`。同理，提交前用 `[System.IO.File]::ReadAllBytes()` 抽查前 3 字节确认没有 `EF BB BF`。
+>
+> 提交信息编码：本机 `git commit -m "中文"` 会被 PowerShell 的 argv 编码破坏，**一律用 `-F <无 BOM 文件>`**。
 
 ---
 
@@ -206,6 +211,8 @@ Get-ChildItem -Recurse -File -Include *.gd,*.gdshader |
 ```
 
 **判定标准**：① 主场景无 `ERROR` / `SCRIPT ERROR`；② 两个联调脚本 `exit 0` 且输出 `PASS`；③ 生成内容统计（定居点 18 / 桥梁 7 / 植被 5163）与基线一致，说明没有破坏确定性。
+
+> 例外：若 `AudioConfig.enabled = false`（关音频省启动），两个联调脚本会输出 `SKIP` 并 `exit 0` —— 这**不算通过**，只是「本次不适用」；要在关音频的前提下判音效，请先把它改回 `true`。
 
 ---
 
