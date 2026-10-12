@@ -16,6 +16,12 @@ class P:
 
 var parts: Array = []
 var done := false
+## 被 BattleScene._reg() 收编后置为 true；漏登记时由 _process 自己推进，避免定格在屏幕上
+var fx_managed := false
+
+func _process(delta: float) -> void:
+	if not fx_managed:
+		tick(delta)
 
 static func burst(parent: Node, pos: Vector2, count: int, col: Color, power: float = 1.0,
 		spread: float = TAU, dir_deg: float = 0.0, kind: int = 0) -> SparkBurst:

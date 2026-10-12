@@ -14,6 +14,12 @@ var width := 10.0
 var arc := 2.0
 var flip := 1.0
 var spin := 0.0
+## 被 BattleScene._reg() 收编后置为 true；漏登记时由 _process 自己推进，避免定格在屏幕上
+var fx_managed := false
+
+func _process(delta: float) -> void:
+	if not fx_managed:
+		tick(delta)
 
 static func slash(parent: Node, pos: Vector2, ang_rad: float, r: float, colr: Color, arc_rad: float = 2.2, wid: float = 12.0) -> SlashFx:
 	var s := SlashFx.new()

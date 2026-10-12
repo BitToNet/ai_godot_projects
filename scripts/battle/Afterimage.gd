@@ -11,6 +11,12 @@ var facing: float = 1.0
 var life: float = 0.3
 var max_life: float = 0.3
 var tintc := Color(0.6, 0.85, 1.0, 0.55)
+## 被 BattleScene._reg() 收编后置为 true；漏登记时由 _process 自己推进，避免定格在屏幕上
+var fx_managed := false
+
+func _process(delta: float) -> void:
+	if not fx_managed:
+		tick(delta)
 
 func setup(p: Vector2, p_pose: Dictionary, p_prof: Dictionary, p_pal: Dictionary, p_facing: float, dur: float) -> void:
 	global_position = p

@@ -10,6 +10,12 @@ var vel := Vector2(0, -46)
 var life := 0.9
 var max_life := 0.9
 var pop := 1.0
+## 被 BattleScene._reg() 收编后置为 true；漏登记时由 _process 自己推进，避免定格在屏幕上
+var fx_managed := false
+
+func _process(delta: float) -> void:
+	if not fx_managed:
+		tick(delta)
 
 static func spawn(parent: Node, pos: Vector2, text: String, col: Color, big: bool) -> FloatingText:
 	var f := FloatingText.new()

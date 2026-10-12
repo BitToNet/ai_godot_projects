@@ -442,7 +442,7 @@ func _on_parry_success(pl: PlayerFighter, bs: BossFighter, move: BattleMove, pos
 	hud.parry_flash = 1.0
 	shake(cfg.shake_heavy.x * 0.8, cfg.shake_heavy.y)
 	_reg(SlashFx.ring(self, pos, 58.0, Color(1, 1, 1), 0.34))
-	SparkBurst.burst(self, pos, 26, Color(1, 0.98, 0.8), 1.4)
+	_reg(SparkBurst.burst(self, pos, 26, Color(1, 0.98, 0.8), 1.4))
 	pop_text(pos + Vector2(0, -22), "弹反!", Color(1.0, 0.95, 0.55), true)
 	pl.on_parry_success()
 	if bs != null:
@@ -450,7 +450,13 @@ func _on_parry_success(pl: PlayerFighter, bs: BossFighter, move: BattleMove, pos
 		bs.on_staggered(cfg.parry_stagger)
 
 # =============================================================== 特效生成
+## 登记特效：登记后由 _tick_fx() 统一推进生命周期。
+## 兜底：若某个特效忘了走 _reg()（历史上弹反火花就漏过一次，变成永久钉在屏幕上的鬼影），
+## 它的 fx_managed 保持 false，会由自身 _process 推进，最坏也只是多跑一次 tick，
+## 绝不会永远停在生成的那一帧。
 func _reg(n: Node) -> void:
+	if "fx_managed" in n:
+		n.set("fx_managed", true)
 	fx.append(n)
 
 ## 飘字（伤害数字 / 弹反! / 破防! 等）：必须注册进 fx，否则不会被 tick，
