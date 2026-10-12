@@ -21,6 +21,7 @@
 extends Node3D
 
 @export var config: MapConfig
+@export var audio: AudioConfig             ## 音效参数（留空则用默认值）
 
 var data: MapData
 var day_night: DayNightCycle
@@ -65,10 +66,18 @@ func _ready() -> void:
 	var t0 := Time.get_ticks_msec()
 	if config == null:
 		config = MapConfig.new()
+	if audio == null:
+		audio = AudioConfig.new()
 	get_window().theme = UiTheme.theme()
 	_build_loading_ui()
 	await get_tree().process_frame
 	await get_tree().process_frame
+
+	# ---------------- 0. 音效（程序化合成，零外部音频文件）----------------
+	# 28 个音色共约 16 秒音频，合成耗时约 2 秒；setup 内部按时切片让出帧，
+	# Loading 界面不会卡死。不想听可以在 Inspector 里把 AudioConfig.enabled 关掉。
+	await _step("合成音效（程序化 PCM：打击 / 打铁 / 脚步 / 号角）…")
+	await Sfx.setup(self, audio)
 
 	var cfg := config
 	data = MapData.new()
@@ -425,6 +434,8 @@ func _order_move(goal: Vector2) -> void:
 	player.set_destination(goal)
 	if player.moving:
 		_eval_time_flow()
+		# 行军号角（下达命令的听觉反馈）
+		Sfx.play("order", -4.0)
 		print("[行军] 前往 (%.0f, %.0f)：途中时间流动，抵达后立刻暂停。" % [goal.x, goal.y])
 
 # =============================================================== 循环
@@ -445,6 +456,8 @@ func _process(delta: float) -> void:
 	for a in ai_parties:
 		if a != null and is_instance_valid(a):
 			a.step(dt)
+	# 行军音效（马蹄）：只在世界时间流动的那几帧发声，暂停时自动静音
+	_tick_party_audio(dt)
 	# 迷雾（纯视觉，不受时间暂停影响）
 	if fog != null:
 		var pts: Array = [Vector2(player.position.x, player.position.z)]
@@ -461,6 +474,19 @@ func _process(delta: float) -> void:
 	if _hover_timer > 0.1:
 		_hover_timer = 0.0
 		_update_hover()
+
+## 大地图行军马蹄声：玩家部队固定听得见；AI 部队按与相机的距离剔除并衰减，
+## 免得十几支部队同时响在耳朵里糊成一片。
+func _tick_party_audio(dt: float) -> void:
+	if dt <= 0.0 or player == null:
+		return
+	var listener := Vector2(player.position.x, player.position.z)
+	if camera_rig != null and camera_rig.cam != null:
+		listener = Vector2(camera_rig.cam.global_position.x, camera_rig.cam.global_position.z)
+	player.tick_movement_audio(dt, listener)
+	for a in ai_parties:
+		if a != null and is_instance_valid(a):
+			a.tick_movement_audio(dt, listener)
 
 func _update_label_scale() -> void:
 	if camera_rig == null:
@@ -509,6 +535,8 @@ func _open_encounter(a: AIParty) -> void:
 	hud.show_encounter("遭遇 %s" % a.party_name,
 		"%s · %s\n%s兵力：%d 人     你的兵力：%d 人\n\n时间已暂停 —— 请决定行动。" % [kindname, fname, lead_line, a.troop_count, player.troop_count],
 		col)
+	# 遭遇提示音（对话框弹出）
+	Sfx.play("encounter")
 
 func _on_encounter_choice(action: String) -> void:
 	var a := encounter_party
@@ -560,6 +588,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				day_night.speed = speed_steps[speed_index]
 			KEY_V:
 				vegetation.root.visible = not vegetation.root.visible
+			KEY_M:
+				var muted := Sfx.toggle_mute()
+				hud.show_toast("音效：%s（按 M 切换）" % ("已静音" if muted else "已开启"), 2.0)
 			KEY_1:
 				_toggle_faction_labels(0)
 			KEY_2:
@@ -690,6 +721,8 @@ func _start_battle(a: AIParty) -> void:
 		camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
 	print("[Boss战] 进入战斗：%s（类型 %s）｜ 地形 %s ｜ 敌方兵力 %d ｜ Boss HP %.0f 破防 %.0f" % [
 		payload["boss_name"], kind, terrain, a.troop_count, bhp, bpoise])
+	# 开战号角（鼓点 + 低音号角）
+	Sfx.play("battle_start")
 
 func _set_overworld_visible(v: bool) -> void:
 	var list: Array = [terrain, water, lights_root, camera_rig, player, hud]

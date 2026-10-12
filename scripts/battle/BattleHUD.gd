@@ -60,7 +60,7 @@ func setup(boss_title: String) -> void:
 	hint_lines = [
 		"A / D 移动   空格 跳跃(长按更高)   Shift 闪避",
 		"鼠标左键 攻击(连按三段 / 按住蓄力剑气)   鼠标右键 弹反",
-		"F3 调试    Esc / P 结束战斗",
+		"F3 调试    M 静音    Esc / P 结束战斗",
 	]
 	vp = Vector2(1600, 900)
 

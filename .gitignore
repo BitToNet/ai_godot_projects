@@ -9,6 +9,9 @@
 /export/
 *.translation
 
+# ===== 音效试听用的导出 WAV（tools/sfx_tool.gd -- --wav 生成，随时可重建）=====
+/audio_preview/
+
 # ===== macOS =====
 .DS_Store
 ._*

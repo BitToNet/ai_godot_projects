@@ -51,6 +51,7 @@ var base_pal: Dictionary = {}
 var kind: String = "lord"                 ## lord / bandit / caravan
 var moves: Array[BattleMove] = []         ## 该类型可用的招式
 var dmg_mult: float = 1.0                 ## 该类型的伤害系数
+var step_t: float = 0.0                   ## 沉重脚步的节拍计时
 
 func setup_boss(p_battle: Node, p_cfg: BattleConfig, p_hp: float, p_poise: float, p_kind: String = "lord") -> void:
 	kind = p_kind
@@ -150,12 +151,24 @@ func _tick_approach(delta: float) -> void:
 	var ph := fmod(Time.get_ticks_msec() * 0.005, 4.0)
 	var i := int(floor(ph))
 	rig.set_pose(RigPoses.mix(poses["walk_%d" % i], poses["walk_%d" % ((i + 1) % 4)], ph - float(i)))
+	_tick_footsteps(delta)
 	if d < 170.0 or gap_t <= 0.0:
 		if not _pick_move():
 			gap_t = 0.5
 	# 走太久也强制出招
 	if state_t > 1.6:
 		_pick_move()
+
+## Boss 走位时的沉重脚步（音高压低，听感更"重"）
+func _tick_footsteps(delta: float) -> void:
+	if battle == null or not is_on_floor():
+		step_t = 0.0
+		return
+	step_t -= delta
+	if step_t > 0.0:
+		return
+	step_t = maxf(0.18, Sfx.cfg().boss_step_interval) / maxf(0.6, speed_mult)
+	Sfx.play_2d(battle, "step_heavy", global_position, -2.0, 0.85)
 
 func _breathe() -> Dictionary:
 	var b := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.0026)
@@ -211,7 +224,9 @@ func _start_move(m: BattleMove) -> void:
 			velocity.y = -430.0
 			velocity.x = clampf((player.global_position.x - global_position.x) * 1.4, -160.0, 160.0) if player != null else 0.0
 		"charge":
-			pass
+			# 冲锋起步：一记低沉的踏地声（随后是持续的突进）
+			if battle != null:
+				Sfx.play_2d(battle, "step_heavy", global_position, -1.0, 0.62)
 
 # ---------------------------------------------------------------- 出招
 ## 测试/调试用：直接指定某个招式

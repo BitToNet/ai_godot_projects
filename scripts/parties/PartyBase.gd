@@ -28,6 +28,8 @@ var _bob: float = 0.0
 var _yaw: float = 0.0
 var _dist_travelled: float = 0.0
 var idle_time: float = 0.0
+var _hoof_t: float = 0.0          ## 马蹄声节拍计时
+var _hoof_alt: bool = false       ## 前蹄 / 后蹄交替
 
 func setup(p_data: MapData, p_cfg: MapConfig, p_name: String, p_faction: int, p_count: int, p_speed: float, mat: Material, model_mesh: Mesh) -> void:
 	data = p_data
@@ -185,3 +187,26 @@ func _update_visual(delta: float) -> void:
 
 func distance_to_party(other: PartyBase) -> float:
 	return Vector2(position.x, position.z).distance_to(Vector2(other.position.x, other.position.z))
+
+# ---------------------------------------------------------------- 行军音效
+## 马蹄声：由 Main 每帧调用，delta 就是这一帧世界时间的推进量
+## （时间暂停时 delta = 0 → 自动静音，不需要额外判断暂停状态）
+## listener_xz 用于剔除远处的 AI 部队：十几支部队同时响会糊成一片
+func tick_movement_audio(delta: float, listener_xz: Vector2) -> void:
+	if delta <= 0.0 or not moving or model == null:
+		_hoof_t = 0.0
+		return
+	var d := 0.0
+	# 玩家自己的部队永远听得见（镜头拉远时相机离得很远，不能因此把自己的马蹄声剔掉）
+	if not is_player:
+		d = Vector2(position.x, position.z).distance_to(listener_xz)
+		if d > Sfx.cfg().hoof_audible_range:
+			return
+	_hoof_t -= delta
+	if _hoof_t > 0.0:
+		return
+	# 玩家部队的节拍固定；AI 部队稍慢一点，并且按距离衰减（远处的更轻）
+	_hoof_t = maxf(0.08, Sfx.cfg().hoof_interval) * (1.0 if is_player else 1.35)
+	_hoof_alt = not _hoof_alt
+	var vol := -1.0 if is_player else clampf(-5.0 - d * 0.10, -20.0, -5.0)
+	Sfx.play_3d(self, "hoof_a" if _hoof_alt else "hoof_b", position + Vector3(0, 1.4, 0), vol)

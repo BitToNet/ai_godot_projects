@@ -54,6 +54,8 @@ var counter_t: float = 0.0
 var afterimage_t: float = 0.0
 var target: Fighter = null
 var stat_stamina_blocked: bool = false
+var step_t: float = 0.0            ## 脚步节拍计时（跑动时按速度间隔触发）
+var step_alt: bool = false         ## 左右脚交替标记
 
 func setup_player(p_battle: Node, p_cfg: BattleConfig, p_pal: Dictionary, p_hp: float) -> void:
 	build_fighter(p_battle, p_cfg, RigPoses.player_profile(), p_pal, p_cfg.body_size, p_hp, true)
@@ -210,6 +212,7 @@ func _tick_ground(delta: float) -> void:
 	var mv := absf(in_mx) > 0.05 or absf(velocity.x) > 6.0
 	rig.set_pose(_locomotion_pose(mv))
 	rig.set_glow(0.0)
+	_tick_footsteps(delta, mv)
 
 	# 蓄力
 	if in_attack_held and hold_t >= cfg.charge_start:
@@ -245,6 +248,9 @@ func _tick_ground(delta: float) -> void:
 func _do_jump() -> void:
 	velocity.y = cfg.jump_velocity
 	_enter(S.JUMP)
+	# 起跳音效：破风 + 蹬地
+	if battle != null:
+		Sfx.play_2d(battle, "jump", global_position, -1.0)
 
 func _on_land() -> void:
 	if state == S.JUMP or state == S.FALL or state == S.AIR_ATTACK:
@@ -252,6 +258,20 @@ func _on_land() -> void:
 		_enter(S.IDLE)
 		if battle != null:
 			battle.spawn_land_puff(global_position)
+			Sfx.play_2d(battle, "land", global_position, -1.0, clampf(1.15 - absf(velocity.y) * 0.0004, 0.85, 1.15))
+
+## 跑步脚步：节拍随移动速度变化，两只脚用不同音色交替（避免机械重复感）
+func _tick_footsteps(delta: float, walking: bool) -> void:
+	if not walking or battle == null or not is_on_floor():
+		step_t = 0.0
+		return
+	step_t -= delta
+	if step_t > 0.0:
+		return
+	var spd := clampf(absf(velocity.x) / maxf(1.0, cfg.move_speed), 0.0, 1.0)
+	step_t = maxf(0.12, Sfx.cfg().step_interval) * lerpf(1.30, 0.82, spd)
+	step_alt = not step_alt
+	Sfx.play_2d(battle, "step_a" if step_alt else "step_b", global_position, -1.0)
 
 func _locomotion_pose(walking: bool) -> Dictionary:
 	if not walking:
@@ -415,6 +435,9 @@ func _start_dodge() -> void:
 	velocity.y = 0.0
 	end_attack()
 	_enter(S.DODGE)
+	# 闪避音效：破风（完美闪避时 BattleScene 会再叠一层"完美闪避"音）
+	if battle != null:
+		Sfx.play_2d(battle, "dodge", global_position)
 
 func _tick_dodge(delta: float) -> void:
 	var k := clampf(state_t / cfg.dodge_time, 0.0, 1.0)
@@ -502,6 +525,9 @@ func on_hurt() -> void:
 	hold_t = 0.0
 	end_attack()
 	_enter(S.HURT)
+	# 受击音效：闷哼 + 冲击（与 BattleScene 的"击中"音叠加，形成完整反馈）
+	if battle != null:
+		Sfx.play_2d(battle, "hurt", global_position, -2.0)
 
 func _tick_hurt(delta: float) -> void:
 	rig.set_pose(poses["hurt"])

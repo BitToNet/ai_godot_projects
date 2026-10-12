@@ -265,6 +265,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F3:
 				debug_on = not debug_on
 				hud.debug_on = debug_on
+			KEY_M:
+				var muted := Sfx.toggle_mute()
+				hud.show_title("音效已静音" if muted else "音效已开启", 1.2)
 			KEY_ESCAPE, KEY_P:
 				_end_battle("escape")
 
@@ -361,6 +364,11 @@ func resolve_hit(attacker: Fighter, defender: Fighter, move: BattleMove) -> void
 	var heavy := is_counter or is_crit or move.hitstop >= 0.09
 	hit_stop(move.hitstop)
 	spawn_hit_sparks(hit_pos, attacker.is_player)
+	# 击中音效：我方命中 = 剑刃劈砍；会心/反击斩换更亮的金属音色；Boss 命中我方 = 沉闷重击
+	if attacker.is_player:
+		Sfx.play_2d(self, "hit_crit" if (is_counter or is_crit) else "hit_light", hit_pos)
+	else:
+		Sfx.play_2d(self, "hit_heavy", hit_pos)
 	_reg(SlashFx.slash(self, hit_pos, randf_range(-0.7, 0.7) + (0.0 if attacker.is_player else PI),
 		54.0, Color(1, 1, 1, 0.95), 2.4, 13.0 if heavy else 9.0))
 	shake(cfg.shake_heavy.x if heavy else cfg.shake_medium.x, cfg.shake_heavy.y if heavy else cfg.shake_medium.y)
@@ -419,6 +427,7 @@ func resolve_projectile_hit(p: Projectile, defender: Fighter) -> void:
 	hit_stop(p.hitstop + 0.02)
 	shake(cfg.shake_medium.x, cfg.shake_medium.y)
 	spawn_hit_sparks(hit_pos, p.from_player)
+	Sfx.play_2d(self, "hit_heavy" if not p.from_player else "hit_light", hit_pos, -2.0)
 	pop_text(hit_pos, str(int(round(dmg))), Color(1, 0.95, 0.75), false)
 	if p.from_player:
 		stats["damage_dealt"] = float(stats["damage_dealt"]) + dmg
@@ -435,6 +444,8 @@ func _on_perfect_dodge(pl: PlayerFighter, pos: Vector2) -> void:
 	_reg(SlashFx.ring(self, pl.global_position + Vector2(0, -30), 46.0, Color(0.6, 0.95, 1.0), 0.4))
 	pop_text(pl.global_position + Vector2(0, -74), "完美闪避!", Color(0.55, 0.95, 1.0), true)
 	shake(cfg.shake_light.x, cfg.shake_light.y)
+	# 完美闪避音效：反向上扫的"吸入感" + 上行铃声（与慢动作同步）
+	Sfx.play_2d(self, "perfect_dodge", pl.global_position + Vector2(0, -30))
 
 func _on_parry_success(pl: PlayerFighter, bs: BossFighter, move: BattleMove, pos: Vector2) -> void:
 	stats["parries"] = int(stats["parries"]) + 1
@@ -444,6 +455,8 @@ func _on_parry_success(pl: PlayerFighter, bs: BossFighter, move: BattleMove, pos
 	_reg(SlashFx.ring(self, pos, 58.0, Color(1, 1, 1), 0.34))
 	_reg(SparkBurst.burst(self, pos, 26, Color(1, 0.98, 0.8), 1.4))
 	pop_text(pos + Vector2(0, -22), "弹反!", Color(1.0, 0.95, 0.55), true)
+	# 弹反音效：打铁声（铁砧 + 非谐金属泛音）；弹返投射物时升调并多一层回旋风
+	Sfx.play_2d(self, "parry_reflect" if move == null else "parry", pos)
 	pl.on_parry_success()
 	if bs != null:
 		bs.add_poise(cfg.parry_poise_damage)
@@ -490,6 +503,8 @@ func charge_ready_fx(pos: Vector2) -> void:
 	_reg(r)
 	_reg(SparkBurst.burst(self, pos + Vector2(0, -32), 18, Color(0.75, 0.95, 1.0), 0.9, TAU))
 	shake(cfg.shake_light.x, cfg.shake_light.y)
+	# 蓄满提示音（与剑身闪光同帧）
+	Sfx.play_2d(self, "charge_full", pos + Vector2(0, -32))
 
 func spawn_sword_wave(pos: Vector2, facing: float, power: float) -> void:
 	var p := Projectile.new()
@@ -498,6 +513,8 @@ func spawn_sword_wave(pos: Vector2, facing: float, power: float) -> void:
 	p.setup(self, "wave", pos, facing, true)
 	p.fire_wave(facing, power)
 	projectiles.append(p)
+	# 剑气出手：蓄得越满音调越高、越响
+	Sfx.play_2d(self, "sword_wave", pos, -2.0 if power < 0.985 else 0.5, lerpf(1.12, 0.88, clampf(power, 0.0, 1.0)))
 	if power >= 0.985:
 		hit_stop(0.10)
 		shake(cfg.shake_heavy.x, cfg.shake_heavy.y)
@@ -511,6 +528,8 @@ func spawn_boss_axe(pos: Vector2, facing: float) -> void:
 	p.setup(self, "axe", pos, facing, false)
 	p.fire_axe(facing)
 	projectiles.append(p)
+	# Boss 掷斧：同一段风声压低音高（更沉、更重）
+	Sfx.play_2d(self, "sword_wave", pos, -3.0, 0.70)
 
 func spawn_shockwaves(pos: Vector2, dir: float) -> void:
 	var p := Projectile.new()
@@ -519,6 +538,8 @@ func spawn_shockwaves(pos: Vector2, dir: float) -> void:
 	p.setup(self, "shockwave", Vector2(pos.x, ground_y - 13.0), dir, false)
 	p.fire_shockwave(dir)
 	projectiles.append(p)
+	# 地面冲击波：低沉的一记闷响
+	Sfx.play_2d(self, "land", Vector2(pos.x, ground_y - 13.0), -1.0, 0.62)
 
 func spawn_fissure(pos: Vector2, facing: float) -> void:
 	var p := Projectile.new()
@@ -528,6 +549,7 @@ func spawn_fissure(pos: Vector2, facing: float) -> void:
 	p.fire_fissure(facing)
 	projectiles.append(p)
 	shake(cfg.shake_medium.x, cfg.shake_medium.y)
+	Sfx.play_2d(self, "sword_wave", Vector2(pos.x, ground_y - 46.0), -5.0, 0.55)
 
 func spawn_fissure_spike(pos: Vector2) -> void:
 	_reg(SparkBurst.burst(self, pos, 9, Color(1.0, 0.5, 0.25), 0.9, 2.0, -90.0))
@@ -557,18 +579,25 @@ func _tick_fx(delta: float) -> void:
 func on_boss_warn(b: BossFighter, m: BattleMove) -> void:
 	warn_move = m
 	warn_boss = b
+	# 出招预警的听觉提示（可在 AudioConfig 里关掉）：
+	# 可弹反 = 清脆 "叮"（提示玩家按右键打铁）；不可弹反 = 低沉嗡鸣（提示快闪避）
+	if Sfx.cfg().warn_cues:
+		Sfx.play_2d(self, "warn_parry" if m.parryable else "warn_danger",
+			b.global_position + Vector2(0, -b.body_size.y * 0.62))
 
 func on_boss_broken(_b: BossFighter) -> void:
 	hit_stop(0.12)
 	shake(cfg.shake_heavy.x, cfg.shake_heavy.y)
 	pop_text(boss.global_position + Vector2(0, -220), "破防!", Color(0.7, 0.95, 1.0), true)
 	_reg(SparkBurst.burst(self, boss.global_position + Vector2(0, -100), 30, Color(0.9, 0.95, 1.0), 1.2))
+	Sfx.play_2d(self, "poise_break", boss.global_position + Vector2(0, -100))
 
 func on_boss_phase2(_b: BossFighter) -> void:
 	shake(cfg.shake_heavy.x * 1.6, 1.2)
 	pop_text(boss.global_position + Vector2(0, -230), "第二阶段！", Color(1.0, 0.4, 0.3), true)
 	_reg(SparkBurst.burst(self, boss.global_position + Vector2(0, -110), 40, Color(1.0, 0.5, 0.25), 1.5))
 	hud.show_title("第 二 阶 段", 2.0)
+	Sfx.play_2d(self, "roar", boss.global_position + Vector2(0, -110))
 
 func _on_player_hp(_hp: float, _m: float) -> void:
 	pass
@@ -592,10 +621,13 @@ func _end_battle(res: String) -> void:
 			hud.show_result("胜利", 3.2)
 			player.state = PlayerFighter.S.IDLE
 			shake(cfg.shake_medium.x, 0.5)
+			Sfx.play("result_win")
 		"lose":
 			hud.show_result("战败", 3.2)
+			Sfx.play("result_lose")
 		_:
 			hud.show_result("撤退", 2.2)
+			Sfx.play("ui_back")
 	set_meta("result", res)
 	_finish_later(res)
 
@@ -702,6 +734,8 @@ func _build_debug_lines() -> void:
 	lines.append("Boss 破防值: %.0f / %.0f   硬直剩余 %.2f" % [bl.poise, bl.max_poise, bl.break_t if bl.is_broken() else 0.0])
 	lines.append("顿帧: %.3f   慢动作: %.2f   缩放: %.2f" % [hitstop, slow_t, camera.zoom.x])
 	lines.append("弹幕: %d   特效: %d   FPS: %d" % [projectiles.size(), fx.size(), Engine.get_frames_per_second()])
+	lines.append("音效: 累计 %d 次（音效池 %d，%s）" % [Sfx.total_plays(), Sfx.pool_size(),
+		"已静音" if Sfx.is_muted() else "开启"])
 	hud.dbg_lines = lines
 
 # =============================================================== 测试接口
