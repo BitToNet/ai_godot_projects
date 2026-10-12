@@ -1,0 +1,53 @@
+{
+	"counts": {
+		"bridges": 7,
+		"settlements": 18,
+		"vegetation": 5163
+	},
+	"fingerprint": "19d42d358f8d5495adeb1946ad91a9a034fb878e510e309561f247bfd0d7f826",
+	"map_size": 1024.0,
+	"note": "由 tools/gen_fingerprint.gd --write-baseline 生成；指纹变化 = 生成结果变化（多半是 RNG 抽取顺序被动了）",
+	"parts": {
+		"bridges": {
+			"detail": "7 座",
+			"hash": "28b6f23062a5ef99cfb6a6492b4d14813651665fc0b961264067473b1e79fb00"
+		},
+		"heightmap": {
+			"detail": "res 513 / 263169 float32",
+			"hash": "16ee4d7295d9916dd248e383916f7693352078b98979ce14c56c0f69a38c8a09"
+		},
+		"nav_coarse": {
+			"detail": "res 129",
+			"hash": "7b5dc62f9e2947cfcaecc1ef239fd3a8499625b59b42d92a4942dd7038c5f4b3"
+		},
+		"nav_fine": {
+			"detail": "res 257",
+			"hash": "68f4ad91a59799ddf6a7f3b03a531c82eae780dde8ff3f87a56fcc02dfcab27a"
+		},
+		"nav_road": {
+			"detail": "res 129",
+			"hash": "21c6289e22dcf4ea91da86668b146778e4ee5872a69a6a50daf6b277ac11d907"
+		},
+		"parties": {
+			"detail": "1 玩家 + 14 AI",
+			"hash": "3953ad7d982c6cd34786d65cae9c9aa1e152c2919d2b69ec6b2b2865a02afa9f"
+		},
+		"roads": {
+			"detail": "21 条",
+			"hash": "321f9661154af7b5cf7facf55be6bdf85011eb633b0cba5ce9bf92b8d0ecddd4"
+		},
+		"settlements": {
+			"detail": "18 个",
+			"hash": "b9f44800a2cf8b4cc327b0f68395fa095155d917754d9539324079307432acb9"
+		},
+		"territory": {
+			"detail": "16384 bytes",
+			"hash": "485767f9e2df4d9ead26142b9dc59eb7c8d692342bc3b7be38267f2292e2071b"
+		},
+		"vegetation": {
+			"detail": "5163 实例 / broadleaf=2132 cactus=257 conifer=1952 deadtree=211 rock=611",
+			"hash": "53c61521a6de1348c7f121ef88aca8d2fa68178e88ff6493bb4375981c506846"
+		}
+	},
+	"seed": 20250929
+}

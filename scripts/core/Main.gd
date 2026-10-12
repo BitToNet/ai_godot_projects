@@ -60,6 +60,11 @@ var _space_latched: bool = false       ## 本次空格按住是否已被消费�
 var _time_lock: bool = false           ## 遭遇对话 / Boss 战：强制暂停，空格无效
 var _hover_timer: float = 0.0
 var _gen_ms: int = 0
+## 程序化生成**彻底**结束（含收尾的两帧与 0.35 s 遮罩收场）后置 true。
+## 工具脚本（tools/gen_fingerprint.gd、tools/perf_probe.gd）靠它判断何时可以安全取指纹 / 释放场景，
+## 不要改用 _gen_ms：那个值在收尾协程还在 await 时就已置位，此时 free() 会报
+## 「Resumed function '_step()' after await, but class instance is gone」。
+var gen_done: bool = false
 var _label_scale_applied: float = -1.0   ## 上次实际写入标签的缩放因子（-1 = 尚未应用）
 var _label_count_applied: int = -1       ## 上次应用时的标签总数（用于识别新增部队）
 
@@ -197,6 +202,7 @@ func _ready() -> void:
 	await _step("完成！")
 	await get_tree().create_timer(0.35).timeout
 	hud.hide_loading()
+	gen_done = true
 
 func _step(text: String) -> void:
 	if hud != null:

@@ -195,7 +195,16 @@ func _pick_move() -> bool:
 	var total := 0.0
 	for w in weights:
 		total += float(w)
+	# 走战斗实例那条**已播种**的 RNG，而不是全局 randf()：
+	# 全局 RNG 每次进程启动都重新随机播种（Godot 4 默认行为），会让 Boss 的出招序列
+	# 不可复现 —— tools/sfx_battle_check.gd 用固定 seed 驱动战斗，却因此偶发失败
+	# （实测同一命令 4 次里 1 次 FAIL，缺 hit_crit / parry；播放次数在 54~63 之间漂）。
+	# 地图生成走的是另一条随机流，改这里不影响生成指纹。
+	# 写成「先按全局取一次、再有战斗实例就覆盖」是为了兼容 battle == null 的裸用场景，
+	# 同时绕开 GDScript 的类型推断（`var r := (A if 条件 else B)` 会报 value doesn't have a set type）。
 	var r := randf() * total
+	if battle != null:
+		r = battle.roll01() * total
 	var acc := 0.0
 	var pick: BattleMove = pool[pool.size() - 1]
 	for i in pool.size():

@@ -46,6 +46,13 @@ var shake_decay := 4.0
 var st := ST_INTRO
 var t := 0.0
 var rng := RandomNumberGenerator.new()
+
+## 战斗内统一的随机入口：子节点（如 BossFighter 选招）必须走这里，不要用全局 randf()。
+## 全局 RNG 每次进程启动都重新随机播种，会让战斗不可复现 —— tools/sfx_battle_check.gd
+## 用固定 seed 驱动战斗，却因此偶发失败（实测同一命令 4 次里 1 次 FAIL）。
+## rng 在 setup() 里由 payload 的 "seed" 播种，因此本方法的结果是可复现的。
+func roll01() -> float:
+	return rng.randf()
 var debug_on := false
 var cam_anchor := 750.0
 var warn_move: BattleMove = null

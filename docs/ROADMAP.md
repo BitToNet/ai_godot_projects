@@ -66,7 +66,7 @@
 | G2 | **无存档**：全仓库无写文件的 `FileAccess` / `ConfigFile` | 唯一写盘者是 `tools/sfx_tool.gd --wav` | 四 |
 | G3 | **无 `InputMap`**：键位硬编码；零 `grab_focus()` / `focus_neighbor` → 遭遇框键盘 / 手柄无法作答 | `Main.gd:585-599`、`BattleScene.gd:235-260` | 三 |
 | G4 | **无音频总线**：仅 `Sfx.gd:56` 一处 `bus = "Master"`，零 `AudioServer` 调用 | 无 `default_bus_layout.tres` | 五 |
-| G5 | **无回归测试**：三个 tools 只打印不比对；README 的「单一种子可复现」承诺零验证 | `MapConfig.gd:83-88` 依赖 `hash(str)` | 二 |
+| G5 | ~~**无回归测试**：三个 tools 只打印不比对；README 的「单一种子可复现」承诺零验证~~ **已解决（第二轮）**：`tools/gen_fingerprint.gd` 逐项指纹 + `tools/gen_fingerprint.json` 存档比对 + `tools/run_checks.ps1` 一键门禁（含反向验证，见第八节） | `MapConfig.gd:83-88` 依赖 `hash(str)` | 二 ✅ |
 | G6 | 无主菜单 / 设置 / i18n / CI / `export_presets.cfg` / 版本号 | `project.godot:19` 主场景直指 Main | 三 / 六 |
 
 ### 2.3 次要问题（记录备查）
@@ -78,7 +78,7 @@
 - 死代码清单（第一轮清理）：`HUD._hover_label`、`Main._label_base`、`VegetationScatter._flags` / `_flag_res`、`CameraRig.pitch_manual` / `prev_diff`、`MapData.party_positions`、`PartyBase.remaining_distance()`。
 - `terrain.gdshader` 的 `lod_fade` 只用作 `mix` 权重，远场仍全量计算 `vnoise`（约 11 次/片元）。
 - `proj_impact` 是 28 个音色里**唯一没有任何 `Sfx.play*` 调用点**的（其余 27 个都能在代码里找到调用处）——要么补上「抛射物命中」音，要么删掉这个音色（可省约 1/28 合成耗时）。
-- 自检覆盖缺口：`battle_start` / `parry_reflect` / `result_lose` / `ui_back` 有真实调用点，但两个自检脚本的剧本都触发不到。现已在 `sfx_battle_check.gd` 里以「提示」形式打印（不做断言），第二轮的回归脚本应补上开战 / 弹反抛射物 / 战败 / 界面返回四个场景。
+- 自检覆盖缺口分两类。① **四个场景音色**：`battle_start` / `parry_reflect` / `result_lose` / `ui_back` 有真实调用点，但剧本触发不到（需要开战 / 弹反抛射物 / 战败 / 界面返回四个场景）—— 第二轮仍只以「提示」形式打印、不做断言，**这四个仍未覆盖**。② 第二轮实际补上的是另外两类更隐蔽的缺口：`hit_crit` / `parry`（剧本自身有 bug，从来就没测到过，见第八节）与 `warn_danger` / `step_heavy`（覆盖与否取决于 Boss 的随机招式表，已改为直接压接线点，不再随 RNG 流漂移）。
 - 迷雾叠加语义**已确认不是 bug**：`FogOfWar` 的 A 通道 = 1 − 已探索度，`MinimapView.gd:37` 用 `Color(0.02, 0.02, 0.06, 1.0)` 去调制它，效果就是「按迷雾浓度给底图压暗」；R 通道（已探索度）目前是留给 Shader 的冗余信息。
 - `Main.gd:614` 的注释声称「战略视图里定居点标签再放大一档」，但 `_on_strategic_changed()` 只打了一条日志 —— 注释与实现不符（而且改动前每帧的 `_update_label_scale()` 会立刻覆盖任何手工放大，等于这条设计本来就落不了地）。属待实现功能。
 - HUD 其余装饰面板（`_panel()` 返回的 `PanelContainer` 默认 `MOUSE_FILTER_STOP`）同样会吞掉其覆盖区域的左键：第一轮只修了小地图外框，左侧信息面板 / 左下操作说明建议在第三轮随 `HUD.gd` 拆分一起改成 IGNORE。
@@ -178,7 +178,7 @@
 | 轮次 | 内容 | 状态 |
 |---|---|---|
 | **第一轮** | A 节全部修复项 + 死代码清理 + 本路线图落档 | **已完成**（2026-10-12；改动与实测见第七节） |
-| 第二轮 | `tools/gen_determinism_check.gd` + 性能基准 + 无 ERROR 断言（先立安全网，再谈重构） | 待办 |
+| **第二轮** | 安全网：`tools/gen_fingerprint.gd`（原计划名 `gen_determinism_check.gd`）+ `tools/perf_probe.gd` 性能基准 + 一键门禁 `tools/run_checks.ps1` | **已完成**（2026-10-12；改动与实测见第八节） |
 | 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | 待办 |
 | 第四轮 | 玩法闭环：`CampaignState` 经济 + 城镇交互 + 遭遇多选项 + 存档 | 待办 |
 | 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | 待办 |
@@ -194,6 +194,10 @@
 $GODOT = "G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe"
 $PROJ  = "F:\aigc_code\ai_godot_projects"
 
+# 0) 【推荐】一键跑完全部门禁（7 步，约 45 秒）—— 本工程唯一需要的命令
+powershell -File tools\run_checks.ps1
+#    ⚠ 必须用 powershell 而不是 pwsh：本机只有 Windows PowerShell 5.1，没有 pwsh 7
+
 # 1) 主场景完整跑一遍（看是否有 ERROR / 生成耗时 / 生成内容统计）
 & $GODOT --headless --path $PROJ --fixed-fps 60 --quit-after 900
 
@@ -204,13 +208,22 @@ $PROJ  = "F:\aigc_code\ai_godot_projects"
 # 4) 音色体检（含总合成耗时）
 & $GODOT --headless --path $PROJ --script res://tools/sfx_tool.gd
 
-# 5) 代码规模（不要用 Measure-Object -Line，会漏算空行）
+# 5) 生成物指纹（确定性自检；与 tools/gen_fingerprint.json 存档比对）
+& $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/gen_fingerprint.gd
+#    有意改动生成后，用下面这条更新存档（否则门禁会红）
+# & $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/gen_fingerprint.gd -- --write-baseline
+
+# 6) 性能基准（与 tools/perf_baseline.json 比对；超出容差 exit 1，漂移只 WARN）
+& $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/perf_probe.gd
+# & $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/perf_probe.gd -- --write-baseline
+
+# 7) 代码规模（不要用 Measure-Object -Line，会漏算空行）
 Get-ChildItem -Recurse -File -Include *.gd,*.gdshader |
   ForEach-Object { [pscustomobject]@{ L = (Get-Content $_.FullName).Count; P = $_.FullName } } |
   Sort-Object L -Descending
 ```
 
-**判定标准**：① 主场景无 `ERROR` / `SCRIPT ERROR`；② 两个联调脚本 `exit 0` 且输出 `PASS`；③ 生成内容统计（定居点 18 / 桥梁 7 / 植被 5163）与基线一致，说明没有破坏确定性。
+**判定标准**：① 主场景无 `ERROR` / `SCRIPT ERROR`；② 两个联调脚本 `exit 0` 且输出 `PASS`；③ 生成物指纹与 `tools/gen_fingerprint.json` 存档一致（**只比两次跑得一样是不够的**，两次跑出同一个新指纹同样说明生成被改了），且生成内容统计（定居点 18 / 桥梁 7 / 植被 5163）与基线一致。
 
 > 例外：若 `AudioConfig.enabled = false`（关音频省启动），两个联调脚本会输出 `SKIP` 并 `exit 0` —— 这**不算通过**，只是「本次不适用」；要在关音频的前提下判音效，请先把它改回 `true`。
 
@@ -255,3 +268,62 @@ Get-ChildItem -Recurse -File -Include *.gd,*.gdshader |
 - [x] `sfx_battle_check`：PASS
 - [x] `sfx_map_check`：PASS
 - [x] 生成内容统计与基线一致（18 / 7 / 5163）
+
+---
+
+## 八、第二轮变更记录（安全网）
+
+**目标**：README 承诺「单一随机种子可复现」，但此前**没有任何验证手段** —— 任何人把 `randf()` 的调用顺序挪一下，整张地图会静默改变且无法察觉。本轮把这句话变成可执行的门禁。
+
+改动文件与要点：
+
+| 文件 | 改动 |
+|---|---|
+| `tools/gen_fingerprint.gd` | 新增。加载 `Main.tscn` → 关音频、注入固定 `MapConfig` → 冻结 `_process`/`_physics_process` → 对 11 类生成物（settlements / bridges / roads / vegetation / heightmap / territory / nav_coarse / nav_fine / nav_road / parties）逐项算 SHA-256 并汇总成一个 `FINGERPRINT=`。退出码 0 = 与存档一致，1 = 不一致，2 = 未就绪。`-- --write-baseline` 更新存档、`-- --print-only` 只打印 |
+| `tools/gen_fingerprint.json` | 新增。基线存档：种子 20250929，`FINGERPRINT=19d42d35…f826`，计数 18 / 7 / 5163 |
+| `tools/perf_probe.gd` | 新增。300 帧采样 idle 与行军两种状态，输出 `frame_ms` / `nodes` / `objects` / `static_mb` / `draw_calls` 的 avg·p95·max。**放弃 `Performance.TIME_PROCESS`**（见下） |
+| `tools/perf_baseline.json` | 新增。性能基线存档 |
+| `tools/run_checks.ps1` | 新增。一键门禁：指纹 A → 指纹 B（跨进程）→ 指纹 vs 存档 → 性能 → 两个音效联调 → 主场景 900 帧 + 生成统计比对。任何一步退出码不符、超时、或输出里出现 `ERROR:` / `SCRIPT ERROR` / `Parse Error` 即判失败 |
+| `scripts/battle/BossFighter.gd` | **修 bug**：选招用全局 `randf()` 改为 `battle.roll01()`。全局 RNG 每次进程启动都重新随机播种，导致 Boss 出招序列不可复现 —— 这是战斗自检偶发失败的根因 |
+| `scripts/battle/BattleScene.gd` | 新增 `roll01()`：战斗内统一的随机入口（`rng` 由 `setup()` 的 `"seed"` 播种）。子节点不要再碰全局 `randf()` |
+| `tools/sfx_battle_check.gd` | **修自检缺陷**（见下两条）+ 剧本改为「进攻段 / 防守段」两段式 |
+| `scripts/core/Main.gd` | 新增公开字段 `gen_done`（程序化生成**彻底**结束后置 true）。此前工具只能靠 `_gen_ms != 0` 猜测生成结束，而它是在收尾 `await` **之前**写入的 —— 工具一 free 场景就会触发 `Resumed function '_step()' after await, but class instance is gone` |
+
+### 本轮揪出的三个真问题
+
+1. **`Performance.TIME_PROCESS` 在 headless 下是陈旧常数**。加 `--fixed-fps 60` 后连续读 12 次完全相同，idle 报 1150.154 ms/帧，而墙钟只有 0.841 ms/帧（是某一帧慢生成的残留值）。`Engine.get_frames_per_second()` 同样被冻结。改用 `Time.get_ticks_usec()` 的逐帧差值；`--fixed-fps 60` 会关掉实时同步（帧能跑多快跑多快），因此墙钟值就是真实 CPU 开销。
+2. **战斗自检本身不可复现**（`BossFighter` 用全局 `randf()`）：同一命令连跑 4 次，1 次 FAIL、1 次 PASS 且播放次数在 54~63 之间漂。修掉后缺失集合稳定。
+3. **`hit_crit` / `parry` 两种音效从来就没被真正测到过**。原剧本每 25 帧点一次攻击（0.417 s），而连段窗口只开在**后摇的前 70%**（attack1 是起手后 0.17~0.31 s）——窗口早关了、招式也已结束（`combo_index` 归零），永远连不到第 3 段，而 `crit_mult = 1.3` 只写在第 3 段上；同时 89% 的时间都在出招，弹反输入被攻击状态吃掉，且原反应规则按「预警剩 0.05 s」按下，对 cleave（0.22 s）与 axe（0.19 s）**必然**超出 0.15 s 弹反窗口。改为：进攻段按 14 帧节拍连打（落在窗口内）；防守段完全不按攻击，并按「距判定帧还有多久 ≤ 0.12 s」来按弹反。
+   - 另有两个音色（`warn_danger`、`step_heavy`）的覆盖同样依赖 Boss 的随机招式表，改用已有的测试钩子 `start_move_for_test("charge")` 与直接压 `on_boss_warn()` 来保证覆盖 —— 否则「换一条 RNG 流」就会让自检莫名其妙地少覆盖两种音色。
+
+### 验收：门禁本身也做了反向验证
+
+故意在 `MapConfig.make_rng()` 里多抽一次随机数（验证后已撤销，`git diff` 归零）：
+
+| 检查项 | 扰动后结果 | 说明 |
+|---|---|---|
+| 跨进程双跑（A = B） | **仍然 PASS** | 两次都跑出同一个**新**指纹 —— 证明只比 A=B 是个**假安全网** |
+| 指纹 vs 存档 | **FAIL** `3bb8cca5…` ≠ `19d42d35…` | 真正拦住问题的是这一条 |
+| 生成统计 | **FAIL** 18/3/5184 ≠ 18/7/5163 | 计数与指纹互为冗余 |
+| 性能 / 两个音效联调 | PASS | 失败被正确隔离在生成侧 |
+
+### 实测结果（2026-10-12，`powershell -File tools\run_checks.ps1`）
+
+| 项 | 结果 |
+|---|---|
+| 一键门禁 | **exit 0，9 项全绿，用时 42.4 s** |
+| 生成指纹 | `19d42d358f8d5495adeb1946ad91a9a034fb878e510e309561f247bfd0d7f826`（跨进程两次一致，且与存档一致）；生成 29 帧 / 约 5.4~6.1 s；定居点 18 / 桥梁 7 / 植被 5163 |
+| 性能基线（idle） | `frame_ms` avg 0.847 / p95 5.995 / max 13.485；nodes 446；static 128.85 MB |
+| 性能基线（行军 148/300 帧在移动） | `frame_ms` avg 1.100 / p95 6.057 / max 16.179；static 129.24 MB |
+| 性能容差 | avg 1.5 倍、p95 1.8 倍；三次复测 idle avg 0.817 / 0.822 / 0.748（基线 0.847），余量充足 |
+| `sfx_battle_check` | **exit 0 / PASS**；28 个音色 / 合成约 1.6 s / 音效池 24；19 种关键音色**全部**触发（含此前从未覆盖的 `hit_crit` / `parry`）；缺失集合连续 4 次完全一致 |
+| `sfx_map_check` | **exit 0 / PASS** |
+| `draw_calls` | 恒为 0 —— headless 下 `Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME` 不统计，该指标在无窗口环境无意义，仅保留字段 |
+
+- [x] 建立生成物指纹基线并跨进程验证可复现
+- [x] 指纹与存档比对（而非只比 A=B）
+- [x] 性能基线可复现、容差有实测余量
+- [x] 主场景 / 两个音效联调零 `ERROR`，且三者的 ERROR 断言已排除 PowerShell 5.1 的 stderr 包装误判
+- [x] 一键门禁 `tools/run_checks.ps1` 跑通，并做过反向验证（改了 RNG 顺序确实会红）
+
+> 编码坑（已写进 `run_checks.ps1` 头部注释）：本机只有 Windows PowerShell 5.1。① `.ps1` 必须存成**带 BOM 的 UTF-8**，否则中文注释按 GBK 解码直接语法报错；② `Get-Content -Raw` 读 Godot 写出的**无 BOM** JSON 会乱码并使 `ConvertFrom-Json` 失败（表现为基线被静默读成 0/0/0）；③ 原生命令只要往 stderr 写一个字节，PS 5.1 就会包成含 `FullyQualifiedErrorId : NativeCommandError` 的 ErrorRecord —— 所以 ERROR 断言必须用大小写敏感的 `ERROR:|SCRIPT ERROR|Parse Error`，否则 Godot 退出时的 `WARNING: N ObjectDB instances were leaked` 会把整步判失败。
