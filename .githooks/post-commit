@@ -1,0 +1,43 @@
+#!/bin/sh
+# 项目级自动推送：每次提交成功后立即 push 到上游分支。
+# 依据：AGENTS.md 规则 G1 / G2。
+# 临时跳过：
+#   GIT_AUTO_PUSH=0 git commit -m "..."
+#   SKIP_AUTO_PUSH=1 git commit -m "..."
+# 安装（新克隆后执行一次）：git config core.hooksPath .githooks
+
+if [ "$GIT_AUTO_PUSH" = "0" ] || [ "$SKIP_AUTO_PUSH" = "1" ]; then
+    echo "[post-commit] auto-push skipped by environment flag"
+    exit 0
+fi
+
+gitdir=$(git rev-parse --git-dir 2>/dev/null)
+for state in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD; do
+    if [ -e "$gitdir/$state" ]; then
+        echo "[post-commit] $state in progress, skip auto-push" >&2
+        exit 0
+    fi
+done
+
+branch=$(git symbolic-ref -q --short HEAD)
+if [ -z "$branch" ]; then
+    echo "[post-commit] detached HEAD, skip auto-push" >&2
+    exit 0
+fi
+
+upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
+if [ -z "$upstream" ]; then
+    echo "[post-commit] no upstream for '$branch', skip auto-push (run: git push -u origin $branch)" >&2
+    exit 0
+fi
+remote=${upstream%%/*}
+
+echo "[post-commit] auto-push $branch -> $upstream ..."
+if git push "$remote" "$branch"; then
+    echo "[post-commit] pushed $branch -> $upstream"
+else
+    echo "[post-commit] push FAILED: 提交仅在本地，修复后请执行: git push $remote $branch" >&2
+fi
+
+# 提交已完成；钩子不改变 git commit 的结果。
+exit 0
