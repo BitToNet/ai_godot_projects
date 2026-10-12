@@ -2,7 +2,9 @@
 ##  PlayerParty —— 玩家部队
 ##  · 鼠标左键点击地面（Main 负责射线求交）→ 这里做 A* 寻路（细栅格）
 ##  · 目标标记（旋转光环 + 光柱）与路径预览（贴地三角带）
-##  · 空格暂停由 Main 统一控制：暂停时 Main 不再调用 step()
+##  · 时间流动由 Main 统一裁决：行军途中时间自动流动，抵达瞬间暂停；
+##    移动中按空格 → halt() 立刻停下并暂停；原地长按空格 → 时间才流动。
+##    暂停时 Main 不再调用 step()
 ## =============================================================================
 class_name PlayerParty
 extends PartyBase
@@ -106,5 +108,14 @@ func step(delta: float) -> void:
 		preview.mesh = null
 
 func on_path_finished() -> void:
+	if preview != null:
+		preview.mesh = null
+
+## 立即停止行军（Main 的「移动中按空格」/ 遭遇打断会调用）：
+## 清空路径、收起目标点光环与路径预览，部队就地停下。
+func halt() -> void:
+	super.halt()
+	if marker_root != null:
+		marker_root.visible = false
 	if preview != null:
 		preview.mesh = null

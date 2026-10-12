@@ -99,6 +99,13 @@ func clear_path() -> void:
 	moving = false
 	has_target = false
 
+## 立即中断移动：清空路径与目标点（按空格打断行军 / 遭遇打断行军时调用）
+func halt() -> void:
+	if not moving and path.is_empty() and not has_target:
+		return
+	clear_path()
+	on_path_finished()
+
 func remaining_distance() -> float:
 	if not moving:
 		return 0.0

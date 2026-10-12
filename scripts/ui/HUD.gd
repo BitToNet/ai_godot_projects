@@ -120,14 +120,14 @@ func _build_panels() -> void:
 	var help := _panel()
 	help.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	help.offset_left = 16
-	help.offset_top = -196
+	help.offset_top = -266
 	help.offset_bottom = -16
 	help.add_theme_stylebox_override("panel", _style(Color(0.05, 0.05, 0.07, 0.62)))
 	add_child(help)
 	_help_label = Label.new()
 	_help_label.add_theme_font_size_override("font_size", 14)
 	_help_label.add_theme_color_override("font_color", Color(0.86, 0.90, 0.94))
-	_help_label.text = "【操作】\n左键点击地面：部队寻路移动\n滚轮：缩放（近处平视 / 远处俯瞰）\n中键或右键拖拽：旋转视角\nWASD / 屏幕边缘：平移      F：回到部队\n空格：暂停 / 恢复时间流动\nR：切换时间流速 ×1/×2/×4\n1/2/3：仅显示某势力领地标签\nV：显示 / 隐藏植被"
+	_help_label.text = "【操作】\n左键点击地面：部队寻路移动（行军途中时间自动流动，抵达后立刻暂停）\n长按空格：原地推进世界时间（松开即暂停）\n行军途中按空格：立刻停止前进并暂停\n滚轮：缩放（近处平视 / 远处俯瞰）\n中键或右键拖拽：旋转视角\nWASD / 屏幕边缘：平移      F：回到部队\nR：切换时间流速 ×1/×2/×4\n1/2/3：仅显示某势力领地标签\nV：显示 / 隐藏植被"
 	help.add_child(_help_label)
 
 	# ---- 右下性能 ----
@@ -268,7 +268,7 @@ func _process(delta: float) -> void:
 		_day_label.text = "第 %d 天   %s" % [day_night.day, day_night.time_string()]
 		_speed_label.text = "时间流速：%s" % speed_txt
 		if day_night.paused:
-			_pause_badge.text = "⏸ 时间已暂停（空格继续）"
+			_pause_badge.text = "⏸ 时间已暂停（长按空格流动 / 点击地图行军）"
 		elif day_night.is_night():
 			_pause_badge.text = "🌙 夜色降临，定居点点亮灯火"
 		else:
