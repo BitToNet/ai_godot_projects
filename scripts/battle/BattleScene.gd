@@ -743,6 +743,10 @@ func _build_debug_lines() -> void:
 	lines.append("弹幕: %d   特效: %d   FPS: %d" % [projectiles.size(), fx.size(), Engine.get_frames_per_second()])
 	lines.append("音效: 累计 %d 次（音效池 %d，%s）" % [Sfx.total_plays(), Sfx.pool_size(),
 		"已静音" if Sfx.is_muted() else "开启"])
+	lines.append("背景音乐: %s（%s，切换 %d 次）" % [
+		Bgm.current() if Bgm.current() != "" else "未播放",
+		"正在响" if Bgm.is_playing(Bgm.current()) else "淡入中 / 已停",
+		Bgm.total_plays()])
 	hud.dbg_lines = lines
 
 # =============================================================== 测试接口

@@ -1,8 +1,9 @@
 ## =============================================================================
-##  AudioConfig —— 音效系统的全部可调参数（@export，可在 Inspector 里实时调）
+##  AudioConfig —— 音频系统的全部可调参数（@export，可在 Inspector 里实时调）
 ##
-##  · 本工程所有音效都是**运行时程序化合成**的（见 SfxSynth.gd），
-##    不加载任何外部音频文件，所以这里的参数只影响"混音 + 触发手感"。
+##  · 音效（Sfx）全部是**运行时程序化合成**的（见 SfxSynth.gd），不加载外部音频；
+##    背景音乐（Bgm）则是 XSXB-Band 工作室用真实 CC0 录音乐器渲染好的两首曲子
+##    （audio/bgm/*.ogg）。两者共用这里的"总开关 / 静音"和各自的音量。
 ##  · 分类音量按用途分组：打击 / 弹反 / 移动 / 语音提示 / UI。
 ##    每一档都是叠加在音效自身基准音量之上的 dB 偏移（0 = 不动）。
 ## =============================================================================
@@ -10,12 +11,29 @@ class_name AudioConfig
 extends Resource
 
 @export_group("音频 · 总开关")
-## 关掉后 Sfx 完全不发声，也不会合成音色（省启动时间）
+## 关掉后 Sfx 完全不发声，也不会合成音色（省启动时间）；BGM 同理不播放
 @export var enabled: bool = true
 ## 总音量（dB）
 @export var master_db: float = 0.0
 ## 是否随机抖动音高（同一动作每次听起来略有差别，避免机械重复感）
 @export var pitch_jitter: float = 0.05
+
+@export_group("音频 · 背景音乐（BGM）")
+## BGM 总音量（dB）。音乐要垫在音效下面，所以默认为负值。
+## 两首曲子的成品电平实测：大地图 峰值 -6.5 / 平均 -25.9 dBFS，Boss 战 峰值 -2.5 /
+## 平均 -18.4 dBFS；音效是 0.92 峰值归一化（约 -0.7 dBFS），所以这里留 2 dB 底噪余量，
+## 让音乐峰值始终比音效低 7 dB 以上，谁也盖不住谁。觉得音乐小了直接把这档往 0 调。
+@export var bgm_db: float = -2.0
+## 大地图曲目的额外音量偏移（dB）
+@export var bgm_map_db: float = 0.0
+## Boss 战曲目的额外音量偏移（dB）；战斗曲更密、更响，压一点
+@export var bgm_battle_db: float = -2.0
+## 进游戏时从静音淡入大地图曲的时长（秒）
+@export var bgm_fade_in: float = 2.4
+## 进入 Boss 战时切到战斗曲的时长（秒）；战斗要立刻起势，所以短
+@export var bgm_fade_battle: float = 0.6
+## 战斗结束淡回大地图曲的时长（秒）
+@export var bgm_fade_map: float = 1.8
 
 @export_group("音频 · 分类音量（dB）")
 @export var combat_db: float = 0.0        ## 命中 / 破防 / 蓄力 / 剑气

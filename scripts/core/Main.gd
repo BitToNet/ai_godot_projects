@@ -203,6 +203,12 @@ func _ready() -> void:
 	await get_tree().create_timer(0.35).timeout
 	hud.hide_loading()
 	gen_done = true
+	# ---------------- 背景音乐（XSXB-Band 渲染的真实录音曲目）----------------
+	# 地图生成完、Loading 收起之后再起乐，免得玩家在加载界面听半首。
+	Bgm.setup(self, audio)
+	Bgm.play("map", audio.bgm_fade_in)
+	print("[音频] 背景音乐就绪：当前 %s（音量 %.1f dB，缺失音频时自动静默）" % [
+		Bgm.current(), audio.bgm_db])
 
 func _step(text: String) -> void:
 	if hud != null:
@@ -449,6 +455,8 @@ func _order_move(goal: Vector2) -> void:
 func _process(delta: float) -> void:
 	if data == null or player == null:
 		return
+	# 0) 背景音乐的淡入淡出必须在战斗早退之前推进，否则战斗中永远切不过去
+	Bgm.tick(delta)
 	if battle != null:
 		return
 	# 1) 先判定本帧时间是否流动（行军 / 长按空格 / 强制锁）
@@ -607,7 +615,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				vegetation.root.visible = not vegetation.root.visible
 			KEY_M:
 				var muted := Sfx.toggle_mute()
-				hud.show_toast("音效：%s（按 M 切换）" % ("已静音" if muted else "已开启"), 2.0)
+				hud.show_toast("音效 / 音乐：%s（按 M 切换）" % ("已静音" if muted else "已开启"), 2.0)
 			KEY_1:
 				_toggle_faction_labels(0)
 			KEY_2:
@@ -738,8 +746,9 @@ func _start_battle(a: AIParty) -> void:
 		camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
 	print("[Boss战] 进入战斗：%s（类型 %s）｜ 地形 %s ｜ 敌方兵力 %d ｜ Boss HP %.0f 破防 %.0f" % [
 		payload["boss_name"], kind, terrain, a.troop_count, bhp, bpoise])
-	# 开战号角（鼓点 + 低音号角）
+	# 开战号角（鼓点 + 低音号角），同时把背景音乐切到战斗曲（短淡入，别拖过第一刀）
 	Sfx.play("battle_start")
+	Bgm.play("battle", audio.bgm_fade_battle)
 
 func _set_overworld_visible(v: bool) -> void:
 	var list: Array = [terrain, water, lights_root, camera_rig, player, hud]
@@ -756,6 +765,8 @@ func _on_battle_finished(result: String, a: AIParty) -> void:
 	if battle != null and is_instance_valid(battle):
 		battle.queue_free()
 	battle = null
+	# 回到大地图：战斗曲长淡出，行军主题重新淡入（结算音效还在响，别抢）
+	Bgm.play("map", audio.bgm_fade_map)
 	_set_overworld_visible(true)
 	if camera_rig != null:
 		camera_rig.process_mode = Node.PROCESS_MODE_INHERIT
