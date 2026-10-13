@@ -48,11 +48,10 @@ var party_mat: ShaderMaterial
 ## 这里只留一个引用；遭遇 / Boss 战用它 lock()，行军命令走 time.order_move()。
 var time: TimeFlowController
 var rules: EncounterRules            ## 遭遇 / Boss 战数值（见 EncounterRules.gd）
+var ctx: WorldContext                ## 各系统共享的世界句柄（见 WorldContext.gd）
+var encounters: EncounterSystem      ## 遭遇检测 / 对话 / 冷却（见 EncounterSystem.gd）
+var battler: BattleLauncher          ## 进出 Boss 战（见 BattleLauncher.gd）
 
-var encounter_party: AIParty = null
-var battle: BattleScene = null        ## 正在进行的 2D Boss 战（null = 在大地图上）
-var encounters_enabled: bool = true   ## 调试/截图时可关掉遭遇UI
-var cooldowns: Dictionary = {}
 var _gen_ms: int = 0
 ## 程序化生成**彻底**结束（含收尾的两帧与 0.35 s 遮罩收场）后置 true。
 ## 工具脚本（tools/gen_fingerprint.gd、tools/perf_probe.gd）靠它判断何时可以安全取指纹 / 释放场景，
@@ -219,6 +218,32 @@ func _ready() -> void:
 	hover.cfg = cfg
 	hover.parties = ai_parties
 
+	# 共享上下文 + 两个系统（遭遇 / Boss 战）。它们互相回调，用信号断开环：
+	#   玩家选「攻击」→ encounters.attack_requested → battler.start
+	#   战斗结束        → battler.finished         → encounters.on_battle_finished（结算）
+	# 必须放在 view 组装之后：Boss 战进场要 view.set_visible(false)。
+	ctx = WorldContext.new()
+	ctx.host = self
+	ctx.cfg = config
+	ctx.audio = audio
+	ctx.data = data
+	ctx.hud = hud
+	ctx.camera = camera_rig
+	ctx.router = router
+	ctx.time = time
+	ctx.rules = rules
+	ctx.view = view
+	ctx.day_night = day_night
+	ctx.player = player
+	ctx.parties = ai_parties
+	encounters = EncounterSystem.new()
+	encounters.ctx = ctx
+	battler = BattleLauncher.new()
+	battler.ctx = ctx
+	hud.encounter_choice.connect(encounters.resolve)
+	encounters.attack_requested.connect(battler.start)
+	battler.finished.connect(encounters.on_battle_finished)
+
 	_gen_ms = Time.get_ticks_msec() - t0
 	print("[Warband] 地图生成完成：%d ms   定居点 %d   桥梁 %d   植被实例 %d" % [
 		_gen_ms, data.settlements.size(), data.bridges.size(), vegetation.total()])
@@ -272,7 +297,7 @@ func _setup_ui() -> void:
 	hud.bind(data, day_night)
 	hud.minimap.setup(data, player, ai_parties, fog)
 	hud.set_terrain_text("草原 (1.0x)")
-	hud.encounter_choice.connect(_on_encounter_choice)
+	# 对话框选项的接收方是 EncounterSystem（生成收尾时才装配），所以那条 connect 在 _ready 末尾
 
 	# 输入路由：键码 → 语义信号。键位表在 project.godot 的 [input] 段，
 	# 这里不再出现任何 KEY_* 常量，加手柄 / 改键位都不用动代码。
@@ -294,13 +319,14 @@ func _setup_ui() -> void:
 
 # =============================================================== 循环
 func _process(delta: float) -> void:
-	# view / hover 是生成流程最后才组装的（要等相机、植被、部队、HUD 全部就位），
-	# 在那之前 _process 已经在跑（_ready 里全是 await），所以这里必须一起判空。
-	if data == null or player == null or view == null:
+	# view / hover / encounters / battler 都是生成流程最后才组装的（要等相机、植被、
+	# 部队、HUD 全部就位），在那之前 _process 已经在跑（_ready 里全是 await），
+	# 所以这里必须一起判空。
+	if data == null or player == null or view == null or encounters == null or battler == null:
 		return
 	# 0) 背景音乐的淡入淡出必须在战斗早退之前推进，否则战斗中永远切不过去
 	Bgm.tick(delta)
-	if battle != null:
+	if battler.battle != null:
 		return
 	# 1) 先判定本帧时间是否流动（行军 / 长按空格 / 强制锁）
 	time.evaluate()
@@ -325,7 +351,7 @@ func _process(delta: float) -> void:
 		fog.update(delta, pts)
 	# 遭遇检测（时间未流动时不检测）
 	if not time.game_paused:
-		_check_encounters(delta)
+		encounters.check(delta)
 	view.update_label_scale()
 	hover.tick(delta)
 
@@ -342,80 +368,8 @@ func _tick_party_audio(dt: float) -> void:
 		if a != null and is_instance_valid(a):
 			a.tick_movement_audio(dt, listener)
 
-func _check_encounters(delta: float) -> void:
-	if not encounters_enabled:
-		return
-	for k in cooldowns.keys():
-		cooldowns[k] = float(cooldowns[k]) - delta
-		if float(cooldowns[k]) <= 0.0:
-			cooldowns.erase(k)
-	for a in ai_parties:
-		if a == null or not is_instance_valid(a):
-			continue
-		if cooldowns.has(a.get_instance_id()):
-			continue
-		if player.distance_to_party(a) <= config.encounter_distance + 3.0:
-			_open_encounter(a)
-			return
-
-func _open_encounter(a: AIParty) -> void:
-	encounter_party = a
-	if player.moving:
-		player.halt()          # 遭遇打断行军：部队停在原地
-	time.lock()                # 对话期间强制暂停，空格不生效
-	var fname := GameState.faction_name(data, a.faction_id)
-	var col := Color(0.9, 0.85, 0.7)
-	if a.faction_id >= 0:
-		col = data.faction(a.faction_id).color
-	var kindname: String = {"lord": "领主部队", "caravan": "商队", "bandit": "强盗团伙"}.get(a.ai_kind(), "部队")
-	var lead_line := ""
-	if a.boss_title != "":
-		lead_line = "敌方首领：%s\n" % a.boss_title
-	hud.show_encounter("遭遇 %s" % a.party_name,
-		"%s · %s\n%s兵力：%d 人     你的兵力：%d 人\n\n时间已暂停 —— 请决定行动。" % [kindname, fname, lead_line, a.troop_count, player.troop_count],
-		col)
-	# 视角也冻住：方向键 / 左摇杆同时是 move_*（平移视角）与对话框的选项切换键，
-	# 不冻的话「在对话框里按 →」会连带把镜头也拖走。
-	_set_camera_active(false)
-	# 遭遇提示音（对话框弹出）
-	Sfx.play("encounter")
-
-## 相机的输入开关。遭遇框（选项切换复用方向键）与 Boss 战期间都应当关掉地图操作。
-func _set_camera_active(v: bool) -> void:
-	if camera_rig == null:
-		return
-	camera_rig.process_mode = Node.PROCESS_MODE_INHERIT if v else Node.PROCESS_MODE_DISABLED
-
-func _on_encounter_choice(action: String) -> void:
-	var a := encounter_party
-	encounter_party = null
-	_set_camera_active(true)   # 对话框已关：把地图操作还给玩家（Boss 战会立刻再关掉）
-	if a == null or not is_instance_valid(a):
-		time.unlock()
-		return
-	if action == "attack":
-		hud.hide_encounter()
-		# 现在所有部队（领主 / 商队 / 强盗）都进入 Boss 战斗场景，打的是各自的头目
-		_start_battle(a)
-		return
-	else:
-		print("[撤退] 你避开了 %s 的锋芒，绕道而行。" % a.party_name)
-		cooldowns[a.get_instance_id()] = rules.retreat_cooldown
-		_push_player_away(a.position)
-	hud.hide_encounter()
-	# 撤退会重新下达行军命令 → 时间随移动流动，抵达后再次暂停
-	time.evaluate()
-
-func _push_player_away(from: Vector3) -> void:
-	var d := Vector2(player.position.x - from.x, player.position.z - from.z)
-	if d.length() < 0.1:
-		d = Vector2(1, 0)
-	d = d.normalized()
-	var goal := Vector2(player.position.x, player.position.z) + d * rules.push_away_distance
-	var m := rules.push_away_margin
-	goal.x = clampf(goal.x, m, config.map_size - m)
-	goal.y = clampf(goal.y, m, config.map_size - m)
-	time.order_move(goal)
+## 遭遇检测 / 对话框 / 冷却 / 退避都在 EncounterSystem 里（见 EncounterSystem.gd），
+## 进出 Boss 战在 BattleLauncher 里，两者的接线在 _ready 末尾。
 
 # =============================================================== 输入
 ## 键码 → 语义的分发已经搬进 InputRouter（含「遭遇对话框在场时整体让路」）。
@@ -440,130 +394,3 @@ func _toggle_faction_labels(fid: int) -> void:
 			any_visible = any_visible or s.label.visible
 	print("[UI] 势力 %s 的定居点标签：%s" % [data.faction(fid).name, "显示" if any_visible else "隐藏"])
 
-# =============================================================== Boss 战斗场景（2D 横版）
-## 依据遭遇点在大地图上的位置决定战斗背景风格：雪山 / 沙漠 / 草原
-func _terrain_kind_at(p: Vector2) -> String:
-	var h := data.hm.height_at(p.x, p.y)
-	if h >= config.snow_line:
-		return "snow"
-	if data.gen != null and data.gen.biome_desert.size() > 0:
-		var gx := clampi(int(round(p.x / data.hm.cell)), 0, data.hm.res - 1)
-		var gz := clampi(int(round(p.y / data.hm.cell)), 0, data.hm.res - 1)
-		var i := gz * data.hm.res + gx
-		if i >= 0 and i < data.gen.biome_desert.size() and data.gen.biome_desert[i] > 0.45:
-			return "desert"
-	return "grass"
-
-## 进入 Boss 战：把玩家部队名 / 地形 / Boss 数据传给战斗场景，隐藏大地图
-func _start_battle(a: AIParty) -> void:
-	if battle != null or a == null or not is_instance_valid(a):
-		return
-	var p := Vector2(a.position.x, a.position.z)
-	var terrain := _terrain_kind_at(p)
-	var bcfg := BattleConfig.create()
-	var fcol := Color(0.72, 0.22, 0.22)
-	if a.faction_id >= 0:
-		fcol = data.faction(a.faction_id).color
-	# 按敌人类型给不同的 HP / 破防值（商队护卫长最弱，领主最强）—— 公式在 EncounterRules
-	var kind := a.ai_kind()
-	var bhp := rules.boss_hp(kind, a.troop_count)
-	var bpoise := rules.boss_poise(kind, a.troop_count)
-	var payload := {
-		"config": bcfg,
-		"player_name": "玩家部队 · %d 人" % player.troop_count,
-		"player_hp": bcfg.player_max_hp,
-		"troops": player.troop_count,
-		"terrain": terrain,
-		"boss_kind": kind,
-		"boss_name": a.boss_title if a.boss_title != "" else a.party_name,
-		"boss_hp": bhp,
-		"boss_poise": bpoise,
-		"faction_color": fcol,
-		"player_color": Color(0.70, 0.18, 0.20),
-		"seed": config.map_seed * 7 + int(absf(p.x) * 13.0) + int(absf(p.y) * 29.0),
-	}
-	battle = BattleScene.new()
-	add_child(battle)
-	battle.setup(payload)
-	battle.finished.connect(_on_battle_finished.bind(a))
-	view.set_visible(false)
-	time.lock()                # 战斗中世界时间保持冻结（空格无效）
-	if camera_rig != null:
-		_set_camera_active(false)   # 战斗中相机不再吃键鼠（BattleScene 自己收输入）
-	if router != null:
-		router.enabled = false   # 战斗中输入归 BattleScene，别让大地图热键漏进来
-	print("[Boss战] 进入战斗：%s（类型 %s）｜ 地形 %s ｜ 敌方兵力 %d ｜ Boss HP %.0f 破防 %.0f" % [
-		payload["boss_name"], kind, terrain, a.troop_count, bhp, bpoise])
-	# 开战号角（鼓点 + 低音号角），同时把背景音乐切到战斗曲（短淡入，别拖过第一刀）
-	Sfx.play("battle_start")
-	Bgm.play("battle", audio.bgm_fade_battle)
-
-## 战斗结束：胜利 → Boss 部队消失；失败 → 送回最近的城镇并推进半天；撤退 → 原样返回
-func _on_battle_finished(result: String, a: AIParty) -> void:
-	if battle != null and is_instance_valid(battle):
-		battle.queue_free()
-	battle = null
-	# 回到大地图：战斗曲长淡出，行军主题重新淡入（结算音效还在响，别抢）
-	Bgm.play("map", audio.bgm_fade_map)
-	view.set_visible(true)
-	if camera_rig != null:
-		_set_camera_active(true)
-	if router != null:
-		router.enabled = true
-	# 回到大地图：解除强制暂停，交还给时间流动状态机
-	# （战败会被送去城镇 → 行军中时间流动；其余情况部队原地待命 → 保持暂停）
-	time.unlock()
-	if a == null or not is_instance_valid(a):
-		return
-	var title: String = a.boss_title if a.boss_title != "" else a.party_name
-	var p := Vector2(a.position.x, a.position.z)
-	if result == "win":
-		ai_parties.erase(a)
-		a.queue_free()
-		var kind2 := a.ai_kind()
-		# 战利品与损失率都在 EncounterRules 里（商队货物值钱，但护卫精悍、损失也小）
-		var spoils := int(round(float(a.troop_count) * rules.loot_rate(kind2)))
-		var loss := int(a.troop_count * rules.loss_rate(kind2))
-		var loot_word := rules.loot_word(kind2)
-		player.troop_count = maxi(5, player.troop_count - loss)
-		player.refresh_label()
-		player.label.text = "玩家部队 · %d 人" % player.troop_count
-		hud.show_toast("击败了 %s！缴获%s %d" % [title, loot_word, spoils])
-		print("[Boss战] 胜利：击败了 %s（%s），缴获%s %d，当前兵力 %d" % [title, kind2, loot_word, spoils, player.troop_count])
-	elif result == "lose":
-		var town := _nearest_town(p)
-		if town != null:
-			player.position = Vector3(town.pos.x, data.hm.height_at(town.pos.x, town.pos.y) + 0.4, town.pos.y)
-			time.order_move(town.pos)
-			day_night.time_of_day = fmod(day_night.time_of_day + 0.5, 1.0)
-			hud.show_toast("战败…… 你被送回了 %s（时间推进半天）" % town.name)
-			print("[Boss战] 战败：被送回 %s，时间推进半天" % town.name)
-		cooldowns[a.get_instance_id()] = rules.defeat_cooldown
-	else:
-		hud.show_toast("你撤出了与 %s 的战斗" % title)
-		cooldowns[a.get_instance_id()] = rules.battle_retreat_cooldown
-		_push_player_away(a.position)
-
-## 最近的己方/中立城镇（用于战败回城）
-func _nearest_town(p: Vector2) -> Settlement:
-	var best: Settlement = null
-	var bd := 1e20
-	var my_faction := data.faction_at(p.x, p.y)
-	for s in data.settlements:
-		if s.kind == Settlement.Kind.VILLAGE:
-			continue
-		if my_faction != 255 and s.faction_id != my_faction:
-			continue
-		var d := s.pos.distance_squared_to(p)
-		if d < bd:
-			bd = d
-			best = s
-	if best == null:
-		for s in data.settlements:
-			if s.kind == Settlement.Kind.VILLAGE:
-				continue
-			var d2 := s.pos.distance_squared_to(p)
-			if d2 < bd:
-				bd = d2
-				best = s
-	return best

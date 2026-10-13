@@ -72,12 +72,12 @@ func _run() -> void:
 	if not await _force_encounter():
 		_fail("没能弹出遭遇对话框（无法联调战斗切换）")
 	else:
-		main._on_encounter_choice("attack")
+		main.encounters.resolve("attack")   # 玩家在对话框里选「攻击」（等价于点 HUD 的按钮）
 		var t := 0
-		while t < 120 and main.battle == null:
+		while t < 120 and main.battler.battle == null:
 			t += 1
 			await physics_frame
-		if main.battle == null:
+		if main.battler.battle == null:
 			_fail("选了攻击却没有进入战斗场景")
 		else:
 			print("[BGM联调] 第 %d 帧进入 Boss 战：%s" % [t, Bgm.current()])
@@ -86,9 +86,9 @@ func _run() -> void:
 			else:
 				_fail("进入战斗后没有切到战斗曲（current=%s）" % Bgm.current())
 			# ---- 4) 战斗结束 → 淡回大地图主题 ----
-			main.battle._end_battle("win")
+			main.battler.battle._end_battle("win")
 			var t2 := 0
-			while t2 < 300 and main.battle != null:
+			while t2 < 300 and main.battler.battle != null:
 				t2 += 1
 				await physics_frame
 			print("[BGM联调] 第 %d 帧结算完成：%s" % [t2, Bgm.current()])
@@ -186,8 +186,8 @@ func _force_encounter() -> bool:
 	if nearest == null:
 		return false
 	nearest.position = main.player.position + Vector3(6.0, 0.0, 0.0)
-	main.cooldowns.clear()
-	main.encounters_enabled = true
+	main.encounters.cooldowns.clear()
+	main.encounters.enabled = true
 	var p := Vector2(main.player.position.x, main.player.position.z)
 	main.time.order_move(Vector2(p.x + 60.0, p.y + 60.0))
 	for i in 240:

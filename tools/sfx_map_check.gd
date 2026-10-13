@@ -77,8 +77,8 @@ func _run() -> void:
 			nearest = a
 	if nearest != null:
 		nearest.position = main.player.position + Vector3(6.0, 0.0, 0.0)
-		main.cooldowns.clear()
-		main.encounters_enabled = true
+		main.encounters.cooldowns.clear()
+		main.encounters.enabled = true
 		var p1 := Vector2(main.player.position.x, main.player.position.z)
 		main.time.order_move(Vector2(p1.x + 60.0, p1.y + 60.0))
 		for i in 120:
