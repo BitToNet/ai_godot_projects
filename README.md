@@ -52,6 +52,8 @@ godot --path /path/to/godot_opus5.5
 ```bash
 # 逐个音色的体检报告（时长 / 峰值 / RMS / 三频段能量 / 过零率 / 衰减）
 godot --headless --path /path/to/godot_opus5.5 --script res://tools/sfx_tool.gd
+# 音色指纹：28 个音色的 PCM 逐字节比对 tools/sfx_pcm.json（合成优化后必须一模一样）
+godot --headless --path /path/to/godot_opus5.5 --script res://tools/sfx_tool.gd -- --check
 # 再导出全部音色为 audio_preview/*.wav 试听
 godot --headless --path /path/to/godot_opus5.5 --script res://tools/sfx_tool.gd -- --wav
 # 战斗音效联调：脚本化打一场 Boss 战，统计每个音效触发次数
@@ -60,9 +62,14 @@ godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://too
 godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://tools/sfx_map_check.gd
 # 背景音乐联调：两首曲目加载 / 循环 / 开战切换 / 回到大地图 / 静音
 godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://tools/bgm_check.gd
+# 音色 PCM 缓存自检：冷启动落盘 / 热启动逐字节一致 / 坏缓存自愈 / setup 命中
+godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://tools/audio_cache_check.gd
 ```
 音效两个脚本退出码 `0` = 关键音效全部触发过，`1` = 有缺失并打印缺失清单；
 `bgm_check.gd` 退出码 `0` = 两首曲目都正常起播、切换与静音，`1` = 音频缺失或状态不对。
+`audio_cache_check.gd` 退出码 `0` = 缓存可命中且 PCM 与冷启动逐字节一致，`1` = 键 / 校验 / 自愈有问题。
+音色 PCM 缓存放在 `user://sfx_cache/`（约 679 KB），**删掉即重新合成**：首次启动多花约 1.1~1.3 秒，
+之后启动只花几毫秒（`Sfx.setup()` 实测 1.35 秒 → 9 毫秒）。
 
 ### 5. 换一张地图
 打开 `scripts/core/MapConfig.gd`，修改：
@@ -205,6 +212,7 @@ godot_opus5.5/
     └── audio/                        # ★ 音效（代码合成 PCM）+ 背景音乐的播放管理
         ├── AudioConfig.gd            # 音频可调参数（@export）：总音量 / 分类音量 / 节拍 / 音效池 / BGM 音量
         ├── SfxSynth.gd               # 28 种音色的合成器（正弦表 / 噪声包络 / 金属泛音 / 双二阶滤波）
+        ├── SfxCache.gd               # ★ 音色 PCM 缓存：合成结果写进 user://，冷启动 1.3 秒 → 9 毫秒
         ├── Sfx.gd                    # 音效播放管理：播放器池 + 最短间隔节流 + 2D/3D 定位 + 静音开关
         └── Bgm.gd                    # 背景音乐：两首曲目交叉淡入淡出 + 循环 + 懒加载 + 随 M 键静音
 ├── audio/
@@ -212,7 +220,7 @@ godot_opus5.5/
 │       ├── map_theme.ogg             # 大地图主题「旧时日」（120.6 秒 / 44.1 kHz 立体声）
 │       └── battle_theme.ogg          # Boss 战主题「降临 · The Descent」（88.7 秒 / 44.1 kHz 立体声）
 ├── tools/                            # 命令行自检工具（不参与游戏运行）
-│   ├── run_checks.ps1                # ★ 一键跑完全部门禁（8 步 / 12 项断言，约 36~47 s，唯一需要的命令）
+│   ├── run_checks.ps1                # ★ 一键跑完全部门禁（16 步 / 20 项断言，约 37~45 s，唯一需要的命令）
 │   ├── gen_fingerprint.gd            # 生成物指纹（确定性自检，与 gen_fingerprint.json 比对）
 │   ├── perf_probe.gd                 # 性能基准（生成耗时 / 每帧开销，与 perf_baseline.json 比对）
 │   ├── hud_check.gd                  # HUD 接口与布局断言
@@ -221,7 +229,8 @@ godot_opus5.5/
 │   ├── sfx_tool.gd                   # 音色体检：时长/峰值/RMS/三频段能量/过零率/衰减 + 导出试听 WAV
 │   ├── sfx_battle_check.gd           # 战斗音效联调：模拟一场 Boss 战，统计每个音效触发次数
 │   ├── sfx_map_check.gd              # 大地图音效联调：行军号角 / 马蹄 / 遭遇提示音
-│   └── bgm_check.gd                  # 背景音乐联调：曲目加载 / 循环 / 战斗切换 / 静音
+│   ├── bgm_check.gd                  # 背景音乐联调：曲目加载 / 循环 / 战斗切换 / 静音
+│   └── audio_cache_check.gd          # 音色 PCM 缓存：冷启动落盘 / 热启动逐字节一致 / 坏缓存自愈
 ```
 
 ---
@@ -437,6 +446,8 @@ godot_opus5.5/
     - `sfx_battle_check.gd`：脚本化驱动一场真实 Boss 战（跑动/跳跃/闪避/弹反/三段连招/蓄力剑气），
       统计每个音效实际触发次数，缺哪个就报哪个
     - `sfx_map_check.gd`：启动完整大地图，下令行军并触发遭遇，验证号角 / 马蹄 / 遭遇音
+    - `audio_cache_check.gd`：音色 PCM 缓存的定式（冷启动落盘 → 热启动逐字节一致 → 六种坏缓存自愈 →
+      `Sfx.setup()` 命中路径音色一致 → 关掉缓存时完全不碰磁盘），77 项断言 / 约 2 秒
 
 ### 背景音乐（大地图 / Boss 战各一首，外部成品母带）
 - [x] 两首曲子由**项目作者提供母带**，本工程只做转码与接入（不生成、不改音乐内容）：
@@ -492,7 +503,7 @@ godot_opus5.5/
    **外部音频资源**：`audio/bgm/*.ogg`，由作者提供母带后转码接入（见「背景音乐」一节），
    **授权信息以作者为准，本工程不做声明** —— 这是应需求方要求对"不使用任何外部音频"这条原始
    约定做的**有意偏离**，且只发生在 BGM 上。（更早的版本曾用 XSXB-Band 工作室渲染两首 CC0 民乐
-   「山河行旅」/「金戈铁马」，已被本轮替换；旧成品留在 git 历史与 `F:\aigc_code\XSXB-Band\exports\` 里。）音效的代价是：① 启动时多约 1.6~2 秒合成时间（Loading 里显示进度，
+   「山河行旅」/「金戈铁马」，已被本轮替换；旧成品留在 git 历史与 `F:\aigc_code\XSXB-Band\exports\` 里。）音效的代价是：① 首次启动要合成约 1.1~1.3 秒（之后走 PCM 缓存只要几毫秒，见 `SfxCache.gd`；Loading 里显示进度，
    可把 `AudioConfig.enabled` 关掉跳过）；② 音色是"合成器风格"的，不如真实录音的层次与细节；
    ③ 单一混响/空间感，没有做 HRTF、遮挡、混响区。音效清单：挥砍命中（轻/重/暴击）、
    弹反打铁、闪避破风、完美闪避、脚步、跳跃落地、马蹄、受击闷哼、破防、二阶段怒吼、

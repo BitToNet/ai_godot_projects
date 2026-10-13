@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行 15 步；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行 16 步（20 项断言，热缓存约 37 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -39,6 +39,8 @@
 #    9c) 音色 PCM 指纹（tools/sfx_tool.gd --check）—— 28 个音色的 16bit PCM 逐字节
 #        比对 tools/sfx_pcm.json。第五轮的合成优化（去函数调用 / 去临时分配 / 省 pow）
 #        全是「输出必须一模一样」的类型，这条就是它的证明；有意改音色必须显式更新基线
+#    9d) PCM 缓存自检（tools/audio_cache_check.gd）—— 冷启动合成落盘 → 热启动逐字节一致
+#        → 六种坏缓存各自静默退回冷启动并自愈 → Sfx.setup 真的走缓存 → 关缓存不碰盘
 #    10) 主场景跑 900 帧 —— 无 ERROR，且生成统计与 tools/gen_fingerprint.json 基线一致
 #
 #  为什么是这些：本工程「一切由种子生成 + 运行时合成音效 + 纯代码 UI」，
@@ -279,6 +281,15 @@ $rPcm = Invoke-GodotStep -Name 'sfx_pcm_check' -Extra @('--script', 'res://tools
 $pcmPass = @($rPcm.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rPcm.Ok -and -not $pcmPass) {
 	$fail.Add('音色指纹  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 9d) 音色 PCM 缓存自检（tools/audio_cache_check.gd）----
+# 5c 的证明：冷启动合成 → 落盘 → 热启动逐字节一致 → 坏缓存自愈 → Sfx.setup 命中 → 关缓存不碰盘。
+# 它跑完会留下一份**有效**缓存，后面几步（sfx_map_check / bgm_check / main_scene_900）因此是热启动。
+$rCache = Invoke-GodotStep -Name 'audio_cache_check' -Extra @('--script', 'res://tools/audio_cache_check.gd')
+$cachePass = @($rCache.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rCache.Ok -and -not $cachePass) {
+	$fail.Add('音色缓存  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 10) 主场景 900 帧 + 生成统计比对基线 ----

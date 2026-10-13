@@ -40,6 +40,12 @@ func _run() -> void:
 	host = Node.new()
 	host.name = "AudioCheckHost"
 	root.add_child(host)
+	# ⚠ 加进 root ≠ "已经在跑"：--script 模式下 _initialize() 早于 SceneTree 的第一次迭代，
+	# 此时 root 还没真正进树，子节点上的 play() 会报
+	# "Playback can only happen when a node is inside the scene tree"。
+	# 以前是**碰巧**没事：冷启动合成会让出几十帧；5c 的 PCM 缓存把这 1.3 秒省掉之后，
+	# Sfx.setup() 一次都不 await，这个隐式依赖立刻现形 —— 所以这里显式让出一帧。
+	await process_frame
 
 	# ---------------------------------------------------------------- 1) 布局
 	_section("1) 总线布局（%s）" % AudioBus.LAYOUT)

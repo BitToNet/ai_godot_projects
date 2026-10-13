@@ -94,11 +94,11 @@ func _init() -> void:
 # =============================================================== 音色指纹
 ## 28 个音色的 PCM 逐字节指纹。哈希里带上 id 与长度，免得"两个音色互换"看不出来。
 ## RATE 也进哈希：采样率变了而 PCM 字节恰好一样时同样应当报不同。
+## ⚠ 配方住在 SfxCache.total_of()（音色缓存要用同一套值来判缓存是否可用），这里只调它 ——
+##    两处各写一份的话，一旦悄悄漂移，"缓存指纹 == 仓库基线"这条断言就会莫名其妙地失灵。
 func _fingerprint_run(ids: Array, rng: RandomNumberGenerator, check: bool, write_baseline: bool) -> int:
-	var ctx := HashingContext.new()
-	ctx.start(HashingContext.HASH_SHA256)
-	ctx.update(str(SfxSynth.RATE).to_utf8_buffer())
 	var per := {}
+	var datas := {}
 	var samples := 0
 	var t0 := Time.get_ticks_msec()
 	for id in ids:
@@ -107,16 +107,10 @@ func _fingerprint_run(ids: Array, rng: RandomNumberGenerator, check: bool, write
 		if st == null or st.data.is_empty():
 			print("[音色指纹] FAIL：%s 合成失败" % sid)
 			return 1
-		per[sid] = _sha256_bytes(st.data)
+		per[sid] = SfxCache.sha256(st.data)
+		datas[sid] = st.data
 		samples += st.data.size() / 2
-		var lb := PackedByteArray()
-		lb.resize(8)
-		lb.encode_u32(0, sid.length())
-		lb.encode_u32(4, st.data.size())
-		ctx.update(lb)
-		ctx.update(sid.to_utf8_buffer())
-		ctx.update(st.data)
-	var total := ctx.finish().hex_encode()
+	var total := SfxCache.total_of(datas)
 	var ms := Time.get_ticks_msec() - t0
 	if write_baseline:
 		var f := FileAccess.open(PCM_JSON, FileAccess.WRITE)
@@ -185,11 +179,9 @@ func _load_baseline() -> Dictionary:
 		return {}
 	return j.data if j.data is Dictionary else {}
 
+## 保留这个薄封装只是为了不动其它调用点；实现与 SfxCache.sha256 完全相同
 func _sha256_bytes(data: PackedByteArray) -> String:
-	var c := HashingContext.new()
-	c.start(HashingContext.HASH_SHA256)
-	c.update(data)
-	return c.finish().hex_encode()
+	return SfxCache.sha256(data)
 
 # =============================================================== 合成热点报表
 func _print_profile() -> void:

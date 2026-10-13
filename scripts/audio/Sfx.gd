@@ -27,6 +27,13 @@ static var _last_ms: Dictionary = {}      ## id -> 上次播放时刻（用于�
 static var _counts: Dictionary = {}       ## id -> 累计播放次数（调试用：F3 面板 / tools/sfx_battle_check.gd）
 static var _rng := RandomNumberGenerator.new()
 
+## 播放期音高抖动用**独立**的 RNG，不与合成用的 _rng 共用：
+## 合成消耗多少个随机数是"实现细节"（命中 PCM 缓存时一次都不消耗），共用的话
+## 冷启动与命中缓存两条路径会得到不同的抖动序列 —— 同一份代码两种开局，听感不该有差别。
+## 固定种子，让抖动序列只取决于播放次数，与"这次是冷启动还是缓存"无关。
+const _JIT_SEED := 0x5F3A17 + 7
+static var _jit := RandomNumberGenerator.new()
+
 ## 扇子音名单：播放时把音乐临时压低。刻意不塞进 SfxSynth.SPECS ——
 ## 那是"音色配方"，而这是"混音行为"，两件事放在一起以后必然互相牵制。
 const FANFARE := ["order", "battle_start", "result_win", "result_lose"]
@@ -66,9 +73,27 @@ static func setup(host: Node, c: AudioConfig = null) -> void:
 		p.bus = AudioBus.route(AudioBus.SFX)   # 音效总线（缺 .tres 时自动退 Master）
 		host.add_child(p)
 		_players.append(p)
-	# 逐个合成音色；按时间切片让出帧，Loading 界面不会卡住
-	# （全部 28 个音色共约 16 秒音频，实测合成 ≈ 1.3 秒，切成若干片后每片 < 100ms）
 	var ids := SfxSynth.ids()
+	# 1) 先试 PCM 缓存（user://sfx_cache）：命中就省掉 ~1.1 秒合成，见 ROADMAP §11.4。
+	#    缓存是**整体命中 / 整体丢弃**的：噪声音色共用一条 RNG 流，不能只补一两个，
+	#    否则后面所有音色的噪声都会变样（音色悄悄变了，比慢 1 秒糟糕得多）。
+	var cached := SfxCache.load_bank()
+	if not cached.is_empty():
+		for id in ids:
+			var sid := String(id)
+			var cm := SfxSynth.meta(sid)
+			_bank[sid] = {
+				"stream": cached[sid],
+				"cat": String(cm[0]),
+				"db": float(cm[1]),
+				"gap": float(cm[2]),
+				"pitch": float(cm[3]),
+			}
+		_jit.seed = _JIT_SEED
+		_ready = true
+		return
+	# 2) 冷启动：逐个合成音色；按时间切片让出帧，Loading 界面不会卡住
+	# （全部 28 个音色共约 16 秒音频，合成 ≈ 1.1 秒，切成若干片后每片 < 100ms）
 	var tree := Engine.get_main_loop() as SceneTree
 	var slice_t := Time.get_ticks_msec()
 	for id in ids:
@@ -83,6 +108,9 @@ static func setup(host: Node, c: AudioConfig = null) -> void:
 		if tree != null and Time.get_ticks_msec() - slice_t > 60:
 			slice_t = Time.get_ticks_msec()
 			await tree.process_frame
+	# 3) 落盘（写不进去只影响下次启动的快慢，不影响本次运行）
+	SfxCache.save_bank(_bank)
+	_jit.seed = _JIT_SEED
 	_ready = true
 
 # =============================================================== 开关 / 音量
@@ -239,7 +267,7 @@ static func _pitch_of(e: Dictionary, pitch: float) -> float:
 	var j := cfg().pitch_jitter
 	var p: float = float(e["pitch"]) * pitch
 	if j > 0.0:
-		p *= 1.0 + _rng.randf_range(-j, j)
+		p *= 1.0 + _jit.randf_range(-j, j)
 	return clampf(p, 0.25, 4.0)
 
 ## 播放一次就回收的临时播放器：
