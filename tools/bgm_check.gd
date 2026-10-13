@@ -52,7 +52,7 @@ func _run() -> void:
 
 	# ---- 1) 大地图主题淡入 ----
 	if await _wait_playing("map", 240):
-		_pass("大地图主题「山河行旅」已起播")
+		_pass("大地图主题「旧时日」已起播")
 	else:
 		_fail("大地图主题没有起播（current=%s）" % Bgm.current())
 
@@ -82,7 +82,7 @@ func _run() -> void:
 		else:
 			print("[BGM联调] 第 %d 帧进入 Boss 战：%s" % [t, Bgm.current()])
 			if await _wait_playing("battle", 240):
-				_pass("进入战斗后切到战斗曲「金戈铁马」")
+				_pass("进入战斗后切到战斗曲「降临 · The Descent」")
 			else:
 				_fail("进入战斗后没有切到战斗曲（current=%s）" % Bgm.current())
 			# ---- 4) 战斗结束 → 淡回大地图主题 ----

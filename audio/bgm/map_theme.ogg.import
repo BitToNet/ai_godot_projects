@@ -14,6 +14,6 @@ dest_files=["res://.godot/imported/map_theme.ogg-38f9f719b124bc0f3b07e0050def68e
 
 loop=true
 loop_offset=0
-bpm=76
-beat_count=128
+bpm=0
+beat_count=0
 bar_beats=4
