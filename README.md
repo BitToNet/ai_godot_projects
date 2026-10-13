@@ -71,7 +71,19 @@ godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://too
 音色 PCM 缓存放在 `user://sfx_cache/`（约 679 KB），**删掉即重新合成**：首次启动多花约 1.1~1.3 秒，
 之后启动只花几毫秒（`Sfx.setup()` 实测 1.35 秒 → 9 毫秒）。
 
-### 5. 换一张地图
+### 5. 规模热点探针（可选，命令行）
+```bash
+# 三条主线（植被筛选 / 地形建块 / A* 寻路）的实测表 + 与基线比对，退出码 0 = 与基线一致
+godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://tools/scale_probe.gd
+# 有意改了规模或优化了热点之后更新基线（结构量会跟着变，属于「显式接受」）
+godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://tools/scale_probe.gd -- --write-baseline
+```
+结构量（实例数 / 区块数 / 变换指纹 / 地形位置与索引指纹 / 每对路径的点数与展开节点数）必须与
+`tools/scale_baseline.json` **精确一致**；耗时只做上界比对（× 1.6 记 WARN，× 2.5 判失败）——
+这样它既能当「优化有没有真的变快」的量尺，也能当「重构有没有偷偷改变世界」的看守。
+注意 headless 下没有渲染：draw call / 视锥剔除 / MultiMesh 上传的收益它测不到。
+
+### 6. 换一张地图
 打开 `scripts/core/MapConfig.gd`，修改：
 ```gdscript
 @export var map_seed: int = 20250929   # 换成任意整数
@@ -220,9 +232,11 @@ godot_opus5.5/
 │       ├── map_theme.ogg             # 大地图主题「旧时日」（120.6 秒 / 44.1 kHz 立体声）
 │       └── battle_theme.ogg          # Boss 战主题「降临 · The Descent」（88.7 秒 / 44.1 kHz 立体声）
 ├── tools/                            # 命令行自检工具（不参与游戏运行）
-│   ├── run_checks.ps1                # ★ 一键跑完全部门禁（16 步 / 20 项断言，约 37~45 s，唯一需要的命令）
+│   ├── run_checks.ps1                # ★ 一键跑完全部门禁（17 步 / 21~22 项断言，约 42~44 s，唯一需要的命令）
 │   ├── gen_fingerprint.gd            # 生成物指纹（确定性自检，与 gen_fingerprint.json 比对）
 │   ├── perf_probe.gd                 # 性能基准（生成耗时 / 每帧开销，与 perf_baseline.json 比对）
+│   ├── scale_probe.gd                # 规模热点探针（植被筛选 / 地形建块 / A*，含结构量指纹）
+│   ├── scale_baseline.json           # 上面那条的基线（结构量精确一致，耗时上界比对）
 │   ├── hud_check.gd                  # HUD 接口与布局断言
 │   ├── hud_shot.gd                   # 真实渲染截图（开窗口跑，出 Loading / 大地图 / 遭遇框三张图）
 │   ├── input_check.gd                # 输入层回归：动作表是否真进 InputMap / 分发与让路 / 遭遇框作答
@@ -265,6 +279,10 @@ godot_opus5.5/
 - [x] 地形着色器 / 水面着色器在远处衰减高频程序噪声，避免远景摩尔纹
 - [x] 实测：1600×900，近景 **185~206 draw call / 22~26 万三角形**；
       静置测量 **60 FPS（垂直同步上限）**，解除帧率上限时 **144 FPS**
+- [x] 【实证】第六轮改前基线（`tools/scale_probe.gd`，固定种子 20250929）：植被 `build()` 911~917 ms
+      （其中**筛选段 909~915 ms**，实例发射只有 **2.2 ms** —— 路线图原本估的「发射改批量写 5~15×」被实测否掉）、
+      地形 LOD0 单块中位 4.74 ms / 最大 6.72 ms、每顶点采样 4.09 µs（法线占 3.29 µs）、
+      A* 细栅格 12 对 38 ms（单次最坏 14.7 ms）/ 粗栅格单次最坏 **68.9 ms（≈4 帧）**
 
 ### 植被
 - [x] 针叶林（北部山麓，锥形树 + 树干）、阔叶林（中部，低模球冠）、

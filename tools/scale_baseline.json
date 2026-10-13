@@ -1,0 +1,244 @@
+{
+	"map_size": 1024,
+	"note": "由 tools/scale_probe.gd --write-baseline 生成；结构量必须精确一致，耗时只做上界比对",
+	"path_coarse_detail": [
+		{
+			"expanded": 15,
+			"ms": 0.588,
+			"pts": 2
+		},
+		{
+			"expanded": 21,
+			"ms": 0.707,
+			"pts": 2
+		},
+		{
+			"expanded": 13,
+			"ms": 0.376,
+			"pts": 2
+		},
+		{
+			"expanded": 13,
+			"ms": 0.458,
+			"pts": 2
+		},
+		{
+			"expanded": 25,
+			"ms": 0.893,
+			"pts": 2
+		},
+		{
+			"expanded": 24,
+			"ms": 0.892,
+			"pts": 2
+		},
+		{
+			"expanded": 626,
+			"ms": 9.819,
+			"pts": 5
+		},
+		{
+			"expanded": 62,
+			"ms": 1.306,
+			"pts": 3
+		},
+		{
+			"expanded": 430,
+			"ms": 7.403,
+			"pts": 4
+		},
+		{
+			"expanded": 24,
+			"ms": 0.655,
+			"pts": 4
+		},
+		{
+			"expanded": 18,
+			"ms": 0.623,
+			"pts": 2
+		},
+		{
+			"expanded": 3913,
+			"ms": 68.73,
+			"pts": 10
+		}
+	],
+	"path_coarse_expanded": 5184,
+	"path_coarse_max_ms": 68.73,
+	"path_coarse_total_ms": 92.45,
+	"path_fine_detail": [
+		{
+			"expanded": 31,
+			"ms": 1.441,
+			"pts": 2
+		},
+		{
+			"expanded": 41,
+			"ms": 1.161,
+			"pts": 2
+		},
+		{
+			"expanded": 21,
+			"ms": 0.345,
+			"pts": 2
+		},
+		{
+			"expanded": 49,
+			"ms": 0.904,
+			"pts": 2
+		},
+		{
+			"expanded": 133,
+			"ms": 5.234,
+			"pts": 2
+		},
+		{
+			"expanded": 49,
+			"ms": 3.192,
+			"pts": 2
+		},
+		{
+			"expanded": 30,
+			"ms": 1.247,
+			"pts": 2
+		},
+		{
+			"expanded": 52,
+			"ms": 1.78,
+			"pts": 3
+		},
+		{
+			"expanded": 296,
+			"ms": 4.944,
+			"pts": 5
+		},
+		{
+			"expanded": 53,
+			"ms": 1.482,
+			"pts": 5
+		},
+		{
+			"expanded": 37,
+			"ms": 1.494,
+			"pts": 2
+		},
+		{
+			"expanded": 351,
+			"ms": 13.609,
+			"pts": 5
+		}
+	],
+	"path_fine_expanded": 1143,
+	"path_fine_max_ms": 13.609,
+	"path_fine_total_ms": 36.833,
+	"path_n": 12,
+	"path_pairs": [
+		[
+			555.37,
+			584.748,
+			432.539,
+			482.612
+		],
+		[
+			432.539,
+			482.612,
+			431.797,
+			649.844
+		],
+		[
+			431.797,
+			649.844,
+			443.802,
+			562.246
+		],
+		[
+			443.802,
+			562.246,
+			541.795,
+			644.462
+		],
+		[
+			541.795,
+			644.462,
+			492.346,
+			447.456
+		],
+		[
+			492.346,
+			447.456,
+			393.858,
+			253.431
+		],
+		[
+			393.858,
+			253.431,
+			273.609,
+			192.334
+		],
+		[
+			273.609,
+			192.334,
+			471.986,
+			94.251
+		],
+		[
+			471.986,
+			94.251,
+			286.235,
+			272.771
+		],
+		[
+			286.235,
+			272.771,
+			336.871,
+			75.474
+		],
+		[
+			336.871,
+			75.474,
+			205.913,
+			212.732
+		],
+		[
+			205.913,
+			212.732,
+			840.171,
+			527.889
+		]
+	],
+	"prim_height_at_us": 0.731,
+	"prim_normal_at_us": 3.185,
+	"seed": 20250929,
+	"terrain_chunks": 64,
+	"terrain_idx_hash": "ed3c6f4ec427b094",
+	"terrain_lod0_max_ms": 6.812,
+	"terrain_lod0_median_ms": 4.748,
+	"terrain_lod0_n": 64,
+	"terrain_lod0_sum_ms": 310.681,
+	"terrain_lod0_verts": 1601,
+	"terrain_lod1_max_ms": 1.298,
+	"terrain_lod1_median_ms": 1.212,
+	"terrain_lod1_n": 16,
+	"terrain_lod1_sum_ms": 19.504,
+	"terrain_lod2_max_ms": 0.488,
+	"terrain_lod2_median_ms": 0.384,
+	"terrain_lod2_n": 16,
+	"terrain_lod2_sum_ms": 6.206,
+	"terrain_lod3_max_ms": 0.166,
+	"terrain_lod3_median_ms": 0.127,
+	"terrain_lod3_n": 16,
+	"terrain_lod3_sum_ms": 2.082,
+	"terrain_pos_hash": "5a2e59665239f171",
+	"veg_chunks": 212,
+	"veg_emit_ms": 2.151,
+	"veg_instances": 5163,
+	"veg_kinds": {
+		"broadleaf": 2132,
+		"cactus": 257,
+		"conifer": 1952,
+		"deadtree": 211,
+		"rock": 611
+	},
+	"veg_total_ms": 916.912,
+	"veg_xform_hash": "df5b0d581cff76f2"
+}

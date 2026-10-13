@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行 16 步（20 项断言，热缓存约 37 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行 17 步（21~22 项断言，约 44 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -26,6 +26,11 @@
 #        四条路的定价、可用性与代价，外加「不合法动作一律静默拒绝」与时间锁有没有解开。
 #        这张表同样在 900 帧里走不到：主场景里玩家不动，一次遭遇都不会触发
 #    7) 性能基准采样（tools/perf_probe.gd）
+#    7b) 规模热点探针（tools/scale_probe.gd）—— 第六轮的三条主线：植被筛选 / 地形建块 /
+#        A* 寻路。结构量（实例数 / 区块数 / 变换指纹 / 展开节点数）与 tools/scale_baseline.json
+#        精确比对，耗时只做上界比对（1.6x 记 WARN / 2.5x 判失败）。它一上来就证伪了路线图
+#        的一条预估：植被的实例发射只占 2.2 ms / 917 ms，「改 multimesh_set_buffer」
+#        几乎省不下时间（详见 ROADMAP §12.1）
 #    6c) 存档定式（tools/save_check.gd）—— 存档格式 / 三道门（版本 / 种子 / 实体 id）/
 #        坏数据钳制 / 读档后的引用修复 / 文件读写（不建世界，纯定式）
 #    6d) 音频总线定式（tools/audio_check.gd）—— default_bus_layout.tres（Master → Music / Sfx）
@@ -251,6 +256,14 @@ $warn3 = @($r3.Lines | Where-Object { $_ -match 'WARN' })
 if ($r3.Ok -and $warn3.Count -gt 0) {
 	# 超容差才判失败；只是漂移就提示出来，别让"长期贴着容差上限"悄悄变成新常态
 	$pass.Add("性能基准  注意  有 $($warn3.Count) 条 WARN（未超容差，不判失败）")
+}
+
+# ---- 7b) 规模热点探针 ----
+# 结构量必须与 tools/scale_baseline.json 精确一致；耗时超 1.6x 记 WARN、超 2.5x 判失败。
+$r3b = Invoke-GodotStep -Name 'scale_probe' -Extra @('--script', 'res://tools/scale_probe.gd')
+$warn3b = @($r3b.Lines | Where-Object { $_ -match 'WARN' })
+if ($r3b.Ok -and $warn3b.Count -gt 0) {
+	$pass.Add("规模热点  注意  有 $($warn3b.Count) 条 WARN（未超硬容差，不判失败）")
 }
 
 # ---- 8) / 9) 音效联调 ----

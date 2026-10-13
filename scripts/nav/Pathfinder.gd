@@ -26,6 +26,9 @@ const NEI_Z := [0, 0, 1, -1, 1, -1, 1, -1]
 ##   90% 的搜索早在触发上限之前就已穷尽整个可达区域。）
 ## 真正挡住「目标不可达」这类病态搜索的是下面的连通分量预判，见 find_path()。
 var max_expand: int = 0
+## 最近一次 find_path() 展开的节点数（只写不读的探针字段：第六轮的 A* 优化要靠它证明
+## 「展开数不变」= 改动只影响速度、不影响搜索结果）
+var last_expanded: int = 0
 
 var nav: NavGrid
 ## 加权 A*：>1 会牺牲一点最优性换取大幅加速（战术地图上视觉无差别）
@@ -96,6 +99,7 @@ func _heap_pop() -> int:
 # ---------------------------------------------------------------- 主入口
 ## 返回世界坐标折线（y 由高度场给出）；失败返回空数组
 func find_path(from_world: Vector2, to_world: Vector2) -> PackedVector3Array:
+	last_expanded = 0
 	var s := nav.cell_of(from_world)
 	var t := nav.cell_of(to_world)
 	if nav.is_blocked(t.x, t.y):
@@ -136,6 +140,7 @@ func find_path(from_world: Vector2, to_world: Vector2) -> PackedVector3Array:
 			found = true
 			break
 		expanded += 1
+		last_expanded = expanded
 		if expanded > max_expand:
 			break
 		var cx := cur % nav.res
