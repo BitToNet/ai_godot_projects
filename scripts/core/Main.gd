@@ -27,6 +27,7 @@ var data: MapData
 var day_night: DayNightCycle
 var hud: HUD
 var camera_rig: CameraRig
+var router: InputRouter
 var terrain: TerrainManager
 var water: WaterBuilder
 var vegetation: VegetationScatter
@@ -406,16 +407,31 @@ func _setup_ui() -> void:
 	hud.set_terrain_text("草原 (1.0x)")
 	hud.encounter_choice.connect(_on_encounter_choice)
 
+	# 输入路由：键码 → 语义信号。键位表在 project.godot 的 [input] 段，
+	# 这里不再出现任何 KEY_* 常量，加手柄 / 改键位都不用动代码。
+	router = InputRouter.new()
+	router.name = "InputRouter"
+	add_child(router)
+	router.camera_rig = camera_rig
+	router.hud = hud
+	router.cfg = config
+	router.order_move.connect(_order_move)
+	router.cycle_speed_requested.connect(_on_cycle_speed)
+	router.toggle_vegetation_requested.connect(_on_toggle_vegetation)
+	router.toggle_mute_requested.connect(_on_toggle_mute)
+	router.faction_labels_requested.connect(_toggle_faction_labels)
+
 # =============================================================== 时间流动
 ## 每帧裁决「世界时间是否流动」（旧版的空格开关已改为骑砍式状态机）：
 ##   1) 松开空格 → 解除消费标记，允许下一次长按生效；
 ##   2) 行军途中按下空格 → 行军立刻中断并进入暂停，这次按住不再触发时间流动；
 ##   3) 部队停下后长按空格 → 世界时间才流动，松开立刻暂停；
 ##   4) 遭遇对话 / Boss 战 → 强制暂停，空格无效。
+##  「长按」这个键由动作 time_flow 定义（默认 空格 / 手柄 X），见 project.godot 的 [input] 段。
 func _eval_time_flow() -> void:
 	if player == null:
 		return
-	var space_down := Input.is_physical_key_pressed(KEY_SPACE)
+	var space_down := Input.is_action_pressed("time_flow")
 	if not space_down:
 		_space_latched = false
 	elif not _space_latched and player.moving:
@@ -442,7 +458,7 @@ func _eval_time_flow() -> void:
 func _order_move(goal: Vector2) -> void:
 	if player == null:
 		return
-	if Input.is_physical_key_pressed(KEY_SPACE):
+	if Input.is_action_pressed("time_flow"):
 		_space_latched = true
 	player.set_destination(goal)
 	if player.moving:
@@ -560,13 +576,23 @@ func _open_encounter(a: AIParty) -> void:
 	hud.show_encounter("遭遇 %s" % a.party_name,
 		"%s · %s\n%s兵力：%d 人     你的兵力：%d 人\n\n时间已暂停 —— 请决定行动。" % [kindname, fname, lead_line, a.troop_count, player.troop_count],
 		col)
+	# 视角也冻住：方向键 / 左摇杆同时是 move_*（平移视角）与对话框的选项切换键，
+	# 不冻的话「在对话框里按 →」会连带把镜头也拖走。
+	_set_camera_active(false)
 	# 遭遇提示音（对话框弹出）
 	Sfx.play("encounter")
+
+## 相机的输入开关。遭遇框（选项切换复用方向键）与 Boss 战期间都应当关掉地图操作。
+func _set_camera_active(v: bool) -> void:
+	if camera_rig == null:
+		return
+	camera_rig.process_mode = Node.PROCESS_MODE_INHERIT if v else Node.PROCESS_MODE_DISABLED
 
 func _on_encounter_choice(action: String) -> void:
 	var a := encounter_party
 	encounter_party = null
 	_time_lock = false
+	_set_camera_active(true)   # 对话框已关：把地图操作还给玩家（Boss 战会立刻再关掉）
 	if a == null or not is_instance_valid(a):
 		_eval_time_flow()
 		return
@@ -594,34 +620,19 @@ func _push_player_away(from: Vector3) -> void:
 	_order_move(goal)
 
 # =============================================================== 输入
-func _unhandled_input(event: InputEvent) -> void:
-	if battle != null:
-		return
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if hud != null and hud.is_encounter_open():
-			return
-		if camera_rig == null:
-			return
-		var hit := camera_rig.ray_to_terrain(event.position)
-		if hit.y > config.sea_level + 0.2:
-			# 点击地图 → 开始行军；行军途中时间流动，抵达后立刻暂停
-			_order_move(Vector2(hit.x, hit.z))
-	elif event is InputEventKey and event.pressed and not event.echo:
-		match event.physical_keycode:
-			KEY_R:
-				speed_index = (speed_index + 1) % speed_steps.size()
-				day_night.speed = speed_steps[speed_index]
-			KEY_V:
-				vegetation.root.visible = not vegetation.root.visible
-			KEY_M:
-				var muted := Sfx.toggle_mute()
-				hud.show_toast("音效 / 音乐：%s（按 M 切换）" % ("已静音" if muted else "已开启"), 2.0)
-			KEY_1:
-				_toggle_faction_labels(0)
-			KEY_2:
-				_toggle_faction_labels(1)
-			KEY_3:
-				_toggle_faction_labels(2)
+## 键码 → 语义的分发已经搬进 InputRouter（含「遭遇对话框在场时整体让路」）。
+## 这里只负责「按下之后改什么」，因此不再出现任何物理键码。
+func _on_cycle_speed() -> void:
+	speed_index = (speed_index + 1) % speed_steps.size()
+	day_night.speed = speed_steps[speed_index]
+
+func _on_toggle_vegetation() -> void:
+	vegetation.root.visible = not vegetation.root.visible
+
+func _on_toggle_mute() -> void:
+	var muted := Sfx.toggle_mute()
+	hud.show_toast("音效 / 音乐：%s（%s 切换）" % [
+		"已静音" if muted else "已开启", InputRouter.action_keys_text("toggle_mute")], 2.0)
 
 func _toggle_faction_labels(fid: int) -> void:
 	if fid >= data.factions.size():
@@ -743,7 +754,9 @@ func _start_battle(a: AIParty) -> void:
 	game_paused = true
 	day_night.paused = true
 	if camera_rig != null:
-		camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
+		_set_camera_active(false)   # 战斗中相机不再吃键鼠（BattleScene 自己收输入）
+	if router != null:
+		router.enabled = false   # 战斗中输入归 BattleScene，别让大地图热键漏进来
 	print("[Boss战] 进入战斗：%s（类型 %s）｜ 地形 %s ｜ 敌方兵力 %d ｜ Boss HP %.0f 破防 %.0f" % [
 		payload["boss_name"], kind, terrain, a.troop_count, bhp, bpoise])
 	# 开战号角（鼓点 + 低音号角），同时把背景音乐切到战斗曲（短淡入，别拖过第一刀）
@@ -769,7 +782,9 @@ func _on_battle_finished(result: String, a: AIParty) -> void:
 	Bgm.play("map", audio.bgm_fade_map)
 	_set_overworld_visible(true)
 	if camera_rig != null:
-		camera_rig.process_mode = Node.PROCESS_MODE_INHERIT
+		_set_camera_active(true)
+	if router != null:
+		router.enabled = true
 	# 回到大地图：解除强制暂停，交还给时间流动状态机
 	# （战败会被送去城镇 → 行军中时间流动；其余情况部队原地待命 → 保持暂停）
 	_time_lock = false

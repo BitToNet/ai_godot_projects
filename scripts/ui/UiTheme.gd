@@ -28,6 +28,15 @@ static func theme() -> Theme:
 		var t := Theme.new()
 		t.default_font = font()
 		t.default_font_size = 16
+		# 按钮的键盘 / 手柄焦点框：没有它，「遭遇框可以用键盘作答」等于摸黑按键
+		# （默认主题的焦点样式几乎看不见，尤其是在深色面板上）。
+		var focus := StyleBoxFlat.new()
+		focus.draw_center = false
+		focus.border_color = Color(1.0, 0.86, 0.45, 0.95)
+		focus.set_border_width_all(2)
+		focus.set_corner_radius_all(4)
+		focus.set_expand_margin_all(3.0)
+		t.set_stylebox("focus", "Button", focus)
 		_theme = t
 	return _theme
 

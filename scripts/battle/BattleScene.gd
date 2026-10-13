@@ -242,15 +242,11 @@ func _process(delta: float) -> void:
 func _read_input() -> Dictionary:
 	if use_sim:
 		return sim_input
-	var mx := 0.0
-	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
-		mx -= 1.0
-	if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT):
-		mx += 1.0
-	var atk := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-	var jmp := Input.is_physical_key_pressed(KEY_SPACE)
-	var dg := Input.is_physical_key_pressed(KEY_SHIFT)
-	var pr := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+	var mx := Input.get_axis("move_left", "move_right")
+	var atk := Input.is_action_pressed("battle_attack")
+	var jmp := Input.is_action_pressed("battle_jump")
+	var dg := Input.is_action_pressed("battle_dodge")
+	var pr := Input.is_action_pressed("battle_parry")
 	var d := {
 		"mx": mx,
 		"attack": atk and not prev_attack_pressed,
@@ -267,16 +263,15 @@ func _read_input() -> Dictionary:
 	return d
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.physical_keycode:
-			KEY_F3:
-				debug_on = not debug_on
-				hud.debug_on = debug_on
-			KEY_M:
-				var muted := Sfx.toggle_mute()
-				hud.show_title("音效已静音" if muted else "音效已开启", 1.2)
-			KEY_ESCAPE, KEY_P:
-				_end_battle("escape")
+	# 键位 / 手柄绑定同样来自 project.godot 的 [input] 段（debug_toggle / toggle_mute / battle_pause）
+	if event.is_action_pressed("debug_toggle"):
+		debug_on = not debug_on
+		hud.debug_on = debug_on
+	elif event.is_action_pressed("toggle_mute"):
+		var muted := Sfx.toggle_mute()
+		hud.show_title("音效已静音" if muted else "音效已开启", 1.2)
+	elif event.is_action_pressed("battle_pause"):
+		_end_battle("escape")
 
 # ---------------------------------------------------------------- 相机
 func _tick_camera(delta: float) -> void:

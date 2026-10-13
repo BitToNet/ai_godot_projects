@@ -44,7 +44,8 @@ func _process(_delta: float) -> void:
 	_day_label.text = "第 %d 天   %s" % [day_night.day, day_night.time_string()]
 	_speed_label.text = "时间流速：%s" % speed_txt
 	if day_night.paused:
-		_pause_badge.text = "⏸ 时间已暂停（长按空格流动 / 点击地图行军）"
+		# 键名从 [input] 段读（手柄上就是「长按 手柄X」），不写死空格
+		_pause_badge.text = "⏸ 时间已暂停（长按 %s 流动 / 点击地图行军）" % InputRouter.action_hint_text("time_flow")
 	elif day_night.is_night():
 		_pause_badge.text = "🌙 夜色降临，定居点点亮灯火"
 	else:

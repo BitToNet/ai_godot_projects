@@ -64,7 +64,7 @@
 |---|---|---|---|
 | G1 | **无经济系统**：战利品算出后只弹 toast，没有「钱袋」接住；`garrison` 只显示不变 | `Main.gd:769`、`Settlement.gd:16` | 四 |
 | G2 | **无存档**：全仓库无写文件的 `FileAccess` / `ConfigFile` | 唯一写盘者是 `tools/sfx_tool.gd --wav` | 四 |
-| G3 | **无 `InputMap`**：键位硬编码；零 `grab_focus()` / `focus_neighbor` → 遭遇框键盘 / 手柄无法作答 | `Main.gd:585-599`、`BattleScene.gd:235-260` | 三 |
+| G3 | ~~**无 `InputMap`**：键位硬编码；零 `grab_focus()` / `focus_neighbor` → 遭遇框键盘 / 手柄无法作答~~ **已解决（第三轮）**：24 个动作 + 4 个对话框动作进 `project.godot` 的 `[input]` 段，`InputRouter` 统一分发，遭遇框可键盘 / 手柄作答（见第九节） | `project.godot`、`InputRouter.gd`、`EncounterDialog.gd` | 三 ✅ |
 | G4 | **无音频总线**：仅 `Sfx.gd:56` 一处 `bus = "Master"`，零 `AudioServer` 调用 | 无 `default_bus_layout.tres` | 五 |
 | G5 | ~~**无回归测试**：三个 tools 只打印不比对；README 的「单一种子可复现」承诺零验证~~ **已解决（第二轮）**：`tools/gen_fingerprint.gd` 逐项指纹 + `tools/gen_fingerprint.json` 存档比对 + `tools/run_checks.ps1` 一键门禁（含反向验证，见第八节） | `MapConfig.gd:83-88` 依赖 `hash(str)` | 二 ✅ |
 | G6 | 无主菜单 / 设置 / i18n / CI / `export_presets.cfg` / 版本号 | `project.godot:19` 主场景直指 Main | 三 / 六 |
@@ -81,7 +81,7 @@
 - 自检覆盖缺口分两类。① **四个场景音色**：`battle_start` / `parry_reflect` / `result_lose` / `ui_back` 有真实调用点，但剧本触发不到（需要开战 / 弹反抛射物 / 战败 / 界面返回四个场景）—— 第二轮仍只以「提示」形式打印、不做断言，**这四个仍未覆盖**。② 第二轮实际补上的是另外两类更隐蔽的缺口：`hit_crit` / `parry`（剧本自身有 bug，从来就没测到过，见第八节）与 `warn_danger` / `step_heavy`（覆盖与否取决于 Boss 的随机招式表，已改为直接压接线点，不再随 RNG 流漂移）。
 - 迷雾叠加语义**已确认不是 bug**：`FogOfWar` 的 A 通道 = 1 − 已探索度，`MinimapView.gd:37` 用 `Color(0.02, 0.02, 0.06, 1.0)` 去调制它，效果就是「按迷雾浓度给底图压暗」；R 通道（已探索度）目前是留给 Shader 的冗余信息。
 - `Main.gd:614` 的注释声称「战略视图里定居点标签再放大一档」，但 `_on_strategic_changed()` 只打了一条日志 —— 注释与实现不符（而且改动前每帧的 `_update_label_scale()` 会立刻覆盖任何手工放大，等于这条设计本来就落不了地）。属待实现功能。
-- HUD 其余装饰面板（`_panel()` 返回的 `PanelContainer` 默认 `MOUSE_FILTER_STOP`）同样会吞掉其覆盖区域的左键：第一轮只修了小地图外框，左侧信息面板 / 左下操作说明建议在第三轮随 `HUD.gd` 拆分一起改成 IGNORE。
+- HUD 其余装饰面板（`_panel()` 返回的 `PanelContainer` 默认 `MOUSE_FILTER_STOP`）同样会吞掉其覆盖区域的左键：第一轮只修了小地图外框。**已在第三轮随 `HUD.gd` 拆分解决** —— 装饰面板一律走 `UiTheme.panel_style(..., decorative = true)`（顺带把 `mouse_filter` 设成 IGNORE），现在只有加载遮罩与遭遇框保留 STOP（它们本来就该挡点击）。
 - `DayNightCycle._apply()` 每帧仍会写 `sky_mat` / `env` / `sun` 的十余个属性 —— 这些确实随时间连续变化，属于正常开销；若将来昼夜成为热点，可再按「天色量化 + 插值」优化。
 
 ---
@@ -151,7 +151,7 @@
   顺带消除：玩家初始兵力 **37 硬编码两处**（`Main.gd:278,280`）、部队类型中文名表**重复三份**（531 / 640 / 642）、`set_meta("player_ref")` 弱类型侧信道（`Main.gd:281` → `AIParty.gd:58`）。
 - **B-2 拆 `HUD.gd`（323 行 / 9 件事）** → LoadingOverlay / TopBar / EncounterDialog / TransientMessages / DebugStatsPanel + `Theme.tres`。**性价比最高的重构**，也是引入 `.tscn` 的最佳落点（3D 与特效继续代码构建）。
 - **B-3 类型化**：`TerrainManager._chunks` 的 Dictionary → 内部类 `Chunk`；`MapData` 拆 `WorldGenResult` / `WorldQueries` / `RuntimeRefs`（typed，替掉 `set_meta`）；统一 RNG 派生入口（现在 `MapConfig.make_rng`、`AIParty` 的 seed+state、`Main.randi_range_seed` 三套并存）。
-- **B-4 引入 `InputMap` + 输入路由**：一举解决手柄支持、键位重映射、遭遇框键盘无法作答（G3）。
+- **B-4 引入 `InputMap` + 输入路由**：一举解决手柄支持、键位重映射、遭遇框键盘无法作答（G3）。**已完成（第三轮，见第九节）**：28 个动作（24 个游戏动作 + 4 个对话框动作）写进 `[input]` 段，`InputRouter` 只把输入翻译成语义信号（`order_move` / `cycle_speed_requested` / …），界面上的键位文字一律从 `InputMap` 现读。
 
 ### C 节 · 性能与规模（按需，取决于要做多大）→ 第六轮
 
@@ -179,7 +179,7 @@
 |---|---|---|
 | **第一轮** | A 节全部修复项 + 死代码清理 + 本路线图落档 | **已完成**（2026-10-12；改动与实测见第七节） |
 | **第二轮** | 安全网：`tools/gen_fingerprint.gd`（原计划名 `gen_determinism_check.gd`）+ `tools/perf_probe.gd` 性能基准 + 一键门禁 `tools/run_checks.ps1` | **已完成**（2026-10-12；改动与实测见第八节） |
-| 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | 待办 |
+| 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | **进行中**：`HUD.gd` 拆分（提交 `eddd8c2`）与 `InputMap` / `InputRouter`（见第九节）已完成；`Main.gd` 拆分待办 |
 | 第四轮 | 玩法闭环：`CampaignState` 经济 + 城镇交互 + 遭遇多选项 + 存档 | 待办 |
 | 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | 待办 |
 | 第六轮 | 规模扩展（植被 / 地形 / 寻路）+ i18n + 导出预设与 CI | 待办 |
@@ -194,7 +194,7 @@
 $GODOT = "G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe"
 $PROJ  = "F:\aigc_code\ai_godot_projects"
 
-# 0) 【推荐】一键跑完全部门禁（7 步，约 45 秒）—— 本工程唯一需要的命令
+# 0) 【推荐】一键跑完全部门禁（8 步，约 47 秒）—— 本工程唯一需要的命令
 powershell -File tools\run_checks.ps1
 #    ⚠ 必须用 powershell 而不是 pwsh：本机只有 Windows PowerShell 5.1，没有 pwsh 7
 
@@ -207,6 +207,10 @@ powershell -File tools\run_checks.ps1
 & $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/sfx_map_check.gd
 # 4) 音色体检（含总合成耗时）
 & $GODOT --headless --path $PROJ --script res://tools/sfx_tool.gd
+
+# 4b) 输入层回归（[input] 动作表是否真进了 InputMap / InputRouter 分发与让路 /
+#     遭遇框能否用键盘与手柄作答）—— 「按了没反应」这类问题以前只能点开游戏按一按
+& $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/input_check.gd
 
 # 5) 生成物指纹（确定性自检；与 tools/gen_fingerprint.json 存档比对）
 & $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/gen_fingerprint.gd
@@ -327,3 +331,60 @@ Get-ChildItem -Recurse -File -Include *.gd,*.gdshader |
 - [x] 一键门禁 `tools/run_checks.ps1` 跑通，并做过反向验证（改了 RNG 顺序确实会红）
 
 > 编码坑（已写进 `run_checks.ps1` 头部注释）：本机只有 Windows PowerShell 5.1。① `.ps1` 必须存成**带 BOM 的 UTF-8**，否则中文注释按 GBK 解码直接语法报错；② `Get-Content -Raw` 读 Godot 写出的**无 BOM** JSON 会乱码并使 `ConvertFrom-Json` 失败（表现为基线被静默读成 0/0/0）；③ 原生命令只要往 stderr 写一个字节，PS 5.1 就会包成含 `FullyQualifiedErrorId : NativeCommandError` 的 ErrorRecord —— 所以 ERROR 断言必须用大小写敏感的 `ERROR:|SCRIPT ERROR|Parse Error`，否则 Godot 退出时的 `WARNING: N ObjectDB instances were leaked` 会把整步判失败。
+
+---
+
+## 九、第三轮变更记录（HUD 拆分 + `InputMap`）
+
+第三轮拆成两半推进，本记录覆盖前半程（B-2 已提交 `eddd8c2`，B-4 见本次提交）；B-1 拆 `Main.gd` 仍待办。
+
+### 9.1 HUD 拆分：`HUD.gd` 323 行 → 115 行外观层 + 7 个组件
+
+| 组件 | 行数 | 职责 |
+|---|---|---|
+| `TopBar.gd` | 54 | 天数 / 时间流速 / 当前地形 / 暂停徽标 |
+| `MinimapView.gd` | （已有） | 右上角小地图 |
+| `LoadingOverlay.gd` | 48 | 全屏加载遮罩，`z_index = 100` 盖住所有面板 |
+| `HoverTooltip.gd` | 29 | 跟随鼠标的地形提示 |
+| `ToastLabel.gd` | 39 | 底部淡出提示条（`mouse_filter = IGNORE`） |
+| `HelpPanel.gd` | 41 | 左下操作说明 |
+| `DebugStatsPanel.gd` | 31 | F3 性能面板 |
+| `EncounterDialog.gd` | 109 | 遭遇对话框（唯一该挡点击的 UI 之一） |
+
+`HUD.gd` 只留外观层接口：`setup / bind / set_loading / hide_loading / set_terrain_text / show_toast / show_tooltip / clear_tooltip / show_encounter / hide_encounter / is_encounter_open` + 信号 `encounter_choice(action)`；`hud_check` 用 29 条断言把这份接口钉住。
+
+**顺手修掉两个从第一轮就存在、但直到截图才暴露的老 bug**：
+
+1. **加载遮罩 / 遭遇框缩成 0×0 且贴在左上角**。根因是 `set_anchors_preset()` 只改锚点、**保留当前矩形**，对 0×0 的 Control 调用后 offsets 变成 `(0, 0, -1600, -900)` —— 遮罩黑底完全看不见、`MOUSE_FILTER_STOP` 也挡不住点击。正确写法是 `set_anchors_and_offsets_preset(PRESET_FULL_RECT)`。
+2. **面板画在黑遮罩之上**：给 `LoadingOverlay` 加 `z_index = 100`，并用截图 + 亮度采样确认遮罩期间看不到任何 HUD。
+
+> 教训：这类「能编译、断言全过、界面已塌」的问题，只有真实渲染截图能发现 —— `tools/hud_shot.gd` 因此被保留为常规手段（三张图：加载中 / 正常 / 遭遇框+提示条）。
+
+### 9.2 `InputMap`：键位从代码搬进 `project.godot`
+
+- `[input]` 段共 **28 个动作**：24 个游戏动作（`move_*` / `zoom_*` / `cam_rotate_*` / `focus_party` / `time_flow` / `cycle_speed` / `toggle_vegetation` / `toggle_mute` / `faction_labels_1..3` / `battle_*` / `debug_toggle`）+ 4 个对话框动作（`dialog_confirm` / `dialog_cancel` / `dialog_next` / `dialog_prev`）。
+- `InputRouter`（173 行）只做一件事：把输入翻译成语义信号 —— `order_move(goal)` / `cycle_speed_requested` / `toggle_vegetation_requested` / `toggle_mute_requested` / `faction_labels_requested(id)`。`Main.gd` 里原来的 `_unhandled_input`（一段长长的 `KEY_*` match）整体删除，`CameraRig._process` 的平移 / 旋转 / 缩放改读 `Input.get_vector(...)` / `get_axis(...)`，`BattleScene._read_input()` 同理。
+- **遭遇框能用键盘与手柄作答了**（G3）：打开即 `grab_focus()`；`dialog_cancel` → 撤退；`dialog_confirm` → 按下当前焦点按钮；`dialog_next/prev` → 切换焦点；`UiTheme` 新增 `focus` 描边样式块，焦点在哪一眼可见。
+- **界面文字不再硬编码按键**：`InputRouter.action_keys_text()`（完整绑定）与 `action_hint_text()`（键盘 + 手柄各一个，用于一行提示）都从 `InputMap` 现读，`HelpPanel` / `TopBar` 暂停徽标 / 遭遇框提示行 / 静音 toast 全部跟着 `[input]` 段走。
+- 目录里已只剩 `InputRouter._key_name()` 一张 `KEY_*` 表（把键码翻译成中文名），其余 `scripts/` 下再无 `KEY_*` / `is_physical_key_pressed`，也无 `InputMap` 之外的键位来源。
+- 鼠标手势（左键点地行军、中键 / 右键拖拽旋转）**故意不做成动作**：它们按坐标处理，不是「按一下」的语义；对应说明写在 `HelpPanel` 里。
+
+### 9.3 本轮踩到的五个坑（都已修，且都写进了代码注释）
+
+1. **测试事件的 `device` 必须是 0**。给 `InputEventKey` 设 `device = -1`（`DEVICE_ID_EMULATION`）后，`[input]` 段里 `device = -1` 的动作照样匹配，但**引擎内建 `ui_*` 动作（device = 0）一律不匹配** —— 表现为「明明按了 Esc，对话框却没反应」。实测规则：动作事件 `device = -1` 匹配任意来源事件，`device = 0` 只匹配 `device = 0` 的事件。**这是测试代码的错，不是游戏的错**（真机键盘事件 device = 0）。
+2. **内建 `ui_accept` / `ui_cancel` 没有手柄事件**（`InputMap.action_get_events()` dump 出来只有 Enter / 小键盘回车 / 空格 与 Escape）——「手柄按 A 确认」根本不会触发 `ui_accept`。所以对话框没有复用内建动作，而是自己声明了 4 个带手柄绑定的动作；`input_check` 直接断言「手柄 A → 攻击、手柄 B → 撤退、十字键 →/← 切换焦点」。
+3. **新建 `class_name` 脚本需要一次 `--import` 才进类缓存**。`.godot/global_script_class_cache.cfg` 在 headless 运行时**不会**被扫描更新，`InputRouter` 作为类型注解（`var router: InputRouter`）在缓存里缺席时无法解析。实测：`--import` 前缓存里没有 `InputRouter`，之后有了（`--import` 会短暂拉起编辑器完成扫描）。
+4. **`edit` 工具会吃掉 `run_checks.ps1` 的 BOM**。PS 5.1 读无 BOM 的 UTF-8 会按 GBK 解码 —— 本次改完头部注释后直接报了 19 条语法错误（`Unexpected token '鍩虹嚎'`，即「基线」的 GBK 乱码）。凡改动带 BOM 的文件，之后必须用 `[System.IO.File]::WriteAllText($p, $txt, (New-Object System.Text.UTF8Encoding($true)))` 把 BOM 写回去；`.gd` / `.md` / `project.godot` 本来就无 BOM，不受影响（已逐一比对 HEAD 确认）。
+5. **方向键 / 十字键同时是 `move_*`（平移视角）与对话框的选项切换键**：遭遇框打开时若不冻结相机，按 → 切选项会连带把镜头拖走。`Main._set_camera_active(false)` 在弹出遭遇框时冻结相机（Boss 战期间也走同一条路），关闭时恢复。
+
+### 9.4 验收
+
+| 项 | 结果 |
+|---|---|
+| 一键门禁 | **exit 0，12 项全绿，用时 46.8 s**（新增 `input_check` 一步） |
+| `input_check` | **exit 0 / PASS，108 条断言**：动作表与关键键位、手柄覆盖、绑定文本、`InputRouter` 分发与让路（遭遇框打开 / 战斗中 / 点海面）、遭遇框焦点与键盘·手柄作答 |
+| 生成指纹 | 与存档一致 `19d42d358f8d5495…`（本轮不碰生成，RNG 抽取顺序未变） |
+| 生成统计 | 定居点 18 / 桥梁 7 / 植被 5163（与基线一致） |
+| 截图 | `hud_loading` / `hud_normal` / `hud_dialog` 三张（1600×900）：遮罩铺满、遭遇框居中 + 变暗背景 + 焦点描边 + 键位提示行 |
+
+**B-1（拆 `Main.gd`）待办**：当前 `Main.gd` 854 行，仍是 21 段职责混在一起。拆分时必须保持生成侧的调用顺序与 `_add_ai` 的种子推导顺序不变（否则指纹会变），因此计划先把 `MaterialFactory` / `PartySpawner` / `WorldGenPipeline` / `GameState` 这类**不涉及时序**的部分抽成 `RefCounted`，再处理 `await` 编排。

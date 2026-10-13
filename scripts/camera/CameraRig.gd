@@ -2,8 +2,9 @@
 ##  CameraRig —— 骑砍式战略相机
 ##  · 始终注视「玩家部队 + 平移偏移」的地面点，默认俯角 55°
 ##  · 滚轮缩放高度 18~400 米，俯角联动：越近越平视(26°)，越远越俯瞰(72°)
-##  · 按住鼠标中键 / 右键拖拽旋转（左右改变朝向，上下临时改变俯角）
-##  · WASD / 屏幕边缘平移；F 键回到玩家部队
+##  · 鼠标中键 / 右键拖拽旋转；手柄右摇杆或 Q / E 也能转（左右改朝向，上下改俯角）
+##  · move_* 动作平移（WASD / 方向键 / 左摇杆 / 十字键）+ 屏幕边缘平移；focus_party 回到玩家部队
+##  · 键位不写死：滚轮 / L1 / R1 / Back 等全部来自 project.godot 的 [input] 段
 ##  · 高度超过 strategic_view_height 进入「战略视图」（通知 Main 放大标签、剔除植被）
 ##  · 提供 ray_to_terrain()：屏幕坐标 → 地形世界坐标（供点击移动 / 悬停提示）
 ## =============================================================================
@@ -44,15 +45,15 @@ func setup(p_cfg: MapConfig, p_data: MapData, p_player: Node3D) -> void:
 func _process(delta: float) -> void:
 	if cam == null:
 		return
-	var pan := Vector2.ZERO
-	if Input.is_physical_key_pressed(KEY_W):
-		pan.y -= 1.0
-	if Input.is_physical_key_pressed(KEY_S):
-		pan.y += 1.0
-	if Input.is_physical_key_pressed(KEY_A):
-		pan.x -= 1.0
-	if Input.is_physical_key_pressed(KEY_D):
-		pan.x += 1.0
+	var pan := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	# 右摇杆 / Q E 旋转与俯仰。摇杆力度是模拟量，所以按「每秒」标定：
+	# cam_rotate_speed 是「每像素」的鼠标灵敏度，乘 300 换算成满杆每秒的弧度。
+	var rot := Input.get_axis("cam_rotate_left", "cam_rotate_right")
+	if absf(rot) > 0.01:
+		yaw -= rot * cfg.cam_rotate_speed * 300.0 * delta
+	var tilt := Input.get_axis("cam_rotate_up", "cam_rotate_down")
+	if absf(tilt) > 0.01:
+		pitch_deg = clampf(pitch_deg + tilt * 70.0 * delta, 12.0, 86.0)
 	# 屏幕边缘平移
 	var vp := get_viewport()
 	var mouse := vp.get_mouse_position()
@@ -88,22 +89,24 @@ func recenter() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			zoom_height = clampf(zoom_height * 0.88, cfg.cam_min_height, cfg.cam_max_height)
-			_update_pitch_from_zoom()
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			zoom_height = clampf(zoom_height / 0.88, cfg.cam_min_height, cfg.cam_max_height)
-			_update_pitch_from_zoom()
-		elif event.button_index == MOUSE_BUTTON_MIDDLE or event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.button_index == MOUSE_BUTTON_MIDDLE or event.button_index == MOUSE_BUTTON_RIGHT:
 			_dragging = event.pressed
 			_drag_button = event.button_index if event.pressed else -1
-	elif event is InputEventMouseMotion and _dragging:
+			return
+	if event is InputEventMouseMotion and _dragging:
 		yaw -= event.relative.x * cfg.cam_rotate_speed
 		if absf(event.relative.y) > 0.0:
 			pitch_deg = clampf(pitch_deg + event.relative.y * cfg.cam_rotate_speed * 90.0, 12.0, 86.0)
-	elif event is InputEventKey and event.pressed and not event.echo:
-		if event.physical_keycode == KEY_F:
-			recenter()
+		return
+	# 缩放与回中走动作表：滚轮 / 手柄 L1 R1 / Back 键都在 project.godot 的 [input] 段里定义
+	if event.is_action_pressed("zoom_in"):
+		zoom_height = clampf(zoom_height * 0.88, cfg.cam_min_height, cfg.cam_max_height)
+		_update_pitch_from_zoom()
+	elif event.is_action_pressed("zoom_out"):
+		zoom_height = clampf(zoom_height / 0.88, cfg.cam_min_height, cfg.cam_max_height)
+		_update_pitch_from_zoom()
+	elif event.is_action_pressed("focus_party"):
+		recenter()
 
 func _update_pitch_from_zoom() -> void:
 	var h := zoom_height
