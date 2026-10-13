@@ -8,7 +8,7 @@
 ##  host 契约（Main 是唯一的 host）——run() 结束时这些字段一定已经就位：
 ##    hud / data / day_night / camera_rig / router / vegetation / player /
 ##    ai_parties（同一个数组实例）/ fog / view / hover / time / rules /
-##    economy / campaign / ctx / encounters / battler
+##    economy / campaign / settlements / ctx / encounters / battler
 ##
 ##  只在本文件里活得下去的东西（生成完就没人再看）**不再挂到 host 上**：
 ##    四份 ShaderMaterial、TerrainManager、WaterBuilder、NightLights 容器、
@@ -41,6 +41,7 @@ var time: TimeFlowController
 var rules: EncounterRules
 var economy: EconomyRules
 var campaign: CampaignState
+var settlements: SettlementSystem
 var ctx: WorldContext
 var encounters: EncounterSystem
 var battler: BattleLauncher
@@ -253,6 +254,21 @@ func run() -> WorldContext:
 	hud.encounter_choice.connect(encounters.resolve)
 	encounters.attack_requested.connect(battler.start)
 	battler.finished.connect(encounters.on_battle_finished)
+
+	# 第四轮：进城办事（补给 / 招募 / 贸易 / 驻军）。
+	# 每个定居点的繁荣度 / 志愿者池 / 货物本地价差在这里一次性定下来 ——
+	# assign_environment 走 cfg.make_rng("settlement_economy") 这条**独立随机流**，
+	# 既不消耗主生成流的抽取次数，也不改生成顺序 ⇒ 生成指纹不变。
+	# 志愿者回流同样挂 day_changed（与日结共用一个权威换日信号）。
+	#
+	# ⚠ 刻意**不写** ctx.settlements：本系统已经有 settlements.ctx 这个引用，
+	#    再加一条反向引用就构成 RefCounted 引用环（两个对象互持，引用计数永远不归零），
+	#    表现为进程退出时 "N resources still in use at exit" + 纹理 RID 泄漏
+	#    —— 门禁里所有建世界的步骤都会因此变红（实测 6 步）。需要它的地方
+	#    （Main / 工具脚本）直接拿 pipeline.settlements。
+	settlements = SettlementSystem.new()
+	settlements.ctx = ctx
+	day_night.day_changed.connect(settlements.on_day_changed)
 	return ctx
 
 # =============================================================== 内部

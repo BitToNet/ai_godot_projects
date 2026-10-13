@@ -151,3 +151,74 @@ func deserters(troops: int, morale: int) -> int:
 ## 所以取 6 而不是 30 —— 否则一场匪帮遭遇就够付几十周军费，经济立刻失去张力。
 ## 保留原文的「按敌人档位分档」形状：强盗 / 商队 / 领主 用 EncounterRules.loot_rate。
 @export var loot_per_troop: float = 6.0
+
+# =============================================================== 第四轮：城镇交互
+# 补给 / 招募 / 贸易 / 驻军的数值都放这里，SettlementSystem 只负责流程。
+#
+# 参考 G:\warband_docs（外部资料，不在本仓库内）：
+#  · 村庄招募 min(志愿者池, 编制余位, 金/10)，单价 10 金/人，池子按人数写回扣减 —— 01 §2.7
+#  · 贸易货物在 slot 250–283（34 种，基准价 250，价格区间 [100, 10000]）—— 02 §3.3.1
+#  · 买价 ÷100、卖价 ÷(100+penalty) 的**不对称**（商人吃差价）—— 01 §?
+#  · 价格按繁荣度归一化（城镇权重 5、村庄权重 1；城堡被两个阶段跳过 —— 那是原版
+#    怪癖，本工程不复刻）—— 01 §1.7 / 02 §6.5
+# 原文【未解】：菜单条目清单、志愿者刷新率、价格脚本的调用频率、食物营养值。
+# 这几项按本地化设计实现，逐条记在 docs/ROADMAP.md 第十节。
+
+## 贸易货物表（**本地化**：原文 34 种、基准价 250 的量级，本工程金币量级小两个数量级，
+## 所以取 4 种、基准价 8~38 金，但保留「基准价 × 繁荣度系数 × 本地价差」的形状）。
+var goods: Array[Dictionary] = [
+	{"id": 0, "name": "谷物", "base": 8},
+	{"id": 1, "name": "布匹", "base": 15},
+	{"id": 2, "name": "盐", "base": 24},
+	{"id": 3, "name": "铁", "base": 38},
+]
+
+## 招募单价：10 金/人（照搬 01 §2.7，本条是【实证】）
+@export var recruit_cost_per_man: int = 10
+## 志愿者池上限（本地化：原文的刷新率【未解】，上限也是按 settlement 规模估的）
+@export var volunteer_cap_village: int = 12
+@export var volunteer_cap_town: int = 20
+## 志愿者回流：每 N 天每地 +1（本地化）
+@export var volunteer_refill_days: int = 2
+## 卖价占买价的百分比（照搬原文「买价与卖价不对称」的形状，本地化成一个固定回收率）
+@export var market_sell_percent: int = 60
+## 繁荣度对价格的偏移幅度（本地化）：繁荣 0 → ×1.30，繁荣 50 → ×1.00，繁荣 100 → ×0.70
+@export var market_prosperity_range: int = 60
+
+func good_count() -> int:
+	return goods.size()
+
+func good_name(gid: int) -> String:
+	if gid < 0 or gid >= goods.size():
+		return "?"
+	return String(goods[gid].get("name", "?"))
+
+func good_base(gid: int) -> int:
+	if gid < 0 or gid >= goods.size():
+		return 1
+	return maxi(1, int(goods[gid].get("base", 1)))
+
+## 繁荣度 → 价格系数（百分数）：100 + (50 − 繁荣) × 60/100（整数截断）
+func prosperity_factor(prosperity: int) -> int:
+	return 100 + (50 - clampi(prosperity, 0, 100)) * market_prosperity_range / 100
+
+## 买入价：基准 × 繁荣系数 × (100 + 本地价差) / 10000，下限 1 金
+func market_buy_price(base: int, prosperity: int, bias_percent: int = 0) -> int:
+	var p := maxi(base, 1) * prosperity_factor(prosperity) * (100 + bias_percent) / 10000
+	return maxi(p, 1)
+
+## 卖出价：买入价 × market_sell_percent/100（商人吃掉的差价）
+func market_sell_price(base: int, prosperity: int, bias_percent: int = 0) -> int:
+	return maxi(market_buy_price(base, prosperity, bias_percent) * market_sell_percent / 100, 1)
+
+## 补给价：同样按繁荣度浮动（原文食物有独立的标价表，这里复用同一套归一化）
+func supply_price(prosperity: int, bias_percent: int = 0) -> int:
+	return market_buy_price(supply_unit_price, prosperity, bias_percent)
+
+## 志愿者池上限：城堡不招兵（0），村庄 12，城镇 20
+func volunteer_cap(kind: int) -> int:
+	if kind == Settlement.Kind.TOWN:
+		return volunteer_cap_town
+	if kind == Settlement.Kind.VILLAGE:
+		return volunteer_cap_village
+	return 0

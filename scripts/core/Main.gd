@@ -7,6 +7,7 @@
 ##                           材质网格 → 部队/相机/迷雾/UI）+ 表现层与系统接线
 ##    · TimeFlowController : 骑砍式「时间流动 / 暂停」状态机
 ##    · EncounterSystem    : 遭遇检测、对话框、冷却、退避、战后结算
+##    · SettlementSystem   : 进城办事（补给 / 招募 / 贸易 / 驻军）
 ##    · BattleLauncher     : 进出 2D Boss 战
 ##    · EncounterRules     : 遭遇与 Boss 战的全部数值
 ##    · WorldContext       : 上面几块共享的世界句柄
@@ -46,6 +47,7 @@ var economy: EconomyRules            ## 经济与军费数值表（见 EconomyRu
 var campaign: CampaignState          ## 钱袋 / 补给 / 士气 / 声望 / 兵员档次（见 CampaignState.gd）
 var ctx: WorldContext                ## 各系统共享的世界句柄（见 WorldContext.gd）
 var encounters: EncounterSystem      ## 遭遇检测 / 对话 / 冷却（见 EncounterSystem.gd）
+var settlements: SettlementSystem    ## 进城办事：补给 / 招募 / 贸易 / 驻军（见 SettlementSystem.gd）
 var battler: BattleLauncher          ## 进出 Boss 战（见 BattleLauncher.gd）
 var pipeline: WorldGenPipeline       ## 生成流水线（生成完仍然留着，方便回头查产物）
 
@@ -89,6 +91,7 @@ func _ready() -> void:
 	economy = pipeline.economy
 	campaign = pipeline.campaign
 	encounters = pipeline.encounters
+	settlements = pipeline.settlements
 	battler = pipeline.battler
 
 	_gen_ms = Time.get_ticks_msec() - t0

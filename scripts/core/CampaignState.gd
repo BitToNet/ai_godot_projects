@@ -72,11 +72,15 @@ func combat_hp(base: float) -> float:
 func can_upgrade() -> bool:
 	return tier < rules.max_tier() and denars >= rules.upgrade_cost(tier)
 
-## 一行摘要（自检脚本 / 调试打印用）
+## 一行摘要（自检脚本 / 调试打印用）。货物只在不为空时追加，
+## 免得把「没在做买卖」时的这行字撑长。
 func debug_line() -> String:
-	return "第%d天 金%d 粮%d 士气%d 声望%d 档次%s 兵力%d/%d 周薪%d 欠薪%d周" % [
+	var s := "第%d天 金%d 粮%d 士气%d 声望%d 档次%s 兵力%d/%d 周薪%d 欠薪%d周" % [
 		day, denars, supplies, morale, renown, rules.tier_name(tier),
 		troops(), capacity(), wage(), debt_weeks]
+	if goods_total() > 0:
+		s += " 货物%d件" % goods_total()
+	return s
 
 # ------------------------------------------------------------------ 收支
 func spend(amount: int) -> bool:
@@ -134,6 +138,64 @@ func lose_troops(count: int) -> int:
 	_sync_label()
 	changed.emit()
 	return before - troops()
+
+## 领回士兵（从驻军取人，不花钱，只受编制余位限制）。
+## 与 recruit 的分工：recruit 是「在定居点招新兵」（花钱 + 受志愿者池限制），
+## 这里是把存在城里的老兵领回来 —— 所以免费，但照样不能超编。
+func take_troops(count: int) -> int:
+	if count <= 0 or player == null:
+		return 0
+	var n := mini(count, free_capacity())
+	if n <= 0:
+		return 0
+	player.troop_count += n
+	player.refresh_label()
+	_sync_label()
+	changed.emit()
+	return n
+
+# ------------------------------------------------------------------ 货物（第四轮：贸易）
+## 货物 id → 件数。原文货物住在定居点的 item slot 里，玩家侧是同一套物品表；
+## 本工程没有物品系统，所以玩家侧只留一个 id→件数 的小背包（存档也好序列化）。
+var goods: Dictionary = {}
+
+func goods_of(gid: int) -> int:
+	return int(goods.get(gid, 0))
+
+func goods_total() -> int:
+	var n := 0
+	for k in goods.keys():
+		n += int(goods[k])
+	return n
+
+func add_goods(gid: int, count: int) -> void:
+	if count <= 0:
+		return
+	goods[gid] = goods_of(gid) + count
+	changed.emit()
+
+## 取走货物：返回实际取走件数（不够就全拿走）
+func take_goods(gid: int, count: int) -> int:
+	if count <= 0:
+		return 0
+	var have := goods_of(gid)
+	var n := mini(count, have)
+	if n <= 0:
+		return 0
+	if have - n <= 0:
+		goods.erase(gid)
+	else:
+		goods[gid] = have - n
+	changed.emit()
+	return n
+
+## 补给入账（买补给 / 将来的缴获口粮都走这里）
+func add_supplies(count: int) -> int:
+	if count <= 0:
+		return 0
+	supplies += count
+	changed.emit()
+	return count
 
 func upgrade_tier() -> bool:
 	if tier >= rules.max_tier():

@@ -10,7 +10,12 @@
 ##   · 只放**引用**，不放状态机（状态属于各个系统自己）；
 ##   · parties 是引用语义（Append 会同步可见），别在这里复制数组；
 ##   · 需要「行为」而不是数据时，宁可加一个小工具方法（如 set_camera_active），
-##     也不要让每个系统各写一遍。
+##     也不要让每个系统各写一遍；
+##   · ⚠ **不要在这里反向持有各个系统**（encounters / settlements / battler）：
+##     那些系统自己都有 ctx 字段，再加一条反向引用就是 RefCounted 引用环，
+##     两个对象互持、引用计数永不归零 —— 进程退出时报
+##     "N resources still in use at exit" 并泄漏纹理 RID（门禁会判失败）。
+##     需要某个系统的地方（Main / tools/）直接取 pipeline 上的字段。
 ## =============================================================================
 class_name WorldContext
 extends RefCounted
@@ -30,6 +35,8 @@ var player: PlayerParty
 var parties: Array[AIParty] = []
 var economy: EconomyRules        ## 经济数值表（第四轮）
 var campaign: CampaignState      ## 战役可变状态：钱袋 / 补给 / 士气 / 声望（第四轮）
+## 进城办事（补给 / 招募 / 贸易 / 驻军）的系统**不放这里**：它自己持有 ctx，
+## 反向再加一条引用就是引用环（见文件头的约定）。取用方走 Main.settlements。
 
 ## 相机的输入开关。遭遇框（选项切换复用方向键）与 Boss 战期间都要关掉地图操作，
 ## 不关的话「在对话框里按 →」会连带把镜头也拖走。

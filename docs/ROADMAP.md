@@ -31,6 +31,13 @@
 
 > 计数注意：统计行数请用 `(Get-Content $f).Count`，**不要**用 `Measure-Object -Line` —— 后者把空行算作 0 行，会少算约 10%。
 
+> 第四轮 4b-1 改完（2026-10-13）复测（同一口径：`git ls-files -co` 列文件 + `ReadAllLines` 数行，
+> 含尚未入库的新文件）：
+> **82 个 `.gd` / 15072 行**（`scripts/` 71 / 12611，`tools/` 11 / 2461）+ 4 个 shader / 369 行；
+> `project.godot` 仍 211 行；最大脚本 `BattleScene.gd` 760 / `SfxSynth.gd` 564 / `HeightmapGenerator.gd` 555。
+> 相对 4a（80 / 14047）+2 文件 / +1025 行 —— 正是 `SettlementSystem.gd`（逻辑层）与
+> `tools/settlement_check.gd`（92 项断言）。
+>
 > 第四轮 4a 改完（2026-10-13）复测（同一口径：`git ls-files` 列文件 + `ReadAllLines` 数行）：
 > **80 个 `.gd` / 14047 行**（`scripts/` 70 / 12047，`tools/` 10 / 2000）+ 4 个 shader / 369 行；
 > `project.godot` 仍 211 行；最大脚本 `BattleScene.gd` 760 / `SfxSynth.gd` 564 / `HeightmapGenerator.gd` 555。
@@ -193,7 +200,7 @@
 | **第一轮** | A 节全部修复项 + 死代码清理 + 本路线图落档 | **已完成**（2026-10-12；改动与实测见第七节） |
 | **第二轮** | 安全网：`tools/gen_fingerprint.gd`（原计划名 `gen_determinism_check.gd`）+ `tools/perf_probe.gd` 性能基准 + 一键门禁 `tools/run_checks.ps1` | **已完成**（2026-10-12；改动与实测见第八节） |
 | 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | ✅ **已完成**：`HUD.gd` 拆分（`eddd8c2`）、`InputMap` / `InputRouter`（`8063a9e`）、`Main.gd` 拆分四批（`a54d9d5` / `f9a09a8` / `951d3b2` / 本批，**854 → 191 行**，见 9.5）；另修掉门禁挂死隐患（工具脚本调用已改名方法 + 每步 180 s 硬超时） |
-| 第四轮 | 玩法闭环：`CampaignState` 经济 + 城镇交互 + 遭遇多选项 + 存档 | 🔄 **进行中**：4a 经济（钱袋 / 军费 / 士气 / 战利品 / HUD）已完成并通过门禁，见第十节；4b 城镇交互、4c 遭遇多选项、4d 存档待办 |
+| 第四轮 | 玩法闭环：`CampaignState` 经济 + 城镇交互 + 遭遇多选项 + 存档 | 🔄 **进行中**：4a 经济（钱袋 / 军费 / 士气 / 战利品 / HUD）已完成并通过门禁，见 §10.1–10.5；4b-1 城镇交互**逻辑层**（服务表 / 繁荣度定价 / 招募 / 贸易 / 驻军）已完成并通过门禁，见 §10.6；4b-2 菜单界面与交互键、4c 遭遇多选项、4d 存档待办 |
 | 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | 待办 |
 | 第六轮 | 规模扩展（植被 / 地形 / 寻路）+ i18n + 导出预设与 CI | 待办 |
 
@@ -207,7 +214,7 @@
 $GODOT = "G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe"
 $PROJ  = "F:\aigc_code\ai_godot_projects"
 
-# 0) 【推荐】一键跑完全部门禁（9 步 / 13 项断言，约 40~50 秒）—— 本工程唯一需要的命令
+# 0) 【推荐】一键跑完全部门禁（10 步 / 14 项断言，约 40~50 秒）—— 本工程唯一需要的命令
 powershell -File tools\run_checks.ps1
 #    ⚠ 必须用 powershell 而不是 pwsh：本机只有 Windows PowerShell 5.1，没有 pwsh 7
 
@@ -228,6 +235,10 @@ powershell -File tools\run_checks.ps1
 # 4c) 经济定式（军费 / 士气 / 编制 / 招募 / 撤退代价的公式形状 + 42 天收支时间轴）
 #     —— 这条回路（工资→欠薪→士气→逃兵→兵力→工资）在 900 帧里连一天都跑不完
 & $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/economy_check.gd
+
+# 4d) 城镇交互定式（价格 / 招募 / 贸易套利 / 驻军与军费联动 / 五类边界 / 菜单行数）
+#     —— 进城菜单的分支同样在 900 帧里一个都走不到，而它是经济闭环的入口
+& $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/settlement_check.gd
 
 # 5) 生成物指纹（确定性自检；与 tools/gen_fingerprint.json 存档比对）
 & $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/gen_fingerprint.gd
@@ -562,3 +573,83 @@ Boss 战 → 结算整条链，257 兵领主：HP 583 / 破防 147 / 缴获 154 
   持续收入线，候选放进第五轮。
 - 第四轮的**城镇交互还需要一个 InputMap 动作**（进城交互键）：加动作后必须同步扩
   `tools/input_check.gd`，否则门禁里那条「动作表 ↔ InputMap 一致」的断言会红。
+  （4b-1 只做逻辑层，动作与菜单面板一起放在 4b-2。）
+
+### 10.6 本批（4b-1）交付：城镇交互的**逻辑层**（补给 / 招募 / 贸易 / 驻军）
+
+先落逻辑、再落界面：菜单能不能点、点了扣多少钱、钱不够时会怎样 —— 这些是这条价值链的
+真正风险点，而它们全都可以在没有窗口的情况下断言。界面（面板 + 交互键）放 4b-2。
+
+| 文件 | 改动 | 职责 |
+|---|---|---|
+| `scripts/world/Settlement.gd` | 改 | +`prosperity` / `volunteers` / `volunteers_cap` / `good_bias`；`service_ids()`（服务表数据驱动）、`has_service()`、`prosperity_name()`（五档）、`interact_radius()` |
+| `scripts/core/EconomyRules.gd` | 改 | +4 种货物的基准价、繁荣度价格系数、买/卖价、补给价、招募单价、志愿者上限与回流间隔、卖价回收率 |
+| `scripts/core/CampaignState.gd` | 改 | +货物背包（`goods` / `goods_of` / `add_goods` / `take_goods`）、`take_troops()`（驻军取回，受编制限制）、`add_supplies()` |
+| `scripts/core/SettlementSystem.gd` | **新** | 位置判定 / 进城出城（时间锁）/ 菜单条目 / 四类交易 / 志愿者回流 / `assign_environment()` |
+| `scripts/core/WorldGenPipeline.gd`·`Main.gd` | 改 | 接线：`settlements` 字段、`day_changed → on_day_changed` |
+| `tools/settlement_check.gd` | **新** | 92 项断言：价格定式、五类边界、贸易套利、驻军与军费联动、菜单行数、进城出城 |
+| `tools/run_checks.ps1` | 改 | 新增第 6 步（10 步 / 14 项） |
+
+**三个结构决策：**
+
+1. **菜单是数据，不是控件** —— `menu_entries()` 回过 `[{id, label, enabled, hint}]`，
+   HUD 只照着画、不做任何「能不能做」的判断。于是「钱不够 / 编制满 / 池子里没人 /
+   城里没兵 / 没货可卖」这 5 类边界全部可以 headless 直测（4b-2 的面板因此薄得只有渲染）。
+   灰掉的条目也**必须**给出 `hint`：玩家得看得见「为什么不能点」，而不是对着灰按钮发呆。
+2. **`SettlementSystem` 一行 UI 节点都不碰** —— 反馈走 `ctx.hud.show_toast()`，`hud == null`
+   时静默（自检里就没有 HUD）。这与 `CampaignState` 不弹提示、只回 `report` 是同一条原则。
+3. **刻意不给 `WorldContext` 加 `settlements` 字段** —— 本系统已经持有 `ctx`，再加一条反向
+   引用就是一个 **RefCounted 引用环**（两个对象互持、引用计数永不归零）。这不是纸上担心：
+   第一版正是这么写的，门禁立刻有 **6 步变红**：
+
+   ```
+   ERROR: 3 RID allocations of type '…DummyTexture' were leaked at exit.
+   ERROR: 19 resources still in use at exit (run with --verbose for details).
+   ```
+
+   纹理是跟着 `ctx → data` 一起被环吊住的。去掉那条反向引用后立刻回到全绿，
+   取用方（`Main` / `tools/`）直接拿 `pipeline.settlements`。这条约定写进了
+   `WorldContext.gd` 的文件头。**这是本轮唯一一个由门禁抓出来的真问题。**
+
+**照搬的公式（【实证】）：**
+
+| 项 | 出处 | 本工程 |
+|---|---|---|
+| 村庄招募 `min(志愿者池, 编制余位, 金/人)`、单价 10 金 | 01 §2.7 | 原样（`CampaignState.recruit` 管编制与钱，`SettlementSystem.recruit` 管池子） |
+| 招募后志愿者池**按人数写回扣减**（each −1，不是清零） | 01 §2.7 | 原样：招 3 个 → 池子 −3 |
+| 买价 ÷100、卖价 ÷(100+penalty) 的**不对称**（商人吃差价） | 01 §? | 形状保留，本地化成一个固定回收率 60% |
+| 价格按繁荣度归一化；繁荣度按 20 一档分 5 级 | 05 §? | 原样（五档名：荒废 / 萧条 / 平常 / 富庶 / 繁荣） |
+| 货物基准价与价格区间 [100, 10000] | 02 §3.3.1 | 形状保留，量级本地化（见下表） |
+
+**本地化取舍（原文档【未解】或量级不匹配的部分）：**
+
+| 项 | 原文档情况 | 本工程取值 | 理由 |
+|---|---|---|---|
+| 菜单条目清单 | **【未解】**（没有发行文件可查） | 城堡 `补给/驻军`、村庄 `补给/招募`、城镇四样齐全 | 按「这地方该有什么」的设计决策；城堡是军事据点，不赶集不招兵 |
+| 城堡的 1 项「管家」服务 | 05 §? 提到 | 不单独做 NPC | 本工程没有 NPC 对话系统，服务直接落在菜单上 |
+| 货物种类与基准价 | 34 种、基准 250 | 4 种（8/15/24/38 金） | 金币量级小两个数量级；保留「基准 × 繁荣系数 × 本地价差」形状 |
+| 本地价差 | 原文是市场收敛后的结果 | 每种货 ±15%，生成期一次性定死 | 让「这儿的盐便宜」有确定性；也是贸易路线成立的前提 |
+| 志愿者刷新率 | **【未解】** | 每 2 天每地 +1，上限 村庄 12 / 城镇 20 / 城堡 0 | 需要一条「待几天就能再招」的节奏 |
+| 驻军来源与作用 | **【未解】**（只说有驻军） | 只能「存 / 取」，不参与战斗；存入至少留 5 人 | 意义在**工资按人数算**：养不起时先把人存起来（断言里专门锁了「存兵后周薪下降」） |
+| 繁荣度的生成 | 原文由经济模拟演化 | 生成期用 `make_rng("settlement_economy")` 一次定好（以类型为底 ±25） | 独立随机流 ⇒ 不消耗主生成流、不动生成顺序 ⇒ **指纹不变** |
+
+**实测（2026-10-13）：**
+
+- **门禁 10 步 / 14 项全绿，用时 43.2 s**（新增 `settlement_check` 0.6 s）。
+- **指纹 `19d42d358f8d5495…` 与生成统计 18 / 7 / 5163 均不变**；`perf_probe` 仍是 1 条 WARN（常态）。
+- `tools/settlement_check.gd`：**92 项断言全通过**。代表性几条：
+  繁荣地 5 金买入 → 荒废地 6 金卖出（一趟 10 件赚 50 金）；招募 3 人后池子 5 → 2；
+  驻军 10 人后周薪 35 → 25；存到极限仍留 5 人看家。
+- 本批**只加逻辑**：主场景 900 帧行为与 4a 完全一致（没有任何东西会去调它）。
+
+**本批踩到的坑（都已修）：**
+
+1. **引用环泄漏**（见上，门禁 6 步红）——这是唯一一个真 bug。
+2. `close()` 返回 `void`，`_ok(not sys.close(), …)` 直接在解析期就报
+   `Cannot get return value of call to "close()"`：断言「重复关是空操作」得改成
+   「关两次后 `current == null` 且时间锁是开的」。
+3. 自检里的假世界**没有寻路栅格**，`PlayerParty.set_destination()` 会打在
+   `data.path_fine` 上（`Nil`）——「让部队在行军」直接置 `moving = true` 即可。
+4. 「没货时卖出行灰掉」这条断言原本查的是**村庄**菜单，而村庄根本没有市场那一行
+   —— 断言自己错了，不是逻辑错了。
+5. 志愿者池只写了向上回流、没写向下夹上限；补上夹位后才配得上「上限」这个词。
