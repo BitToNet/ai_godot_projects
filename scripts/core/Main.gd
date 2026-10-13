@@ -34,6 +34,8 @@ var vegetation: VegetationScatter
 var player: PlayerParty
 var ai_parties: Array[AIParty] = []
 var spawner: PartySpawner                  ## 开局摆部队（见 PartySpawner.gd）
+var view: OverworldView                    ## 标签缩放 / 大地图显隐（见 OverworldView.gd）
+var hover: HoverInspector                  ## 悬停提示（见 HoverInspector.gd）
 var fog: FogOfWar
 var lights_root: Node3D
 
@@ -60,15 +62,12 @@ var encounters_enabled: bool = true   ## 调试/截图时可关掉遭遇UI
 var cooldowns: Dictionary = {}
 var _space_latched: bool = false       ## 本次空格按住是否已被消费（打断行军 / 等待中下达命令）
 var _time_lock: bool = false           ## 遭遇对话 / Boss 战：强制暂停，空格无效
-var _hover_timer: float = 0.0
 var _gen_ms: int = 0
 ## 程序化生成**彻底**结束（含收尾的两帧与 0.35 s 遮罩收场）后置 true。
 ## 工具脚本（tools/gen_fingerprint.gd、tools/perf_probe.gd）靠它判断何时可以安全取指纹 / 释放场景，
 ## 不要改用 _gen_ms：那个值在收尾协程还在 await 时就已置位，此时 free() 会报
 ## 「Resumed function '_step()' after await, but class instance is gone」。
 var gen_done: bool = false
-var _label_scale_applied: float = -1.0   ## 上次实际写入标签的缩放因子（-1 = 尚未应用）
-var _label_count_applied: int = -1       ## 上次应用时的标签总数（用于识别新增部队）
 
 func _ready() -> void:
 	var t0 := Time.get_ticks_msec()
@@ -187,7 +186,6 @@ func _ready() -> void:
 	camera_rig.name = "CameraRig"
 	add_child(camera_rig)
 	camera_rig.setup(cfg, data, player)
-	camera_rig.strategic_changed.connect(_on_strategic_changed)
 
 	fog = FogOfWar.new()
 	fog.enabled = cfg.fog_of_war
@@ -204,6 +202,25 @@ func _ready() -> void:
 		fog.reveal(Vector2(player.position.x, player.position.z), cfg.fog_reveal_radius * 1.4)
 
 	_setup_ui()
+
+	# 表现层助手：标签缩放 / 大地图整体显隐 / 悬停提示。
+	# 放在这里是因为它们都要等相机、植被、部队、HUD 全部就位。
+	view = OverworldView.new()
+	view.camera_rig = camera_rig
+	view.data = data
+	view.parties = ai_parties
+	view.player = player
+	view.vegetation = vegetation
+	view.nodes = [terrain, water, lights_root, camera_rig, player, hud]
+	camera_rig.strategic_changed.connect(view.on_strategic_changed)
+
+	hover = HoverInspector.new()
+	hover.host = self
+	hover.camera_rig = camera_rig
+	hover.hud = hud
+	hover.data = data
+	hover.cfg = cfg
+	hover.parties = ai_parties
 
 	_gen_ms = Time.get_ticks_msec() - t0
 	print("[Warband] 地图生成完成：%d ms   定居点 %d   桥梁 %d   植被实例 %d" % [
@@ -322,7 +339,9 @@ func _order_move(goal: Vector2) -> void:
 
 # =============================================================== 循环
 func _process(delta: float) -> void:
-	if data == null or player == null:
+	# view / hover 是生成流程最后才组装的（要等相机、植被、部队、HUD 全部就位），
+	# 在那之前 _process 已经在跑（_ready 里全是 await），所以这里必须一起判空。
+	if data == null or player == null or view == null:
 		return
 	# 0) 背景音乐的淡入淡出必须在战斗早退之前推进，否则战斗中永远切不过去
 	Bgm.tick(delta)
@@ -352,12 +371,8 @@ func _process(delta: float) -> void:
 	# 遭遇检测（时间未流动时不检测）
 	if not game_paused:
 		_check_encounters(delta)
-	_update_label_scale()
-	# 悬停
-	_hover_timer += delta
-	if _hover_timer > 0.1:
-		_hover_timer = 0.0
-		_update_hover()
+	view.update_label_scale()
+	hover.tick(delta)
 
 ## 大地图行军马蹄声：玩家部队固定听得见；AI 部队按与相机的距离剔除并衰减，
 ## 免得十几支部队同时响在耳朵里糊成一片。
@@ -371,29 +386,6 @@ func _tick_party_audio(dt: float) -> void:
 	for a in ai_parties:
 		if a != null and is_instance_valid(a):
 			a.tick_movement_audio(dt, listener)
-
-func _update_label_scale() -> void:
-	if camera_rig == null:
-		return
-	var f := clampf(camera_rig.zoom_height / 90.0, 0.85, 4.2)
-	# f 只由滚轮缩放（camera_rig.zoom_height）决定，平视时每帧都是同一个值；
-	# 而写 Label3D.pixel_size 会标脏并重建字形网格 —— 原来每帧对 33 个标签白写一次，
-	# 100 部队规模下就是每帧 100+ 次。量化到 1/64 后早退，稳态开销归零。
-	# 同时比较标签数量：将来若在运行中新建部队，标签会立刻被补上缩放，不会被早退漏掉。
-	f = snappedf(f, 1.0 / 64.0)
-	var n := data.settlements.size() + ai_parties.size() + 1
-	if n == _label_count_applied and is_equal_approx(f, _label_scale_applied):
-		return
-	_label_scale_applied = f
-	_label_count_applied = n
-	for s in data.settlements:
-		if s.label != null:
-			s.label.pixel_size = 0.026 * f
-	for a in ai_parties:
-		if a != null and is_instance_valid(a) and a.label != null:
-			a.label.pixel_size = 0.024 * f
-	if player.label != null:
-		player.label.pixel_size = 0.024 * f
 
 func _check_encounters(delta: float) -> void:
 	if not encounters_enabled:
@@ -496,55 +488,6 @@ func _toggle_faction_labels(fid: int) -> void:
 			any_visible = any_visible or s.label.visible
 	print("[UI] 势力 %s 的定居点标签：%s" % [data.faction(fid).name, "显示" if any_visible else "隐藏"])
 
-func _on_strategic_changed(is_strategic: bool) -> void:
-	if vegetation != null and vegetation.root != null:
-		vegetation.root.visible = not is_strategic
-	# 战略视图里定居点标签再放大一档（配合 _update_label_scale 的缩放）
-	if is_strategic:
-		print("[视图] 进入战略视图：植被剔除，定居点标签放大")
-
-# =============================================================== 悬停提示
-func _update_hover() -> void:
-	if camera_rig == null or hud == null:
-		return
-	var mouse := get_viewport().get_mouse_position()
-	if hud.is_encounter_open():
-		hud.clear_tooltip()
-		return
-	var hit := camera_rig.ray_to_terrain(mouse)
-	if hit.y < config.sea_level - 1.0:
-		hud.clear_tooltip()
-		hud.set_terrain_text("海洋 / 不可通行")
-		return
-	var p := Vector2(hit.x, hit.z)
-	# 1) 部队
-	for a in ai_parties:
-		if a == null or not is_instance_valid(a):
-			continue
-		if Vector2(a.position.x, a.position.z).distance_to(p) < 7.0:
-			var fname := GameState.faction_name(data, a.faction_id, "无阵营（流寇）")
-			var kindname: String = {"lord": "领主部队", "caravan": "商队", "bandit": "强盗团伙"}.get(a.ai_kind(), "部队")
-			var lead: String = ("\n首领：%s" % a.boss_title) if a.boss_title != "" else ""
-			var hint: String = {"lord": "\n（可发起 Boss 战 · 最强）", "bandit": "\n（可发起 Boss 战）",
-				"caravan": "\n（可发起 Boss 战 · 最弱）"}.get(a.ai_kind(), "")
-			hud.show_tooltip("[%s] %s\n阵营：%s\n兵力：%d 人\n状态：%s%s%s" % [
-				kindname, a.party_name, fname, a.troop_count,
-				"追击中！" if a.chasing else ("行军中" if a.moving else "驻扎"), lead, hint], mouse)
-			hud.set_terrain_text(data.nav_fine.describe_at_world(p))
-			return
-	# 2) 定居点
-	for s in data.settlements:
-		if s.pos.distance_to(p) < s.radius + 6.0:
-			var f := data.faction(s.faction_id)
-			var terr := data.faction_at(s.pos.x, s.pos.y)
-			hud.show_tooltip("%s\n类型：%s\n势力：%s\n驻军：%d 人\n领地归属：%s" % [
-				s.name, s.kind_name(), f.name, s.garrison,
-				GameState.faction_name(data, terr, "无主之地")], mouse)
-			hud.set_terrain_text(data.nav_fine.describe_at_world(p))
-			return
-	hud.clear_tooltip()
-	hud.set_terrain_text(data.nav_fine.describe_at_world(p))
-
 # =============================================================== Boss 战斗场景（2D 横版）
 ## 依据遭遇点在大地图上的位置决定战斗背景风格：雪山 / 沙漠 / 草原
 func _terrain_kind_at(p: Vector2) -> String:
@@ -599,7 +542,7 @@ func _start_battle(a: AIParty) -> void:
 	add_child(battle)
 	battle.setup(payload)
 	battle.finished.connect(_on_battle_finished.bind(a))
-	_set_overworld_visible(false)
+	view.set_visible(false)
 	_time_lock = true          # 战斗中世界时间保持冻结
 	game_paused = true
 	day_night.paused = true
@@ -613,16 +556,6 @@ func _start_battle(a: AIParty) -> void:
 	Sfx.play("battle_start")
 	Bgm.play("battle", audio.bgm_fade_battle)
 
-func _set_overworld_visible(v: bool) -> void:
-	var list: Array = [terrain, water, lights_root, camera_rig, player, hud]
-	for a in ai_parties:
-		list.append(a)
-	for n in list:
-		if n == null or not is_instance_valid(n):
-			continue
-		if n is Node3D or n is CanvasItem or n is CanvasLayer:
-			n.visible = v
-
 ## 战斗结束：胜利 → Boss 部队消失；失败 → 送回最近的城镇并推进半天；撤退 → 原样返回
 func _on_battle_finished(result: String, a: AIParty) -> void:
 	if battle != null and is_instance_valid(battle):
@@ -630,7 +563,7 @@ func _on_battle_finished(result: String, a: AIParty) -> void:
 	battle = null
 	# 回到大地图：战斗曲长淡出，行军主题重新淡入（结算音效还在响，别抢）
 	Bgm.play("map", audio.bgm_fade_map)
-	_set_overworld_visible(true)
+	view.set_visible(true)
 	if camera_rig != null:
 		_set_camera_active(true)
 	if router != null:
