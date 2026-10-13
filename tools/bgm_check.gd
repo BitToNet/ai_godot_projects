@@ -189,7 +189,7 @@ func _force_encounter() -> bool:
 	main.cooldowns.clear()
 	main.encounters_enabled = true
 	var p := Vector2(main.player.position.x, main.player.position.z)
-	main._order_move(Vector2(p.x + 60.0, p.y + 60.0))
+	main.time.order_move(Vector2(p.x + 60.0, p.y + 60.0))
 	for i in 240:
 		await physics_frame
 		# 无头运行时鼠标恒在 (0,0)，会一直触发"屏幕边缘平移"把镜头推远 —— 手动按住镜头

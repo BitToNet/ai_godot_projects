@@ -43,15 +43,37 @@ function Invoke-GodotStep {
 	param(
 		[string]$Name,
 		[string[]]$Extra,
-		[int[]]$OkExit = @(0)
+		[int[]]$OkExit = @(0),
+		[int]$TimeoutSec = 180
 	)
 	$log = Join-Path $env:TEMP ("warband_check_{0}.log" -f ($Name -replace '[^\w]', '_'))
 	$all = @('--headless', '--path', $PROJ, '--fixed-fps', '60') + $Extra
 	$sw = [System.Diagnostics.Stopwatch]::StartNew()
-	& $GODOT @all *>&1 | Set-Content -Path $log -Encoding UTF8
-	$code = $LASTEXITCODE
+	# 每步都必须有硬超时。Godot 里的工具脚本一旦抛运行时错误（例如调用了已被删除的 Main 方法），
+	# SceneTree 的协程会静默死掉、进程永不退出，表现为 100% CPU 空转 —— 没有超时就会把整条门禁
+	# 挂住（2026-10-13 实测：perf_probe 挂在已删除的 main._order_move 上，15 分钟一步没动、零输出）。
+	# 超时必须连子进程一起杀：console 版会再拉一个同名的 GUI 进程跑真正的游戏。
+	$psi = New-Object System.Diagnostics.ProcessStartInfo
+	$psi.FileName = $GODOT
+	$psi.Arguments = (($all | ForEach-Object { '"' + $_ + '"' }) -join ' ')
+	$psi.UseShellExecute = $false
+	$psi.RedirectStandardOutput = $true
+	$psi.RedirectStandardError = $true
+	$psi.CreateNoWindow = $true
+	$proc = [System.Diagnostics.Process]::Start($psi)
+	# 必须异步读：同步 ReadToEnd 会在管道写满时和 WaitForExit 互相死锁
+	$outTask = $proc.StandardOutput.ReadToEndAsync()
+	$errTask = $proc.StandardError.ReadToEndAsync()
+	$timedOut = -not $proc.WaitForExit($TimeoutSec * 1000)
+	if ($timedOut) {
+		& taskkill /T /F /PID $proc.Id *>&1 | Out-Null
+		$proc.WaitForExit()
+	}
+	$code = $proc.ExitCode
+	$text = $outTask.Result + $errTask.Result
+	[System.IO.File]::WriteAllText($log, $text, (New-Object System.Text.UTF8Encoding($true)))
 	$sw.Stop()
-	$lines = @(Get-Content -Path $log)
+	$lines = @($text -split "`r?`n")
 	# 必须用大小写敏感(-cmatch)且带冒号的窄模式：PowerShell 5.1 会把原生命令写往 stderr 的
 	# 任何内容（例如 Godot 退出时的 "WARNING: N ObjectDB instances were leaked"）包装成一个
 	# ErrorRecord，其格式化文本里带有 "FullyQualifiedErrorId : NativeCommandError"。
@@ -59,8 +81,11 @@ function Invoke-GodotStep {
 	# Godot 自身的错误固定是 'ERROR: ' / 'SCRIPT ERROR: ' / 'Parse Error' 这几种写法。
 	$errLines = @($lines | Where-Object { $_ -cmatch 'ERROR:|SCRIPT ERROR|Parse Error' })
 	$secs = [math]::Round($sw.Elapsed.TotalSeconds, 1)
-	$ok = ($OkExit -contains $code) -and ($errLines.Count -eq 0)
+	$ok = ($OkExit -contains $code) -and ($errLines.Count -eq 0) -and (-not $timedOut)
 	$detail = "exit=$code  用时 ${secs}s"
+	if ($timedOut) {
+		$detail = "$detail  超时 >${TimeoutSec}s（已强杀）"
+	}
 	if ($errLines.Count -gt 0) {
 		$detail = "$detail  错误行 $($errLines.Count)"
 	}
@@ -68,6 +93,9 @@ function Invoke-GodotStep {
 		$pass.Add("$Name  PASS  $detail")
 	} else {
 		$fail.Add("$Name  FAIL  $detail")
+		if ($timedOut) {
+			$fail.Add("        > 超过 ${TimeoutSec}s 未退出，已连子进程强杀 —— 典型原因是工具脚本在 Godot 里抛了运行时错误（协程静默死掉、进程不退）")
+		}
 		foreach ($e in ($errLines | Select-Object -First 8)) {
 			$fail.Add("        > $e")
 		}

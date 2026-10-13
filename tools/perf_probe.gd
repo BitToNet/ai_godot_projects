@@ -81,7 +81,7 @@ func _run() -> void:
 	# ---- 场景 2：march（下达行军令，世界时间流动）----
 	var p := Vector2(main.player.position.x, main.player.position.z)
 	var goal := Vector2(p.x + 160.0, p.y + 120.0)
-	main._order_move(goal)
+	main.time.order_move(goal)
 	var march := await _sample("march", true)
 
 	var now := {"idle": idle, "march": march}

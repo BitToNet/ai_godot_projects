@@ -25,14 +25,18 @@ func _run() -> void:
 	var scene: PackedScene = load("res://scenes/Main.tscn")
 	main = scene.instantiate()
 	root.add_child(main)
-	# Main._ready() 是协程（生成地形 + 合成音效），等它就绪
+	# Main._ready() 是协程（生成地形 + 合成音效），等它就绪。
+	# 判据用 gen_done（程序化生成**彻底**结束，time / view / hover 都已经装配好）——
+	# 只判「data / player 非空」是不够的：那两样在生成中途就好了，而 time 要到收尾才建，
+	# 此时下 main.time.order_move() 会抛 "Nonexistent function in base 'Nil'"，协程静默死掉、
+	# 进程永不退出（门禁里表现为一步挂到超时）。
 	var guard := 0
 	while guard < 6000:
 		guard += 1
 		await process_frame
-		if main.data != null and main.player != null and Sfx.is_ready():
+		if main.gen_done and main.time != null and Sfx.is_ready():
 			break
-	if main.data == null or main.player == null or not Sfx.is_ready():
+	if not main.gen_done or main.time == null or not Sfx.is_ready():
 		print("[大地图联调] FAIL：等待就绪超时（%d 帧）" % guard)
 		quit(1)
 		return
@@ -49,7 +53,7 @@ func _run() -> void:
 	# ---- 行军命令：号角 + 马蹄 ----
 	var p0 := Vector2(main.player.position.x, main.player.position.z)
 	var goal := Vector2(p0.x + 160.0, p0.y + 120.0)
-	main._order_move(goal)
+	main.time.order_move(goal)
 	print("[大地图联调] 下达行军命令：%s -> %s（moving=%s）" % [str(p0.round()), str(goal.round()), str(main.player.moving)])
 	for i in 420:                     # 7 秒行军（fixed-fps 60）
 		await physics_frame
@@ -76,7 +80,7 @@ func _run() -> void:
 		main.cooldowns.clear()
 		main.encounters_enabled = true
 		var p1 := Vector2(main.player.position.x, main.player.position.z)
-		main._order_move(Vector2(p1.x + 60.0, p1.y + 60.0))
+		main.time.order_move(Vector2(p1.x + 60.0, p1.y + 60.0))
 		for i in 120:
 			await physics_frame
 			if main.camera_rig != null:
@@ -92,7 +96,7 @@ func _dbg(i: int) -> void:
 	var cam_pos: Vector3 = main.camera_rig.cam.global_position if (main.camera_rig != null and main.camera_rig.cam != null) else Vector3.ZERO
 	var counts: Dictionary = Sfx.counts()
 	print("    [dbg %3d] moving=%s paused=%s hoof_t=%.3f 距相机=%.1f 半径=%.1f 蹄声=%d" % [
-		i, str(main.player.moving), str(main.game_paused), float(main.player._hoof_t),
+		i, str(main.player.moving), str(main.time.game_paused), float(main.player._hoof_t),
 		lp.distance_to(Vector2(cam_pos.x, cam_pos.z)), float(Sfx.cfg().hoof_audible_range),
 		int(counts.get("hoof_a", 0)) + int(counts.get("hoof_b", 0))])
 

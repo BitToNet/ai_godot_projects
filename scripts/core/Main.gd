@@ -10,12 +10,12 @@
 ##    6. Terrain / Water / Settlement / Vegetation 网格
 ##    7. Party / AI Party / Camera / FogOfWar / HUD
 ##
-##  时间流动（骑砍式的「暂停」）由 Main 统一裁决，见 _eval_time_flow()：
+##  时间流动（骑砍式的「暂停」）由 TimeFlowController 统一裁决：
 ##    · 点击地图 → 部队开始行军，行军期间世界时间自动流动；
 ##      走到目的地的瞬间，世界时间立刻暂停。
 ##    · 行军途中按空格 → 行军立刻中断，世界时间暂停。
 ##    · 部队停下后长按空格 → 世界时间才开始流动（松开立刻恢复暂停）。
-##    · 遭遇对话 / Boss 战期间强制暂停（_time_lock）。
+##    · 遭遇对话 / Boss 战期间强制暂停（time.lock()）。
 ##  暂停时不再调用任何部队与昼夜的 step，但相机与 UI 仍然响应。
 ## =============================================================================
 extends Node3D
@@ -44,24 +44,15 @@ var settlement_mat: ShaderMaterial
 var vegetation_mat: ShaderMaterial
 var party_mat: ShaderMaterial
 
-## 时间流动状态机（骑砍式：部队停下，时间也停下）
-enum TimeFlow {
-	FROZEN,      ## 时间暂停：原地待命 / 行军被空格打断（开局默认状态）
-	MARCHING,    ## 行军中：世界时间随部队移动自动流动，抵达瞬间转 FROZEN
-	WAITING,     ## 原地长按空格：世界时间流动，松开立刻暂停
-	LOCKED,      ## 遭遇对话 / Boss 战：强制暂停，空格无效
-}
+## 时间流动状态机（骑砍式：部队停下，时间也停下）搬到了 TimeFlowController，
+## 这里只留一个引用；遭遇 / Boss 战用它 lock()，行军命令走 time.order_move()。
+var time: TimeFlowController
+var rules: EncounterRules            ## 遭遇 / Boss 战数值（见 EncounterRules.gd）
 
-var game_paused: bool = true           ## 派生量：本帧世界时间是否暂停
-var time_flow: int = TimeFlow.FROZEN   ## 当前时间流动状态（供 UI / 调试查看）
-var speed_steps := [1.0, 2.0, 4.0]
-var speed_index := 0
 var encounter_party: AIParty = null
 var battle: BattleScene = null        ## 正在进行的 2D Boss 战（null = 在大地图上）
 var encounters_enabled: bool = true   ## 调试/截图时可关掉遭遇UI
 var cooldowns: Dictionary = {}
-var _space_latched: bool = false       ## 本次空格按住是否已被消费（打断行军 / 等待中下达命令）
-var _time_lock: bool = false           ## 遭遇对话 / Boss 战：强制暂停，空格无效
 var _gen_ms: int = 0
 ## 程序化生成**彻底**结束（含收尾的两帧与 0.35 s 遮罩收场）后置 true。
 ## 工具脚本（tools/gen_fingerprint.gd、tools/perf_probe.gd）靠它判断何时可以安全取指纹 / 释放场景，
@@ -201,6 +192,12 @@ func _ready() -> void:
 		party_mat.set_shader_parameter("fog_enabled", 1.0)
 		fog.reveal(Vector2(player.position.x, player.position.z), cfg.fog_reveal_radius * 1.4)
 
+	# 时间流动状态机与遭遇数值表：必须早于 _setup_ui()，
+	# 因为输入路由会把「点地行军 / 切换流速」直接接到这两个对象上。
+	time = TimeFlowController.new()
+	time.player = player
+	time.day_night = day_night
+	rules = EncounterRules.create()
 	_setup_ui()
 
 	# 表现层助手：标签缩放 / 大地图整体显隐 / 悬停提示。
@@ -285,57 +282,15 @@ func _setup_ui() -> void:
 	router.camera_rig = camera_rig
 	router.hud = hud
 	router.cfg = config
-	router.order_move.connect(_order_move)
-	router.cycle_speed_requested.connect(_on_cycle_speed)
+	router.order_move.connect(time.order_move)
+	router.cycle_speed_requested.connect(time.cycle_speed)
 	router.toggle_vegetation_requested.connect(_on_toggle_vegetation)
 	router.toggle_mute_requested.connect(_on_toggle_mute)
 	router.faction_labels_requested.connect(_toggle_faction_labels)
 
 # =============================================================== 时间流动
-## 每帧裁决「世界时间是否流动」（旧版的空格开关已改为骑砍式状态机）：
-##   1) 松开空格 → 解除消费标记，允许下一次长按生效；
-##   2) 行军途中按下空格 → 行军立刻中断并进入暂停，这次按住不再触发时间流动；
-##   3) 部队停下后长按空格 → 世界时间才流动，松开立刻暂停；
-##   4) 遭遇对话 / Boss 战 → 强制暂停，空格无效。
-##  「长按」这个键由动作 time_flow 定义（默认 空格 / 手柄 X），见 project.godot 的 [input] 段。
-func _eval_time_flow() -> void:
-	if player == null:
-		return
-	var space_down := Input.is_action_pressed("time_flow")
-	if not space_down:
-		_space_latched = false
-	elif not _space_latched and player.moving:
-		# 规则 2：行军途中按空格 → 移动立马停止，进入暂停状态
-		_space_latched = true
-		player.halt()
-		print("[行军] 空格打断：部队立刻停止前进，世界时间暂停。")
-
-	var next: int = TimeFlow.FROZEN
-	if _time_lock:
-		next = TimeFlow.LOCKED
-	elif player.moving:
-		next = TimeFlow.MARCHING
-	elif space_down and not _space_latched:
-		next = TimeFlow.WAITING
-	time_flow = next
-	game_paused = next == TimeFlow.FROZEN or next == TimeFlow.LOCKED
-	if day_night != null:
-		day_night.paused = game_paused
-
-## 下达移动命令：行军期间世界时间自动流动，抵达的瞬间立刻暂停。
-## 若此刻正按着空格（原地推进时间），把这次按指标记为「已消费」——
-## 抵达后必须重新长按空格，世界时间才会再次流动。
-func _order_move(goal: Vector2) -> void:
-	if player == null:
-		return
-	if Input.is_action_pressed("time_flow"):
-		_space_latched = true
-	player.set_destination(goal)
-	if player.moving:
-		_eval_time_flow()
-		# 行军号角（下达命令的听觉反馈）
-		Sfx.play("order", -4.0)
-		print("[行军] 前往 (%.0f, %.0f)：途中时间流动，抵达后立刻暂停。" % [goal.x, goal.y])
+## 状态机本体在 TimeFlowController（含「长按空格 / 遭遇锁定」四条规则），
+## 这里只保留调用点，见 time.evaluate() / time.order_move() / time.lock()。
 
 # =============================================================== 循环
 func _process(delta: float) -> void:
@@ -348,13 +303,13 @@ func _process(delta: float) -> void:
 	if battle != null:
 		return
 	# 1) 先判定本帧时间是否流动（行军 / 长按空格 / 强制锁）
-	_eval_time_flow()
-	var dt := 0.0 if game_paused else delta
+	time.evaluate()
+	var dt := 0.0 if time.game_paused else delta
 	# 2) 玩家先走：抵达的那一帧立刻冻结世界，AI / 遭遇 / 昼夜都不再推进
 	player.step(dt)
 	if not player.moving:
-		_eval_time_flow()
-		dt = 0.0 if game_paused else delta
+		time.evaluate()
+		dt = 0.0 if time.game_paused else delta
 	# 部队
 	for a in ai_parties:
 		if a != null and is_instance_valid(a):
@@ -369,7 +324,7 @@ func _process(delta: float) -> void:
 				pts.append(Vector2(a.position.x, a.position.z))
 		fog.update(delta, pts)
 	# 遭遇检测（时间未流动时不检测）
-	if not game_paused:
+	if not time.game_paused:
 		_check_encounters(delta)
 	view.update_label_scale()
 	hover.tick(delta)
@@ -405,10 +360,9 @@ func _check_encounters(delta: float) -> void:
 
 func _open_encounter(a: AIParty) -> void:
 	encounter_party = a
-	_time_lock = true          # 对话期间强制暂停，空格不生效
 	if player.moving:
 		player.halt()          # 遭遇打断行军：部队停在原地
-	_eval_time_flow()
+	time.lock()                # 对话期间强制暂停，空格不生效
 	var fname := GameState.faction_name(data, a.faction_id)
 	var col := Color(0.9, 0.85, 0.7)
 	if a.faction_id >= 0:
@@ -435,10 +389,9 @@ func _set_camera_active(v: bool) -> void:
 func _on_encounter_choice(action: String) -> void:
 	var a := encounter_party
 	encounter_party = null
-	_time_lock = false
 	_set_camera_active(true)   # 对话框已关：把地图操作还给玩家（Boss 战会立刻再关掉）
 	if a == null or not is_instance_valid(a):
-		_eval_time_flow()
+		time.unlock()
 		return
 	if action == "attack":
 		hud.hide_encounter()
@@ -447,29 +400,28 @@ func _on_encounter_choice(action: String) -> void:
 		return
 	else:
 		print("[撤退] 你避开了 %s 的锋芒，绕道而行。" % a.party_name)
-		cooldowns[a.get_instance_id()] = 14.0
+		cooldowns[a.get_instance_id()] = rules.retreat_cooldown
 		_push_player_away(a.position)
 	hud.hide_encounter()
 	# 撤退会重新下达行军命令 → 时间随移动流动，抵达后再次暂停
-	_eval_time_flow()
+	time.evaluate()
 
 func _push_player_away(from: Vector3) -> void:
 	var d := Vector2(player.position.x - from.x, player.position.z - from.z)
 	if d.length() < 0.1:
 		d = Vector2(1, 0)
 	d = d.normalized()
-	var goal := Vector2(player.position.x, player.position.z) + d * 34.0
-	goal.x = clampf(goal.x, 4.0, config.map_size - 4.0)
-	goal.y = clampf(goal.y, 4.0, config.map_size - 4.0)
-	_order_move(goal)
+	var goal := Vector2(player.position.x, player.position.z) + d * rules.push_away_distance
+	var m := rules.push_away_margin
+	goal.x = clampf(goal.x, m, config.map_size - m)
+	goal.y = clampf(goal.y, m, config.map_size - m)
+	time.order_move(goal)
 
 # =============================================================== 输入
 ## 键码 → 语义的分发已经搬进 InputRouter（含「遭遇对话框在场时整体让路」）。
 ## 这里只负责「按下之后改什么」，因此不再出现任何物理键码。
-func _on_cycle_speed() -> void:
-	speed_index = (speed_index + 1) % speed_steps.size()
-	day_night.speed = speed_steps[speed_index]
-
+## 注意：点地行军 / 切换时间流速直接接到了 TimeFlowController（见 _setup_ui），
+## 不经过 Main。
 func _on_toggle_vegetation() -> void:
 	vegetation.root.visible = not vegetation.root.visible
 
@@ -512,18 +464,10 @@ func _start_battle(a: AIParty) -> void:
 	var fcol := Color(0.72, 0.22, 0.22)
 	if a.faction_id >= 0:
 		fcol = data.faction(a.faction_id).color
-	# 按敌人类型给不同的 HP / 破防值（商队护卫长最弱，领主最强）
+	# 按敌人类型给不同的 HP / 破防值（商队护卫长最弱，领主最强）—— 公式在 EncounterRules
 	var kind := a.ai_kind()
-	var troops := float(a.troop_count)
-	var bhp := 300.0 + troops * 1.10
-	var bpoise := 90.0 + troops * 0.22
-	match kind:
-		"bandit":
-			bhp = 130.0 + troops * 2.10
-			bpoise = 55.0 + troops * 0.42
-		"caravan":
-			bhp = 110.0 + troops * 1.70
-			bpoise = 48.0 + troops * 0.38
+	var bhp := rules.boss_hp(kind, a.troop_count)
+	var bpoise := rules.boss_poise(kind, a.troop_count)
 	var payload := {
 		"config": bcfg,
 		"player_name": "玩家部队 · %d 人" % player.troop_count,
@@ -543,9 +487,7 @@ func _start_battle(a: AIParty) -> void:
 	battle.setup(payload)
 	battle.finished.connect(_on_battle_finished.bind(a))
 	view.set_visible(false)
-	_time_lock = true          # 战斗中世界时间保持冻结
-	game_paused = true
-	day_night.paused = true
+	time.lock()                # 战斗中世界时间保持冻结（空格无效）
 	if camera_rig != null:
 		_set_camera_active(false)   # 战斗中相机不再吃键鼠（BattleScene 自己收输入）
 	if router != null:
@@ -570,8 +512,7 @@ func _on_battle_finished(result: String, a: AIParty) -> void:
 		router.enabled = true
 	# 回到大地图：解除强制暂停，交还给时间流动状态机
 	# （战败会被送去城镇 → 行军中时间流动；其余情况部队原地待命 → 保持暂停）
-	_time_lock = false
-	_eval_time_flow()
+	time.unlock()
 	if a == null or not is_instance_valid(a):
 		return
 	var title: String = a.boss_title if a.boss_title != "" else a.party_name
@@ -580,20 +521,11 @@ func _on_battle_finished(result: String, a: AIParty) -> void:
 		ai_parties.erase(a)
 		a.queue_free()
 		var kind2 := a.ai_kind()
-		var loot_rate := 0.6
-		var loss_rate := 0.12
-		var loot_word := "辎重"
-		match kind2:
-			"caravan":
-				loot_rate = 1.15      # 商队货物值钱，但护卫精悍、损失也小
-				loss_rate = 0.08
-				loot_word = "货物"
-			"bandit":
-				loot_rate = 0.85
-				loss_rate = 0.10
-				loot_word = "赃物"
-		var spoils := int(round(float(a.troop_count) * loot_rate))
-		player.troop_count = maxi(5, player.troop_count - int(a.troop_count * loss_rate))
+		# 战利品与损失率都在 EncounterRules 里（商队货物值钱，但护卫精悍、损失也小）
+		var spoils := int(round(float(a.troop_count) * rules.loot_rate(kind2)))
+		var loss := int(a.troop_count * rules.loss_rate(kind2))
+		var loot_word := rules.loot_word(kind2)
+		player.troop_count = maxi(5, player.troop_count - loss)
 		player.refresh_label()
 		player.label.text = "玩家部队 · %d 人" % player.troop_count
 		hud.show_toast("击败了 %s！缴获%s %d" % [title, loot_word, spoils])
@@ -602,14 +534,14 @@ func _on_battle_finished(result: String, a: AIParty) -> void:
 		var town := _nearest_town(p)
 		if town != null:
 			player.position = Vector3(town.pos.x, data.hm.height_at(town.pos.x, town.pos.y) + 0.4, town.pos.y)
-			_order_move(town.pos)
+			time.order_move(town.pos)
 			day_night.time_of_day = fmod(day_night.time_of_day + 0.5, 1.0)
 			hud.show_toast("战败…… 你被送回了 %s（时间推进半天）" % town.name)
 			print("[Boss战] 战败：被送回 %s，时间推进半天" % town.name)
-		cooldowns[a.get_instance_id()] = 30.0
+		cooldowns[a.get_instance_id()] = rules.defeat_cooldown
 	else:
 		hud.show_toast("你撤出了与 %s 的战斗" % title)
-		cooldowns[a.get_instance_id()] = 25.0
+		cooldowns[a.get_instance_id()] = rules.battle_retreat_cooldown
 		_push_player_away(a.position)
 
 ## 最近的己方/中立城镇（用于战败回城）
