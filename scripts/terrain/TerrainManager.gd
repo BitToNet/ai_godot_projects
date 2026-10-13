@@ -60,6 +60,10 @@ func _process(delta: float) -> void:
 	_update_lods(cam.global_position, false)
 
 func _update_lods(cam_pos: Vector3, force: bool) -> void:
+	# 先算出「想换到哪一级」，再按距离从近到远处理：缓存命中的换级是免费的（见 _apply_lod），
+	# 真正吃预算的是新建块 —— 每 0.25 s 只有 2 次新建机会，应该优先喂给离相机最近的块，
+	# 否则按数组顺序（行的顺序）处理时，远处块会先把这两次机会抢走
+	var want: Array = []
 	for ch in _chunks:
 		var c: Vector3 = ch.center
 		var d := Vector2(cam_pos.x - c.x, cam_pos.z - c.z).length()
@@ -73,16 +77,28 @@ func _update_lods(cam_pos: Vector3, force: bool) -> void:
 			if lod < ch.lod and d > LOD_DIST[maxi(0, ch.lod - 1)] * 0.92:
 				lod = ch.lod
 		if lod != ch.lod:
-			_apply_lod(ch, lod)
+			want.append({"ch": ch, "lod": lod, "d": d})
+	if want.is_empty():
+		return
+	want.sort_custom(func(a, b): return float(a["d"]) < float(b["d"]))
+	for w in want:
+		_apply_lod(w["ch"], int(w["lod"]))
 
 func _apply_lod(ch: Dictionary, lod: int) -> void:
-	if _rebuild_budget <= 0:
-		return
+	# 缓存命中必须**先于**预算判断：换级本该是免费的（网格早就在内存里），
+	# 6a 的探针把这条暴露出来了 —— 原来缓存命中也被 _rebuild_budget 挡着，
+	# 相机一动就要等好几帧才换级（远处先糊、近处先清），而预算真正该约束的是新建
 	var cache: Dictionary = ch.cache
-	if not cache.has(lod):
-		cache[lod] = _build_chunk_mesh(ch.cx, ch.cz, LOD_QUADS[lod])
+	var mesh = cache.get(lod)
+	if mesh == null:
+		if _rebuild_budget <= 0:
+			return
+		mesh = _build_chunk_mesh(ch.cx, ch.cz, LOD_QUADS[lod])
+		cache[lod] = mesh
 		_rebuild_budget -= 1
-	ch.node.mesh = cache[lod]
+	ch.node.mesh = mesh
+	# LOD2/3 只在远处出现：关掉它们的阴影投射（远处地形的阴影本来也糊成一团）
+	ch.node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if lod >= 2 else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	ch.lod = lod
 
 func _build_chunk_mesh(cx: int, cz: int, quads: int) -> ArrayMesh:
@@ -96,14 +112,33 @@ func _build_chunk_mesh(cx: int, cz: int, quads: int) -> ArrayMesh:
 	verts.resize(vcount); norms.resize(vcount); uvs.resize(vcount)
 	var ox := float(cx) * CHUNK_SIZE
 	var oz := float(cz) * CHUNK_SIZE
+	# ---- 高度格 + 中心差分法线 ----
+	# 原来每顶点调一次 hm.normal_at()，它内部是 4 次 height_at（±cell 有限差分）——
+	# 一块 LOD0 = 1089 顶点 × 5 次采样。改成「先把这一块（含一圈外环）的高度算成格点数组，
+	# 再从相邻格点做中心差分」：每顶点 1 次采样 + 4 次数组读（探针实测单顶点 4.09 → 0.8 µs 量级，
+	# 见 ROADMAP §12.2）。外环是为了让**边界顶点也能用中心差分**，否则块与块之间的法线会有光照缝。
+	# 法线公式与 Heightmap.normal_at 相同（(h(x-s)-h(x+s), 2s, h(z-s)-h(z+s)) 再归一化），
+	# 但差分步长从固定的高度图 cell（本工程 heightmap_res=513 / 1024 m → 2 m）换成了**本级网格的步长**
+	# （LOD0 4 m / LOD1 8 m / LOD2 16 m / LOD3 32 m）。这是本次唯一有视觉含义的取舍：法线不再"过采样"
+	# 细于本级网格的起伏 —— 近处略微平滑、远处明显更平（远处本来也看不出，且 LOD2/3 已关阴影）。
+	# 顶点位置与索引**逐位不变**（探针 terrain_pos_hash / terrain_idx_hash 为证），只有 terrain_norm_hash 变。
+	# 想连法线也逐位不变，就得按 2 m 建格（LOD0 一块 67x67 = 4489 次采样约 3.4 ms），比现在慢一倍多，不值。
+	var g := quads + 3
+	var grid := PackedFloat64Array()
+	grid.resize(g * g)
+	for j in g:
+		var wz := oz + float(j - 1) * step
+		var row := j * g
+		for i in g:
+			grid[row + i] = hm.height_at(ox + float(i - 1) * step, wz)
 	for j in n:
 		var wz := oz + float(j) * step
 		for i in n:
 			var wx := ox + float(i) * step
 			var k := j * n + i
-			var y := hm.height_at(wx, wz)
-			verts[k] = Vector3(wx, y, wz)
-			norms[k] = hm.normal_at(wx, wz)
+			var gc := (j + 1) * g + (i + 1)
+			verts[k] = Vector3(wx, grid[gc], wz)
+			norms[k] = Vector3(grid[gc - 1] - grid[gc + 1], 2.0 * step, grid[gc - g] - grid[gc + g]).normalized()
 			uvs[k] = Vector2(wx / 16.0, wz / 16.0)
 	var idx := PackedInt32Array()
 	idx.resize(quads * quads * 6)

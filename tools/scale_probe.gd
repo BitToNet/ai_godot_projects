@@ -34,7 +34,8 @@ const TOL := 1.6                ## 耗时上界：超了记 WARN
 const TOL_HARD := 2.5           ## 耗时硬上界：超了判 FAIL
 const PAIRS := 12               ## 固定 12 对起终点
 const PRIM_N := 20000           ## 采样原语的调用次数
-const TERRAIN_SAMPLE := 16      ## 非 LOD0 的抽样块数（LOD0 全量 64 块）
+const TERRAIN_SAMPLE := 16
+const REPS := 3                        ## LOD1~3 单块太短，每块建 3 次取中位（否则基线会飘 2~3 倍）      ## 非 LOD0 的抽样块数（LOD0 全量 64 块）
 
 var main: Node
 var cfg: MapConfig
@@ -104,7 +105,7 @@ func _run() -> void:
 		return
 
 	for k in ["seed", "map_size", "veg_instances", "veg_chunks", "veg_xform_hash",
-			"terrain_chunks", "terrain_lod0_verts", "terrain_pos_hash", "terrain_idx_hash",
+			"terrain_chunks", "terrain_lod0_verts", "terrain_pos_hash", "terrain_idx_hash", "terrain_norm_hash",
 			"path_pairs", "path_fine_expanded", "path_coarse_expanded"]:
 		_exact(k, want)
 	for k in ["veg_total_ms", "veg_emit_ms", "terrain_lod0_median_ms", "terrain_lod1_median_ms",
@@ -212,14 +213,18 @@ func _veg_emit_ms(v: VegetationScatter, mat: ShaderMaterial) -> float:
 	}
 	var v2 := VegetationScatter.new()
 	v2.cfg = cfg
-	var root2 := Node3D.new()
-	v2.root = root2
-	var t0 := Time.get_ticks_usec()
-	for kind in per.keys():
-		v2._emit_chunks(String(kind), meshes[kind], per[kind], mat, 380.0, 260.0)
-	var ms := _ms(t0)
-	root2.free()
-	return ms
+	# 发射段只有 2~4 ms，和 LOD1~3 一样容易被噪声带偏（实测同一份代码能报 2.07 / 3.82）
+	# → 跑 REPS 次取中位，每次用全新的 root（否则第二次会把上一轮的节点也算进遍历）
+	var runs := PackedFloat32Array()
+	for r in REPS:
+		var root2 := Node3D.new()
+		v2.root = root2
+		var t0 := Time.get_ticks_usec()
+		for kind in per.keys():
+			v2._emit_chunks(String(kind), meshes[kind], per[kind], mat, 380.0, 260.0)
+		runs.append(_ms(t0))
+		root2.free()
+	return _median(runs)
 
 ## 实例变换指纹：按「类名排序 → 区块名排序 → 实例序号」喂进 SHA-256。
 ## 第六轮要动筛选遍数（会改布局）与发射方式（不该改数据），这个哈希会当场说话：
@@ -261,14 +266,21 @@ func _p_terrain() -> void:
 		var limit: int = nchunks if lod == 0 else mini(TERRAIN_SAMPLE, nchunks)
 		var times := PackedFloat32Array()
 		var done := 0
+		# LOD1~3 单块只有 0.1~0.5 ms：单次测量会被分配器状态与定时器粒度带得上下翻倍
+		# （实测：写完基线后的下一次跑就能差 2~3 倍），所以每块建 REPS 次取中位；
+		# LOD0 是 64 块全量，"合计"这个统计量本身已经稳（±2%）
+		var reps: int = 1 if lod == 0 else REPS
 		for cz in n:
 			for cx in n:
 				if done >= limit:
 					break
 				done += 1
-				var t0 := Time.get_ticks_usec()
-				tm._build_chunk_mesh(cx, cz, quads)
-				times.append(float(Time.get_ticks_usec() - t0) / 1000.0)
+				var rt := PackedFloat32Array()
+				for r in reps:
+					var t0 := Time.get_ticks_usec()
+					tm._build_chunk_mesh(cx, cz, quads)
+					rt.append(float(Time.get_ticks_usec() - t0) / 1000.0)
+				times.append(_median(rt))
 		cur["terrain_lod%d_median_ms" % lod] = _r3(_median(times))
 		cur["terrain_lod%d_max_ms" % lod] = _r3(_maxf(times))
 		cur["terrain_lod%d_sum_ms" % lod] = _r3(_sumf(times))
@@ -280,6 +292,10 @@ func _p_terrain() -> void:
 	var arrays := m.surface_get_arrays(0)
 	cur["terrain_pos_hash"] = _pack_hash(arrays[Mesh.ARRAY_VERTEX])
 	cur["terrain_idx_hash"] = _pack_hash(arrays[Mesh.ARRAY_INDEX])
+	# 法线也算一份：6c 把「每顶点 4 次 height_at」换成「用已算好的顶点网格做中心差分」，
+	# 顶点位置 / 索引逐位不变，法线因为差分步长从高度图 cell（2 m）变成网格步长而**必然**改变 ——
+	# 三条指纹一起把「改了什么、没改什么」钉死，谁想动地形都得显式更新基线
+	cur["terrain_norm_hash"] = _pack_hash(arrays[Mesh.ARRAY_NORMAL])
 
 	# 采样原语：建块目前每顶点 1 次 height_at + 1 次 normal_at(= 4 次 height_at)
 	var hm: Heightmap = main.data.hm
