@@ -12,6 +12,14 @@
 # ===== 音效试听用的导出 WAV（tools/sfx_tool.gd -- --wav 生成，随时可重建）=====
 /audio_preview/
 
+# ===== XSXB-Band 作曲工具（外部仓库，见 README「背景音乐」一节）=====
+# 工具本体在 F:\aigc_code\XSXB-Band，自带 579 MB CC0 采样库与导出渲染。
+# 万一有人在工程里再克隆一份、或把导出目录指向工程内，别让 git add -A 把几百 MB 采样卷进来：
+# 本工程只收 audio/bgm/ 下两首成品 Ogg。
+/XSXB-Band/
+# 渲染管线的中间 WAV（裁头 / 补尾 / 混音），成品只留 Ogg
+/audio/bgm/*.wav
+
 # ===== macOS =====
 .DS_Store
 ._*
