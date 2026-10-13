@@ -179,7 +179,7 @@
 |---|---|---|
 | **第一轮** | A 节全部修复项 + 死代码清理 + 本路线图落档 | **已完成**（2026-10-12；改动与实测见第七节） |
 | **第二轮** | 安全网：`tools/gen_fingerprint.gd`（原计划名 `gen_determinism_check.gd`）+ `tools/perf_probe.gd` 性能基准 + 一键门禁 `tools/run_checks.ps1` | **已完成**（2026-10-12；改动与实测见第八节） |
-| 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | **进行中**：`HUD.gd` 拆分（提交 `eddd8c2`）与 `InputMap` / `InputRouter`（见第九节）已完成；`Main.gd` 拆分待办 |
+| 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | **进行中**：`HUD.gd` 拆分（`eddd8c2`）、`InputMap` / `InputRouter`（`8063a9e`，见第九节）与 `Main.gd` 拆分第一批（`a54d9d5` / `f9a09a8`，854 → 636 行）已完成；`TimeFlowController` / `EncounterSystem` / `BattleLauncher` / `WorldGenPipeline` 待办 |
 | 第四轮 | 玩法闭环：`CampaignState` 经济 + 城镇交互 + 遭遇多选项 + 存档 | 待办 |
 | 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | 待办 |
 | 第六轮 | 规模扩展（植被 / 地形 / 寻路）+ i18n + 导出预设与 CI | 待办 |
@@ -387,4 +387,28 @@ Get-ChildItem -Recurse -File -Include *.gd,*.gdshader |
 | 生成统计 | 定居点 18 / 桥梁 7 / 植被 5163（与基线一致） |
 | 截图 | `hud_loading` / `hud_normal` / `hud_dialog` 三张（1600×900）：遮罩铺满、遭遇框居中 + 变暗背景 + 焦点描边 + 键位提示行 |
 
-**B-1（拆 `Main.gd`）待办**：当前 `Main.gd` 854 行，仍是 21 段职责混在一起。拆分时必须保持生成侧的调用顺序与 `_add_ai` 的种子推导顺序不变（否则指纹会变），因此计划先把 `MaterialFactory` / `PartySpawner` / `WorldGenPipeline` / `GameState` 这类**不涉及时序**的部分抽成 `RefCounted`，再处理 `await` 编排。
+### 9.5 B-1 拆 `Main.gd`：已完成两批，`854 → 636` 行
+
+`Main.gd` 仍然是最后一块大石头。记下已落地的部分与后续计划，免得下一轮重新摸索。
+
+**已搬出（`a54d9d5` / `f9a09a8` 两个提交，每批都跑满门禁、指纹不变）**：
+
+| 新文件 | 行数 | 搬走了什么 |
+|---|---|---|
+| `world/MaterialFactory.gd` | 40 | 4 个世界着色器材质的唯一构造点（`_make_materials`） |
+| `parties/PartySpawner.gd` | 148 | 开局摆部队：玩家 + 领主 / 商队 / 强盗（`_spawn_*` / `_add_ai` / `_random_town` / `_random_wilderness` / `randi_range_seed`） |
+| `core/GameState.gd` | 17 | 玩家初始兵力 37（原来硬编码两处）、势力名兜底文案三份拷贝 |
+| `core/OverworldView.gd` | 58 | 标签缩放量化早退、战略视图剔除植被、进 Boss 战整体隐藏大地图 |
+| `core/HoverInspector.gd` | 64 | 悬停提示（部队 → 定居点 → 空地）+ 0.1 s 节流 |
+| `core/InputRouter.gd` | 173 | 键位翻译成语义信号（见 9.2） |
+
+顺手拆掉一处弱类型侧信道：`data.set_meta("player_ref", player)` + `AIParty` 每帧 `get_meta` → `AIParty.player_target`（typed，由 `PartySpawner` 注入）。
+
+**确定下来的拆分纪律**（`PartySpawner` 文件头也写了）：
+
+1. **不碰生成侧的调用顺序**。指纹由「谁先抽随机数」决定，所以 `_ready` 里的 `await _step(...)` 序列与各级生成器的先后顺序一律不动；`PartySpawner` 之所以能安全搬走，是因为它内部的随机数全部来自「自己新建的 `RandomNumberGenerator`」（`randi_range_seed` / `_random_wilderness`），不抽全局流，而部队种子取自 `ai_parties.size()` —— 只要「谁先被造出来」不变就行。
+2. **每批都跑一遍完整门禁再看指纹**，不看 A=B（那是假安全网，见第八节的反向验证）。
+3. **新的 `class_name` 要跑一次 `--import`** 才进类缓存（见 9.3 第 3 条）。
+
+**下一批（未做）**：`TimeFlowController`（时间流动状态机 + `_space_latched` / `_time_lock`）、`EncounterSystem` + `EncounterRules`（遭遇检测 / 对话 / 冷却，数值进 Resource）、`BattleLauncher`（`_start_battle` / `_on_battle_finished` / `_terrain_kind_at` / `_nearest_town`）、`WorldGenPipeline`（`_ready` 里那串 `await _step` 的生成编排）。
+这四块的耦合点在于它们都要回调 `_order_move` / `_eval_time_flow` / `_push_player_away`，所以正解是先立一个共享上下文（`GameState` 或 `WorldContext`：`cfg` / `data` / `player` / `ai_parties` / `hud` / `camera_rig` / `day_night`），再把这几块改成**只读上下文 + 发信号**，而不是像第一批那样直接搬属性。目标是 `Main.gd` ≈ 200 行。
