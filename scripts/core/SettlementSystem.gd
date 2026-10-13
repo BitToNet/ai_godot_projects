@@ -7,6 +7,8 @@
 ##    · menu_entries()  → 菜单内容（数据驱动），HUD 只照着画，不判断谁能做什么
 ##    · resolve(action) → 每个条目的效果，所有收支都走 CampaignState
 ##    · close()         → 解锁时间 + 把地图操作还给玩家
+##    · tick(delta)     → 每半秒看一眼玩家脚下：刚走到定居点旁就提示一次交互键
+##                        （交互键是新加的，不提示没人猜得到；提示条不发声音）
 ##
 ##  本类**不碰任何 UI 节点**：菜单是「条目数组」，HUD 自己决定怎么画。
 ##  所以 tools/settlement_check.gd 可以在没有窗口、没有场景的情况下把
@@ -36,6 +38,8 @@ var qty: int = 1                    ## 当前「数量」选择
 var qty_steps: Array[int] = [1, 5, 10]
 var trade_good: int = 0             ## 当前选中的货物 id
 var enabled: bool = true            ## 调试 / 截图时可关掉
+var _hinted: Settlement = null      ## 已经提示过「按 X 进城」的定居点（避免反复弹提示条）
+var _hint_timer: float = 0.0        ## 提示检查的节流计时（0.5 s 一次）
 
 # =============================================================== 位置判定
 ## 玩家脚下（或紧邻）的定居点：进城的入口条件
@@ -57,9 +61,13 @@ func can_interact() -> bool:
 	return enabled and current == null and nearby() != null
 
 # =============================================================== 开 / 关
-## 开菜单。s 省略时取脚下最近的那个。已经开着 / 附近没有定居点 → 返回 false。
+## 开菜单。s 省略时取脚下最近的那个。
+## 已经开着 / 附近没有定居点 / **世界时间已被别人锁住**（遭遇对话、Boss 战）→ false。
+## 最后那条是防串台：两个面板同时开会让 Esc 同时关两个、锁也解不干净。
 func open(s: Settlement = null) -> bool:
 	if ctx == null or not enabled or current != null:
+		return false
+	if ctx.time != null and ctx.time.time_lock:
 		return false
 	if s == null:
 		s = nearby()
@@ -83,7 +91,30 @@ func close() -> void:
 	if ctx != null:
 		ctx.set_camera_active(true)
 		ctx.time.unlock()           # 出城后按原状态重新裁决时间流动
+	# 出城后重新给一次「按 X 进城」的机会（站在原地想再进去是常事）
+	_hinted = null
 	closed.emit()
+
+# =============================================================== 每帧提示
+## Main._process 调用（半秒一次，只在「刚走到某个定居点旁边」时弹一次提示条）。
+## 为什么要有它：交互键是新加的，玩家不可能猜到；提示条不发任何声音 ——
+## sfx 联调断言的是精确播放次数，这里多一声就红。
+func tick(delta: float) -> void:
+	if ctx == null or not enabled or current != null:
+		return
+	if ctx.hud != null and ctx.hud.is_any_dialog_open():
+		return
+	_hint_timer -= delta
+	if _hint_timer > 0.0:
+		return
+	_hint_timer = 0.5
+	var s := nearby()
+	if s == _hinted:
+		return
+	_hinted = s
+	if s != null and ctx.hud != null:
+		ctx.hud.show_toast("%s 进入 %s（%s）" % [
+			InputRouter.action_hint_text("interact"), s.name, s.kind_name()], 3.0)
 
 # =============================================================== 菜单（数据驱动）
 ## 菜单条目：{id, label, enabled, hint}。灰掉的条目也要给 hint ——

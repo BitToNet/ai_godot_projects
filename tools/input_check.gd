@@ -10,8 +10,10 @@
 ##  这里把它们变成断言：
 ##    1. [input] 段是否真被引擎读进了 InputMap（动作存在 + 有事件 + 关键键位对得上）
 ##    2. 每个动作是否都绑了手柄（否则「手柄支持」只是口号）
-##    3. InputRouter 的分发与让路（遭遇框打开 / 战斗中 / 点海面都不该发出命令）
+##    3. InputRouter 的分发与让路（遭遇框 / 进城菜单打开、战斗中、点海面都不该发出命令）
 ##    4. 遭遇框：打开即拿焦点、ui_cancel 撤退、ui_accept 真的能按下去（走完整输入管线）
+##    5. 进城菜单（第四轮 4b-2）：灰掉的条目拿不到焦点、↓ 跳过灰条目、
+##       确认键按下当前焦点条目、Esc 只发「离开」而不自己关面板
 ##
 ##  退出码：0 = 全部通过；1 = 有断言失败
 ## =============================================================================
@@ -34,6 +36,7 @@ const ACTIONS: Array = [
 	"battle_attack", "battle_jump", "battle_dodge", "battle_parry",
 	"battle_pause", "debug_toggle",
 	"dialog_confirm", "dialog_cancel", "dialog_next", "dialog_prev",
+	"interact",
 ]
 
 var _fails: Array[String] = []
@@ -55,12 +58,80 @@ func _run() -> void:
 	_check_bindings()
 	await _check_router()
 	await _check_dialog()
+	await _check_settlement_dialog()
 	if _fails.is_empty():
 		print("PASS：输入层全部正常（%d 项断言）" % _total)
 		quit(0)
 	else:
 		print("FAIL：%d/%d 项断言未通过 —— %s" % [_fails.size(), _total, "; ".join(_fails)])
 		quit(1)
+
+## 进城菜单的测试条目（形状与 SettlementSystem.menu_entries() 一致）
+func _entries() -> Array[Dictionary]:
+	var out: Array[Dictionary] = [
+		{"id": "supply", "label": "买补给 ×1（5 金）", "enabled": true, "hint": "现有 35 件"},
+		{"id": "recruit", "label": "招 募（10 金/人）", "enabled": false, "hint": "没有志愿者"},
+		{"id": "leave", "label": "离 开", "enabled": true, "hint": "回到大地图"},
+	]
+	return out
+
+# ---------------------------------------------------------------- 4) 进城菜单
+func _check_settlement_dialog() -> void:
+	var cfg := MapConfig.new()
+	var hud := HUD.new()
+	get_root().add_child(hud)
+	hud.setup(cfg)
+	await process_frame
+	var actions: Array = []
+	hud.settlement_action.connect(func(a: String): actions.append(a))
+
+	hud.show_settlement_menu("测试镇　城镇", "测试镇 · 城镇 · 繁荣 80 · 驻军 12 人", _entries())
+	await process_frame
+	_ok(hud.is_settlement_open(), "show_settlement_menu 后菜单打开")
+	_ok(hud.is_any_dialog_open(), "is_any_dialog_open 把进城菜单也算上")
+	_ok(hud.settlement_dialog.row_actions() == ["supply", "recruit", "leave"],
+		"条目顺序原样来自数据：%s" % [hud.settlement_dialog.row_actions()])
+	_ok(hud.settlement_dialog.row_enabled() == [true, false, true],
+		"灰化状态原样来自数据：%s" % [hud.settlement_dialog.row_enabled()])
+	_ok(hud.settlement_dialog.row_hints()[1] == "没有志愿者",
+		"灰掉的行仍然带原因：%s" % hud.settlement_dialog.row_hints()[1])
+	_ok(hud.settlement_dialog.row_button(1).focus_mode == Control.FOCUS_NONE,
+		"灰掉的行被移出焦点序列（免得焦点卡在按不动的按钮上）")
+
+	# 打开即拿焦点，且拿的是**第一个可用**条目（第 0 行）
+	var first := hud.settlement_dialog.row_button(0)
+	_ok(first != null and first.has_focus(), "打开时焦点给第一个可用条目")
+
+	# 键位提示来自 InputMap（不写死按键）
+	_ok(hud.settlement_dialog.hint_label.text.contains("回车")
+		and hud.settlement_dialog.hint_label.text.contains("Esc"),
+		"菜单键位提示来自 InputMap：%s" % hud.settlement_dialog.hint_label.text)
+
+	# ↓ 换焦点：应当跳过灰掉的第 1 行，落到第 2 行（内建焦点导航）
+	_press(KEY_DOWN)
+	await process_frame
+	await process_frame
+	var third := hud.settlement_dialog.row_button(2)
+	_ok(third != null and third.has_focus(), "↓ 跳过灰掉的条目，落到下一行可用条目")
+
+	# 确认键 → 按下当前焦点按钮（这是「手柄没有内建 ui_accept」的兜底）
+	_press(KEY_ENTER)
+	await process_frame
+	_ok(actions == ["leave"], "回车按下当前焦点条目（得到 %s）" % [actions])
+
+	# 面板不自己关：买完还要接着买，关不关由业务层决定
+	_ok(hud.is_settlement_open(), "选完一条菜单仍然开着（等业务层决定关不关）")
+
+	# 取消键 → 离开（同样只是发个信号）
+	actions.clear()
+	hud.settlement_dialog._unhandled_input(_key(KEY_ESCAPE))
+	_ok(actions == ["leave"], "Esc → 离开（得到 %s）" % [actions])
+	_ok(hud.is_settlement_open(), "Esc 也不自己关面板（由 SettlementSystem 关）")
+
+	hud.hide_settlement()
+	_ok(not hud.is_any_dialog_open(), "hide_settlement 后面板与「任一面板在场」都归零")
+
+	hud.free()
 
 # ---------------------------------------------------------------- 1) 键位表
 func _check_bindings() -> void:
@@ -92,11 +163,17 @@ func _check_bindings() -> void:
 	_ok(_has_joypad("dialog_next"), "dialog_next 绑了手柄（十字键 / 肩键）")
 	_ok(_has_key("dialog_prev", KEY_LEFT), "dialog_prev 绑了 ←")
 	_ok(_has_joypad("dialog_prev"), "dialog_prev 绑了手柄（十字键 / 肩键）")
-	# 手柄覆盖：这 15 个是「手柄能不能玩」的全部依赖
+	# 进城交互键（第四轮 4b-2）：键盘 G + 手柄 A。
+	# 手柄只有 A 这个选择 —— B/X/Y 分别是取消 / 时间 / 流速，十字键四向全给了移动。
+	# 与 dialog_confirm 共用手柄 A 是有意的：A = 「确认 / 交互」是同一件事，
+	# 而菜单开着时 InputRouter 整体让路，两者不会同时触发。
+	_ok(_has_key("interact", KEY_G), "interact 绑了 G")
+	_ok(_has_joypad("interact"), "interact 绑了手柄 A")
+	# 手柄覆盖：这 19 个是「手柄能不能玩」的全部依赖
 	var pad: Array = ["move_up", "move_down", "move_left", "move_right", "zoom_in", "zoom_out",
 		"cam_rotate_left", "cam_rotate_right", "cam_rotate_up", "cam_rotate_down", "focus_party",
 		"time_flow", "cycle_speed", "battle_attack", "battle_jump", "battle_dodge", "battle_parry",
-		"battle_pause"]
+		"battle_pause", "interact"]
 	var no_pad := PackedStringArray()
 	for a in pad:
 		if not _has_joypad(a):
@@ -164,6 +241,7 @@ func _check_router() -> void:
 	router.toggle_vegetation_requested.connect(func(): hits["veg"] = true)
 	router.toggle_mute_requested.connect(func(): hits["mute"] = true)
 	router.faction_labels_requested.connect(func(fid: int): hits["fid"] = fid)
+	router.interact_requested.connect(func(): hits["interact"] = true)
 
 	# 点地图 → 行军命令（坐标来自 ray_to_terrain）
 	router._unhandled_input(_click(Vector2(800, 450)))
@@ -193,6 +271,14 @@ func _check_router() -> void:
 	router._unhandled_input(_key(KEY_SPACE))
 	_ok(hits.is_empty() and orders.is_empty(), "time_flow 是「按住」类动作，不在这里发一次性信号")
 
+	# 交互键（第四轮 4b-2）：键盘 G 与手柄 A 都要发出来
+	router._unhandled_input(_key(KEY_G))
+	_ok(hits.get("interact", false), "G（interact）→ interact_requested")
+	hits.clear()
+	router._unhandled_input(_pad_button(JOY_BUTTON_A))
+	_ok(hits.get("interact", false), "手柄 A（interact）→ interact_requested")
+	hits.clear()
+
 	# 遭遇框打开 → 键盘鼠标全部让路（G3：键盘要先留给对话框）
 	hud.show_encounter("遭遇 测试部队", "测试说明", Color(1, 1, 1))
 	await process_frame
@@ -202,6 +288,18 @@ func _check_router() -> void:
 	router._unhandled_input(_key(KEY_R))
 	_ok(orders.is_empty() and hits.is_empty(), "遭遇框打开时点击与热键都让路给对话框")
 	hud.hide_encounter()
+
+	# 进城菜单打开 → 同样整体让路（菜单会锁世界时间，键盘归它；交互键也不能二次开菜单）
+	hud.show_settlement_menu("测试镇　城镇", "测试镇 · 城镇", _entries())
+	await process_frame
+	orders.clear()
+	hits.clear()
+	router._unhandled_input(_click(Vector2(800, 450)))
+	router._unhandled_input(_key(KEY_R))
+	router._unhandled_input(_key(KEY_G))
+	_ok(orders.is_empty() and hits.is_empty(),
+		"进城菜单打开时点击 / 热键 / 交互键都让路")
+	hud.hide_settlement()
 
 	# 战斗中关掉路由
 	router.enabled = false

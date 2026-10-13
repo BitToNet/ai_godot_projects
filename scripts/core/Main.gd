@@ -126,6 +126,8 @@ func _process(delta: float) -> void:
 	# 所以这里必须一起判空。
 	if data == null or player == null or view == null or encounters == null or battler == null:
 		return
+	if settlements == null:
+		return
 	# 0) 背景音乐的淡入淡出必须在战斗早退之前推进，否则战斗中永远切不过去
 	Bgm.tick(delta)
 	if battler.battle != null:
@@ -156,6 +158,9 @@ func _process(delta: float) -> void:
 		encounters.check(delta)
 	view.update_label_scale()
 	hover.tick(delta)
+	# 站在定居点旁边时提示一次交互键（系统内部 0.5 s 节流 + 只在目标变化时弹；
+	# 提示条不发声音，sfx 联调断言的是精确播放次数）
+	settlements.tick(delta)
 
 ## 大地图行军马蹄声：玩家部队固定听得见；AI 部队按与相机的距离剔除并衰减，
 ## 免得十几支部队同时响在耳朵里糊成一片。
@@ -231,3 +236,34 @@ func _toggle_faction_labels(fid: int) -> void:
 			any_visible = any_visible or s.label.visible
 	print("[UI] 势力 %s 的定居点标签：%s" % [data.faction(fid).name, "显示" if any_visible else "隐藏"])
 
+# =============================================================== 进城菜单
+## 交互键（见 InputRouter.interact_requested）→ 进最近的那个定居点。
+## 附近没有 / 世界时间被别人锁着（遭遇对话、Boss 战）时不硬开，给一句提示：
+## 「按了没反应」是最难查的一类问题，宁可让 UI 说清楚。
+func _on_interact_requested() -> void:
+	if settlements == null:
+		return
+	if settlements.open():
+		return
+	if hud != null and not hud.is_any_dialog_open():
+		hud.show_toast("附近没有可以进入的定居点（走到村庄 / 城镇 / 城堡旁再按）", 2.5)
+
+func _on_settlement_opened(_s: Settlement) -> void:
+	_refresh_settlement_menu()
+
+func _on_settlement_menu_changed() -> void:
+	_refresh_settlement_menu()
+
+func _on_settlement_closed() -> void:
+	if hud != null:
+		hud.hide_settlement()
+
+## 把「当前菜单」原样交给 HUD：标题 / 状态行 / 条目数组都来自系统，Main 不加工。
+func _refresh_settlement_menu() -> void:
+	if hud == null or settlements == null:
+		return
+	var s := settlements.current
+	if s == null:
+		return
+	hud.show_settlement_menu("%s　%s" % [s.name, s.kind_name()],
+		settlements.status_line(), settlements.menu_entries())

@@ -92,6 +92,16 @@ func _mk(id: int, nm: String, kind: int, pos: Vector2, prosperity: int) -> Settl
 func _put(f: Fake, s: Settlement) -> void:
 	f.player.position = Vector3(s.pos.x, 0.0, s.pos.y)
 
+## 提示条 / 面板在场的记账替身：tick() 只用到这两个方法，所以直接 extends HUD 覆盖它们，
+## 既不用建真 UI（不 import 主题、不建控件），也不会碰 _toast / dialog 这些没 setup 的节点。
+class StubHud extends HUD:
+	var toasts: Array[String] = []
+	var dialog_open: bool = false
+	func show_toast(text: String, _dur: float = 5.0) -> void:
+		toasts.append(text)
+	func is_any_dialog_open() -> bool:
+		return dialog_open
+
 # ---------------------------------------------------------------- 主流程
 func _run() -> void:
 	var f := _make_world()
@@ -105,6 +115,7 @@ func _run() -> void:
 	_check_garrison(f)
 	_check_menu(f)
 	_check_open_close(f)
+	_check_hint(f)
 	_check_refill(f)
 	_check_assign(f)
 
@@ -370,8 +381,68 @@ func _check_open_close(f: Fake) -> void:
 	_ok(not f.sys.open(f.town), "关掉系统后进不了城（截图 / 调试用）")
 	_ok(not f.sys.can_interact(), "关掉系统后不能交互")
 	f.sys.enabled = true
+	f.sys.close()
 
-# ---------------------------------------------------------------- 9. 志愿者回流
+# ---------------------------------------------------------------- 9. 交互键提示
+## 交互键是新加的，玩家不可能猜到 —— tick() 负责在走到定居点旁边时提示一次。
+## 这里只验「什么时候提示 / 什么时候不提示 / 提示里有什么」，不验提示条怎么画（hud_check 管）。
+func _check_hint(f: Fake) -> void:
+	print("\n-- 交互键提示（tick）--")
+	var stub := StubHud.new()
+	f.ctx.hud = stub
+	f.sys._hinted = null
+	f.sys._hint_timer = 0.0
+	_put(f, f.village)
+	f.sys.tick(1.0)
+	_ok(stub.toasts.size() == 1, "走到村口提示一次（得到 %d 次）" % stub.toasts.size())
+	var t0 := stub.toasts[0] if stub.toasts.size() > 0 else ""
+	_ok(t0.contains(f.village.name), "提示里带定居点名字：%s" % t0)
+	_ok(t0.contains(InputRouter.action_hint_text("interact")),
+		"提示里的按键文本来自 InputMap：%s" % t0)
+
+	f.sys.tick(1.0)
+	_ok(stub.toasts.size() == 1, "站着不动不反复刷提示")
+	f.sys.tick(1.0)
+	_ok(stub.toasts.size() == 1, "第三次 tick 依然静默（只在目标变化时提示）")
+
+	_put(f, f.castle)
+	f.sys.tick(1.0)
+	_ok(stub.toasts.size() == 2 and stub.toasts[1].contains(f.castle.name),
+		"换一个定居点重新提示：%s" % (stub.toasts[1] if stub.toasts.size() > 1 else "（无）"))
+
+	# 节流：半秒检查一次，避免每帧遍历定居点
+	stub.toasts.clear()
+	_put(f, f.town)
+	f.sys._hinted = null
+	f.sys._hint_timer = 0.5
+	f.sys.tick(0.1)
+	_ok(stub.toasts.is_empty(), "0.5 s 之内不做检查（节流）")
+	f.sys.tick(0.5)
+	_ok(stub.toasts.size() == 1, "节流到点后立刻恢复提示")
+
+	# 菜单开着 / 别处有面板：都不该再弹提示条（提示条会浮在菜单上面）
+	f.sys._hinted = null
+	f.sys.tick(1.0)                 # 走到城镇旁 → 会提示，先让状态归位
+	stub.toasts.clear()
+	_ok(f.sys.open(f.town), "在城镇旁进城")
+	f.sys._hinted = null
+	f.sys.tick(1.0)
+	_ok(stub.toasts.is_empty(), "菜单开着时不弹提示条")
+	f.sys.close()
+	stub.dialog_open = true
+	f.sys._hinted = null
+	f.sys.tick(1.0)
+	_ok(stub.toasts.is_empty(), "遭遇框在场时不弹提示条")
+	stub.dialog_open = false
+
+	# 世界时间已经被别人锁住（遭遇对话 / Boss 战）时不许抢菜单
+	f.time.lock()
+	_ok(not f.sys.open(f.village), "时间被别人锁住时不抢菜单（不串台）")
+	f.time.unlock()
+	f.ctx.hud = null
+	stub.free()
+
+# ---------------------------------------------------------------- 10. 志愿者回流
 func _check_refill(f: Fake) -> void:
 	print("\n-- 志愿者回流 --")
 	f.village.volunteers = 0
@@ -389,7 +460,7 @@ func _check_refill(f: Fake) -> void:
 	_ok(f.village.volunteers == 12, "到上限不再涨（%d/%d）" % [f.village.volunteers, f.village.volunteers_cap])
 	_ok(f.town.volunteers == 20, "超出上限的城镇被压回上限（%d）" % f.town.volunteers)
 
-# ---------------------------------------------------------------- 10. 生成期的环境赋值
+# ---------------------------------------------------------------- 11. 生成期的环境赋值
 func _check_assign(f: Fake) -> void:
 	print("\n-- 生成期赋值（繁荣度 / 志愿者 / 货物价差） --")
 	var cfg := MapConfig.new()
@@ -422,7 +493,7 @@ func _check_assign(f: Fake) -> void:
 	_ok(ok_range, "繁荣度都落在 [0,100]")
 	_ok(ok_cap, "志愿者池 = 类型上限（城堡 0 / 村庄 %d / 城镇 %d）" % [
 		economy.volunteer_cap_village, economy.volunteer_cap_town])
-	_ok(ok_bias, "每种货都有 ±15%% 以内的本地价差")
+	_ok(ok_bias, "每种货都有 ±15% 以内的本地价差")
 	var snap := _snapshot(data)
 	SettlementSystem.assign_environment(cfg, data, economy)
 	_ok(_snapshot(data) == snap, "同种子重复赋值结果一致（确定性）")

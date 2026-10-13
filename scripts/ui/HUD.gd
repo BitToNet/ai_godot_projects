@@ -6,6 +6,7 @@
 ##    MinimapView      右上：小地图              HoverTooltip      跟随鼠标的悬停提示
 ##    HelpPanel        左下：操作说明            DebugStatsPanel   右下：FPS / draw call
 ##    ToastLabel       上方：临时提示            EncounterDialog   中央：遭遇对话框
+##    SettlementDialog 中央：进城菜单（补给 / 招募 / 贸易 / 驻军）
 ##
 ##  Main 只跟本文件的公开方法打交道（接口与拆分前完全一致，改动对外无感）。
 ##  每块控件自己 _process，HUD 不再需要每帧回调。
@@ -14,6 +15,8 @@ class_name HUD
 extends CanvasLayer
 
 signal encounter_choice(action: String)
+## 进城菜单里点了一条（含 Esc = "leave"）。HUD 不解释动作含义，直接转给 SettlementSystem。
+signal settlement_action(action: String)
 
 var cfg: MapConfig
 var data: MapData
@@ -22,6 +25,7 @@ var campaign: CampaignState
 var minimap: MinimapView
 var topbar: TopBar
 var dialog: EncounterDialog
+var settlement_dialog: SettlementDialog
 
 var _loading: LoadingOverlay
 var _tooltip: HoverTooltip
@@ -57,6 +61,11 @@ func setup(p_cfg: MapConfig) -> void:
 	dialog.name = "EncounterDialog"
 	add_child(dialog)
 	dialog.choice.connect(_on_dialog_choice)
+
+	settlement_dialog = SettlementDialog.new()
+	settlement_dialog.name = "SettlementDialog"
+	add_child(settlement_dialog)
+	settlement_dialog.choice.connect(_on_settlement_choice)
 
 	# 提示条最后加入 → 始终盖在遭遇对话框之上（与拆分前的实际层级一致）
 	_toast = ToastLabel.new()
@@ -106,7 +115,7 @@ func show_toast(text: String, dur: float = 5.0) -> void:
 	_toast.show_text(text, dur)
 
 func show_tooltip(text: String, screen_pos: Vector2) -> void:
-	if dialog.is_open():
+	if is_any_dialog_open():
 		return
 	_tooltip.show_text(text, screen_pos)
 
@@ -123,5 +132,26 @@ func hide_encounter() -> void:
 func is_encounter_open() -> bool:
 	return dialog.is_open()
 
+# ---------------------------------------------------------------- 进城菜单
+## entries 是 SettlementSystem.menu_entries() 的原样数据（{id,label,enabled,hint}）。
+## 走「传数据」而不是「传系统」：hud_check 不用建世界就能把面板单独测一遍。
+func show_settlement_menu(title: String, status: String, entries: Array[Dictionary]) -> void:
+	settlement_dialog.open(title, status, entries)
+	_tooltip.clear()
+
+func hide_settlement() -> void:
+	settlement_dialog.close()
+
+func is_settlement_open() -> bool:
+	return settlement_dialog.is_open()
+
+## 有任一面板在场（遭遇 / 进城）。输入路由与悬停提示都按这个让路：
+## 两个面板都不会同时开（各自都会锁世界时间），但路由只想知道「现在键盘是不是别人的」。
+func is_any_dialog_open() -> bool:
+	return is_encounter_open() or is_settlement_open()
+
 func _on_dialog_choice(action: String) -> void:
 	encounter_choice.emit(action)
+
+func _on_settlement_choice(action: String) -> void:
+	settlement_action.emit(action)

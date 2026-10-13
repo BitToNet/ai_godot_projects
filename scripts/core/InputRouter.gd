@@ -12,7 +12,7 @@
 ##    · CameraRig / BattleScene 用 Input.get_vector / get_axis / 动作查询，
 ##      摇杆的力度直接就是模拟量
 ##
-##  遭遇对话框打开时本路由整体让路：键盘要先留给对话框作答（确认 / 取消 / 焦点）。
+##  遭遇 / 进城对话框打开时本路由整体让路：键盘要先留给对话框作答（确认 / 取消 / 焦点）。
 ##  战斗中由 Main 关掉本路由（enabled = false），输入归 BattleScene。
 ## =============================================================================
 class_name InputRouter
@@ -24,6 +24,9 @@ signal cycle_speed_requested
 signal toggle_vegetation_requested
 signal toggle_mute_requested
 signal faction_labels_requested(faction_id: int)
+## 进城 / 交互（第四轮 4b-2）：只表示「玩家想跟脚下的定居点打交道」，
+## 附近有没有定居点、能不能进，由 SettlementSystem 判断 —— 路由不认识地图数据。
+signal interact_requested
 
 var camera_rig: CameraRig
 var hud: HUD
@@ -33,9 +36,10 @@ var enabled: bool = true
 func _unhandled_input(event: InputEvent) -> void:
 	if not enabled or camera_rig == null or cfg == null:
 		return
-	# 遭遇对话框在场时键盘鼠标都属于它。否则按 R / V / M / 1 会在
+	# 遭遇 / 进城对话框在场时键盘鼠标都属于它。否则按 R / V / M / 1 会在
 	# 「请决定行动」的同时把地图改掉，而对话框自己收不到任何按键。
-	if hud != null and hud.is_encounter_open():
+	# 进城菜单同理：菜单开着时点地图行军 / 切流速都该被挡住（菜单自己会锁世界时间）。
+	if hud != null and hud.is_any_dialog_open():
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		# 点到 UI 的点击不会走到 _unhandled_input；能到这里的左键都是「点地图」
@@ -43,7 +47,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if hit.y > cfg.sea_level + 0.2:
 			order_move.emit(Vector2(hit.x, hit.z))
 		return
-	if event.is_action_pressed("cycle_speed"):
+	if event.is_action_pressed("interact"):
+		interact_requested.emit()
+	elif event.is_action_pressed("cycle_speed"):
 		cycle_speed_requested.emit()
 	elif event.is_action_pressed("toggle_vegetation"):
 		toggle_vegetation_requested.emit()

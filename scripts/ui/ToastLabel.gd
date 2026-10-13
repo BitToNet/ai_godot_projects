@@ -7,7 +7,10 @@ extends Label
 
 const WIDTH := 900.0
 const HEIGHT := 40.0
-const TOP_MARGIN := 140.0
+## 140 → 180（第四轮 4b-2）：左上信息栏（含钱袋那一行）正好到 y≈150，
+## 提示条原来压在钱袋行上 —— 进城做买卖时提示条与钱袋**同时**在变，
+## 互相遮挡等于两条信息都看不见。下移到信息栏底下。
+const TOP_MARGIN := 180.0
 
 var _left: float = 0.0
 

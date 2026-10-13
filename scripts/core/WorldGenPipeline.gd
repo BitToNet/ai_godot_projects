@@ -268,10 +268,35 @@ func run() -> WorldContext:
 	#    （Main / 工具脚本）直接拿 pipeline.settlements。
 	settlements = SettlementSystem.new()
 	settlements.ctx = ctx
+	# 繁荣度 / 志愿者池 / 每种货的本地价差：生成期一次性定下来（幂等，同种子同结果）
+	SettlementSystem.assign_environment(cfg, data, economy)
+	report_settlement_env()
 	day_night.day_changed.connect(settlements.on_day_changed)
+	# 4b-2：进城菜单接线。菜单是数据驱动的 —— HUD 只把条目画出来，
+	# 「能不能点 / 为什么不能点」由 menu_entries() 给，点了什么由 resolve() 解释。
+	# 面板何时关也由业务层决定（resolve("leave") → closed → HUD 收起）：
+	# 买完补给还要接着招兵，不能一点就关。
+	hud.settlement_action.connect(settlements.resolve)
+	settlements.opened.connect(Callable(host, "_on_settlement_opened"))
+	settlements.menu_changed.connect(Callable(host, "_on_settlement_menu_changed"))
+	settlements.closed.connect(Callable(host, "_on_settlement_closed"))
+	router.interact_requested.connect(Callable(host, "_on_interact_requested"))
 	return ctx
 
 # =============================================================== 内部
+## 打印一句定居点环境概览：让「繁荣度 / 志愿者池真的被赋值了」在门禁日志里看得见。
+## 光靠 settlement_check 只能证明函数本身对，证明不了生成期确实调用了它。
+func report_settlement_env() -> void:
+	var lo := 100
+	var hi := 0
+	var vol := 0
+	for s in data.settlements:
+		lo = mini(lo, s.prosperity)
+		hi = maxi(hi, s.prosperity)
+		vol += s.volunteers
+	print("[Warband] 定居点环境：%d 个   繁荣度 %d..%d   志愿者池 %d 人   货物 %d 种" % [
+		data.settlements.size(), lo, hi, vol, economy.good_count()])
+
 ## 推进一步并让 Loading 界面刷新两帧（顺序 / 次数即指纹，别合并）
 func _loading(text: String) -> void:
 	if hud != null:

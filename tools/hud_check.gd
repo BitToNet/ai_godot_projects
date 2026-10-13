@@ -149,6 +149,55 @@ func _run() -> void:
 	hud.hide_encounter()
 	_ok(not hud.is_encounter_open(), "hide_encounter 关闭对话框")
 
+	# ---- 进城菜单（第四轮 4b-2）：HUD 只负责画，条目数据整条来自系统 ----
+	var sent: Array = []
+	hud.settlement_action.connect(func(a: String): sent.append(a))
+	_ok(not hud.is_settlement_open(), "未进城时菜单是隐藏的")
+	_ok(not hud.is_any_dialog_open(), "两个面板都没开时 is_any_dialog_open 为假")
+
+	var entries: Array[Dictionary] = [
+		{"id": "supply", "label": "买补给 ×1（5 金）", "enabled": true, "hint": "现有 35 件"},
+		{"id": "recruit", "label": "招 募（10 金/人）", "enabled": false, "hint": "钱不够（需 10 金）"},
+		{"id": "leave", "label": "离 开", "enabled": true, "hint": "回到大地图"},
+	]
+	hud.show_settlement_menu("测试镇　城镇", "测试镇 · 城镇 · 繁荣 80", entries)
+	await process_frame
+	await process_frame
+	_ok(hud.is_settlement_open(), "show_settlement_menu 后菜单打开")
+	_ok(hud.is_any_dialog_open(), "is_any_dialog_open 把进城菜单也算上")
+	_ok(hud.settlement_dialog.mouse_filter == Control.MOUSE_FILTER_STOP, "进城菜单挡住点击（STOP）")
+	_ok(hud.settlement_dialog.size == vp, "进城菜单铺满视口（%s vs %s）" % [hud.settlement_dialog.size, vp])
+	# 同一个坑的回归守卫：EncounterDialog 曾经只设 anchors 而缩在左上角，
+	# 进城菜单是照它写的，必须一起守住「遮罩铺满 + 面板居中」。
+	var _scc := hud.settlement_dialog.get_child(1) as Control
+	_ok((hud.settlement_dialog.get_child(0) as Control).size == vp, "进城遮罩（dim）铺满视口")
+	_ok(_scc.size == vp, "进城居中容器铺满视口")
+	var _spanel := _scc.get_child(0) as Control
+	_ok((_spanel.position - (vp - _spanel.size) * 0.5).length() <= 1.0,
+		"进城面板居中（pos=%s，视口 %s）" % [_spanel.position, vp])
+	_ok(hud.settlement_dialog.row_actions() == ["supply", "recruit", "leave"],
+		"条目顺序原样来自数据：%s" % [hud.settlement_dialog.row_actions()])
+	_ok(hud.settlement_dialog.row_enabled() == [true, false, true],
+		"灰化状态原样来自数据：%s" % [hud.settlement_dialog.row_enabled()])
+	_ok(hud.settlement_dialog.row_hints()[1] == "钱不够（需 10 金）",
+		"灰掉的行必须带原因：%s" % hud.settlement_dialog.row_hints()[1])
+	_ok(hud.settlement_dialog._status.text.contains("繁荣 80"),
+		"状态行原样显示系统给的文字：%s" % hud.settlement_dialog._status.text)
+	_ok(hud.settlement_dialog.row_button(0).has_focus(), "打开时焦点给第一个可用条目")
+	_ok(hud.settlement_dialog.row_button(1).disabled, "「不可用」落到 Button.disabled 上（不是只换颜色）")
+
+	# 菜单打开时悬停提示同样让路（否则提示条会浮在菜单上面）
+	hud.show_tooltip("提示", Vector2(10, 10))
+	_ok(not hud._tooltip.visible, "进城菜单打开时悬停提示被抑制")
+
+	hud.settlement_dialog.row_button(0).pressed.emit()
+	await process_frame
+	_ok(sent == ["supply"], "点条目 → settlement_action（得到 %s）" % [sent])
+	_ok(hud.is_settlement_open(), "选完一条菜单仍然开着（买完接着买，不一点就关）")
+
+	hud.hide_settlement()
+	_ok(not hud.is_any_dialog_open(), "hide_settlement 后面板与「任一面板在场」都归零")
+
 	# ---- 临时提示条：到期自动淡出 ----
 	hud.show_toast("测试提示条", 1.0)
 	_ok(hud._toast.visible, "show_toast 显示提示条")
