@@ -7,7 +7,9 @@
 ##   · play()        —— 非定位音（UI / 号角 / 结算 / 全局提示）
 ##   · play_2d()     —— 按 2D 世界坐标播放（Boss 战里用，自带左右声像与距离衰减）
 ##   · play_3d()     —— 按 3D 世界坐标播放（大地图行军马蹄用）
-##   · 分类音量 / 总音量 / 静音 / 音高随机抖动都取自 AudioConfig
+##   · 分类音量 / 音高随机抖动取自 AudioConfig；总音量写在 Master 总线上（见 AudioBus）
+##   · 播放器挂在 Sfx 总线上（default_bus_layout.tres：Master → Music / Sfx）；
+##     号角 / 开战 / 结算这类"扇子音"会临时压低音乐（AudioBus.duck），别让 BGM 压住它
 ##
 ##  设计约束：不加载任何外部音频文件，全部音色由代码合成（见 SfxSynth.gd）。
 ## =============================================================================
@@ -24,6 +26,10 @@ static var _ready: bool = false
 static var _last_ms: Dictionary = {}      ## id -> 上次播放时刻（用于同音最短间隔）
 static var _counts: Dictionary = {}       ## id -> 累计播放次数（调试用：F3 面板 / tools/sfx_battle_check.gd）
 static var _rng := RandomNumberGenerator.new()
+
+## 扇子音名单：播放时把音乐临时压低。刻意不塞进 SfxSynth.SPECS ——
+## 那是"音色配方"，而这是"混音行为"，两件事放在一起以后必然互相牵制。
+const FANFARE := ["order", "battle_start", "result_win", "result_lose"]
 
 # =============================================================== 初始化
 ## 参数配置（未初始化时返回一份默认配置，调用方可以安全地直接读字段）
@@ -46,6 +52,7 @@ static func setup(host: Node, c: AudioConfig = null) -> void:
 	if c != null:
 		_cfg = c
 	_rng.seed = 0x5F3A17
+	AudioBus.apply(cfg())        # 总音量 / 音乐音量先落到总线上（幂等）
 	if not cfg().enabled:
 		_ready = true
 		return
@@ -56,7 +63,7 @@ static func setup(host: Node, c: AudioConfig = null) -> void:
 	for i in maxi(4, cfg().polyphony):
 		var p := AudioStreamPlayer.new()
 		p.name = "SfxVoice%02d" % i
-		p.bus = "Master"
+		p.bus = AudioBus.route(AudioBus.SFX)   # 音效总线（缺 .tres 时自动退 Master）
 		host.add_child(p)
 		_players.append(p)
 	# 逐个合成音色；按时间切片让出帧，Loading 界面不会卡住
@@ -94,6 +101,7 @@ static func toggle_mute() -> bool:
 
 static func set_master_db(db: float) -> void:
 	cfg().master_db = db
+	AudioBus.apply()          # 立刻生效：总音量已经不在逐声的 volume_db 里了
 
 # =============================================================== 调试统计
 ## 各音效累计播放次数（id -> 次数）
@@ -105,6 +113,10 @@ static func total_plays() -> int:
 	for k in _counts:
 		s += int(_counts[k])
 	return s
+
+## 音色库条目数（自检用；关音频时为 0）
+static func bank_size() -> int:
+	return _bank.size()
 
 static func pool_size() -> int:
 	return _players.size()
@@ -119,6 +131,7 @@ static func play(id: String, vol_db := 0.0, pitch := 1.0) -> void:
 	if e.is_empty():
 		return
 	_commit(id)
+	_duck_for_fanfare(id)
 	_play_plain(e, vol_db, pitch)
 
 ## 按 2D 世界坐标播放（战斗场景：自带左右声像 + 距离衰减）
@@ -136,6 +149,7 @@ static func play_2d(parent: Node, id: String, pos: Vector2, vol_db := 0.0, pitch
 	p.pitch_scale = _pitch_of(e, pitch)
 	p.volume_db = _final_db(e, vol_db)
 	# 2D 定位音：镜头（Camera2D）就是听者，自带左右声像与距离衰减
+	p.bus = AudioBus.route(AudioBus.SFX)
 	p.attenuation = 1.0
 	p.max_distance = 1600.0
 	parent.add_child(p)
@@ -157,6 +171,7 @@ static func play_3d(parent: Node, id: String, pos: Vector3, vol_db := 0.0, pitch
 	p.pitch_scale = _pitch_of(e, pitch)
 	p.volume_db = _final_db(e, vol_db)
 	# 3D 定位音：以 Camera3D 为听者（大地图拉远时马蹄声自然变轻）
+	p.bus = AudioBus.route(AudioBus.SFX)
 	p.unit_size = 90.0
 	p.max_distance = 700.0
 	parent.add_child(p)
@@ -199,8 +214,26 @@ static func _play_plain(e: Dictionary, vol_db: float, pitch: float) -> void:
 	p.volume_db = _final_db(e, vol_db)
 	p.play()
 
+## 单个音色的最终音量（dB）。**不含** master_db —— 那一档在 Master 总线上（自检用）。
+static func volume_db_of(id: String, extra := 0.0) -> float:
+	if not _bank.has(id):
+		return 0.0
+	return _final_db(_bank[id], extra)
+
+## 第 i 个池播放器所在的总线（自检用）
+static func player_bus(i: int) -> String:
+	if i < 0 or i >= _players.size():
+		return ""
+	return _players[i].bus
+
+## 扇子音播放时压低音乐（名单见 FANFARE，深度 / 时长见 AudioConfig.fanfare_duck_*）
+static func _duck_for_fanfare(id: String) -> void:
+	if not FANFARE.has(id):
+		return
+	AudioBus.duck(cfg().fanfare_duck_db, cfg().fanfare_duck_time)
+
 static func _final_db(e: Dictionary, extra: float) -> float:
-	return cfg().master_db + cfg().category_db(String(e["cat"])) + float(e["db"]) + extra
+	return cfg().category_db(String(e["cat"])) + float(e["db"]) + extra
 
 static func _pitch_of(e: Dictionary, pitch: float) -> float:
 	var j := cfg().pitch_jitter

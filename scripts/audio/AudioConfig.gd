@@ -13,13 +13,15 @@ extends Resource
 @export_group("音频 · 总开关")
 ## 关掉后 Sfx 完全不发声，也不会合成音色（省启动时间）；BGM 同理不播放
 @export var enabled: bool = true
-## 总音量（dB）
+## 总音量（dB）。**写在 Master 总线上**（见 AudioBus.gd），音效与背景音乐一起听令；
+## 改动前它只逐声叠在音效的 volume_db 上，音乐完全不受它影响（那是个不一致）。
 @export var master_db: float = 0.0
 ## 是否随机抖动音高（同一动作每次听起来略有差别，避免机械重复感）
 @export var pitch_jitter: float = 0.05
 
 @export_group("音频 · 背景音乐（BGM）")
-## BGM 总音量（dB）。音乐要垫在音效下面，所以默认为负值。
+## BGM 总音量（dB）。**写在 Music 总线上**（见 AudioBus.gd），音乐要垫在音效下面，所以默认为负值。
+## 扇子音（号角 / 结算）播放时 AudioBus.duck 会在总线这一档上再压低 fanfare_duck_db。
 ## 两首曲子的成品电平实测：大地图「旧时日」峰值 -12.5 / 平均 -33.1 dBFS，
 ## Boss 战「降临 · The Descent」峰值 -2.2 / 平均 -21.7 dBFS；音效是 0.92 峰值
 ## 归一化（约 -0.7 dBFS）。大地图那首母带本身偏轻，所以在 bgm_map_db 里补了 +6 dB，
@@ -37,7 +39,11 @@ extends Resource
 @export var bgm_fade_battle: float = 0.6
 ## 战斗结束淡回大地图曲的时长（秒）
 @export var bgm_fade_map: float = 1.8
-
+## 号角 / 开战 / 结算这类"扇子音"播放时，把音乐临时压低多少 dB（0 = 不压）。
+## 名单（谁是扇子音）写在 Sfx.FANFARE 里而不是这里 —— 那是"混音行为"，只有深度 / 时长做成旋钮。
+@export var fanfare_duck_db: float = -5.0
+## 压低持续多久（秒）；略长于扇子音本身，让尾巴也站得住
+@export var fanfare_duck_time: float = 1.6
 @export_group("音频 · 分类音量（dB）")
 @export var combat_db: float = 0.0        ## 命中 / 破防 / 蓄力 / 剑气
 @export var parry_db: float = 1.5         ## 弹反打铁声（最需要突出）

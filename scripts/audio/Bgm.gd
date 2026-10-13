@@ -5,6 +5,11 @@ extends RefCounted
 ## 曲目由 XSXB-Band（小宝乐队）本地工作室写谱 + 用真实 CC0 录音乐器渲染，
 ## 放在 `res://audio/bgm/`。大地图一首、Boss 战一首，切换时做线性增益交叉淡入淡出。
 ##
+## 总线：音乐挂在 **Music** 总线上（default_bus_layout.tres：Master → Music / Sfx）。
+## 音量因此分两层：总线上的 `AudioConfig.bgm_db`（还能被 AudioBus.duck 临时压低，
+## 让号角 / 结算这类扇子音站到前面），播放器上的单曲偏移 × 淡入增益。
+## 改动前 bgm_db 是逐条叠在播放器 volume_db 上的 —— 总线方案下这两处总和相等。
+##
 ## 和 `Sfx` 一样是纯静态类，由 `Main` 驱动：
 ##   setup() 建播放器 → play() 切曲 → tick(delta) 每帧推进淡入淡出。
 ## 静音不另存状态，直接读 `Sfx.is_muted()`，所以 M 键一次同时关掉音效与音乐。
@@ -34,6 +39,7 @@ static func setup(host: Node, cfg: AudioConfig = null) -> void:
 	_host = host
 	_cfg = cfg
 	_ready = true
+	AudioBus.apply(_cfg)        # 音乐音量落到 Music 总线（setup 早于 / 晚于 Sfx 都无所谓，幂等）
 
 static func is_ready() -> bool:
 	return _ready
@@ -126,6 +132,7 @@ static func _ensure(id: String) -> bool:
 	p.name = "Bgm_" + id
 	p.stream = stream
 	p.volume_db = -80.0
+	p.bus = AudioBus.route(AudioBus.MUSIC)   # 音乐总线（缺 .tres 时自动退 Master）
 	# 本工程用 _time_lock 冻结世界时间，不暂停 SceneTree；这里设 ALWAYS 只是保险
 	p.process_mode = Node.PROCESS_MODE_ALWAYS
 	_host.add_child(p)
@@ -137,7 +144,7 @@ static func _ensure(id: String) -> bool:
 static func _base_db(id: String) -> float:
 	if _cfg == null:
 		return -8.0
-	var db: float = _cfg.bgm_db
+	var db: float = 0.0            # bgm_db 已经在 Music 总线上，这里只留单曲偏移
 	if id == "map":
 		db += _cfg.bgm_map_db
 	elif id == "battle":
@@ -160,6 +167,24 @@ static func reset_counts() -> void:
 
 static func pool_size() -> int:
 	return _players.size()
+
+## 某首曲子播放器上的音量（dB，只含单曲偏移 × 淡入增益；bgm_db 在 Music 总线上）
+static func db_of(id: String) -> float:
+	if not _players.has(id):
+		return 0.0
+	var p: AudioStreamPlayer = _players[id]
+	if p == null or not is_instance_valid(p):
+		return 0.0
+	return p.volume_db
+
+## 某首曲子的播放器所在总线（自检用）
+static func bus_of(id: String) -> String:
+	if not _players.has(id):
+		return ""
+	var p: AudioStreamPlayer = _players[id]
+	if p == null or not is_instance_valid(p):
+		return ""
+	return p.bus
 
 static func is_playing(id: String) -> bool:
 	if not _players.has(id):

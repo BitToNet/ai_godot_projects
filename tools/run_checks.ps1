@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行 11 步；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行 14 步；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -28,8 +28,14 @@
 #    7) 性能基准采样（tools/perf_probe.gd）
 #    6c) 存档定式（tools/save_check.gd）—— 存档格式 / 三道门（版本 / 种子 / 实体 id）/
 #        坏数据钳制 / 读档后的引用修复 / 文件读写（不建世界，纯定式）
+#    6d) 音频总线定式（tools/audio_check.gd）—— default_bus_layout.tres（Master → Music / Sfx）
+#        是否真被引擎加载、AudioBus 的写回与降级、Sfx / Bgm 的路由与「总音量只算一次」、
+#        duck 的触发与到点恢复、静音走增益淡出（不建世界、纯读对象，也没有 Main）
 #    8) Boss 战音效联调（tools/sfx_battle_check.gd）
 #    9) 大地图音效联调（tools/sfx_map_check.gd）
+#    9b) BGM 联调（tools/bgm_check.gd）—— 两首 Ogg 的加载 / 循环开关、大地图曲淡入、
+#        遭遇 → Boss 战 → 结算的切曲、M 键静音与恢复、stop()。它要真跑一遍主场景，
+#        所以是门禁里最贵的一步（≈7 s），但「音乐切错曲子 / 静音没淡下去」只有它能抓到
 #    10) 主场景跑 900 帧 —— 无 ERROR，且生成统计与 tools/gen_fingerprint.json 基线一致
 #
 #  为什么是这些：本工程「一切由种子生成 + 运行时合成音效 + 纯代码 UI」，
@@ -224,6 +230,16 @@ if ($rSave.Ok -and -not $savePass) {
 	$fail.Add('存档  FAIL  退出码为 0 但没打印 PASS')
 }
 
+# ---- 6d) 音频总线定式（布局 / 路由 / 写回 / duck / 静音语义）----
+# 断言在 tools/audio_check.gd 里；同样只确认「退出码 0 且打印了 PASS」。
+# 门禁的 900 帧主场景只跑 Master 这一条总线（玩家不按键、不切曲），总线是否真被引擎加载、
+# Bgm 是否挂到 Music 上，都得靠这个入口来验。
+$rBus = Invoke-GodotStep -Name 'audio_check' -Extra @('--script', 'res://tools/audio_check.gd')
+$busPass = @($rBus.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rBus.Ok -and -not $busPass) {
+	$fail.Add('音频总线  FAIL  退出码为 0 但没打印 PASS')
+}
+
 # ---- 7) 性能基准 ----
 $r3 = Invoke-GodotStep -Name 'perf_probe' -Extra @('--script', 'res://tools/perf_probe.gd')
 $warn3 = @($r3.Lines | Where-Object { $_ -match 'WARN' })
@@ -241,6 +257,16 @@ foreach ($r in @($r4, $r5)) {
 	if ($hasSkip -and -not $hasPass) {
 		$fail.Add("音效联调  FAIL  出现 SKIP（AudioConfig.enabled=false 时不算通过）")
 	}
+}
+
+# ---- 9b) BGM 联调（加载 / 淡入 / 切曲 / 静音 / stop）----
+# 断言在 tools/bgm_check.gd 里；它真的走一遍「大地图 → 遭遇 → Boss 战 → 结算 → 大地图」。
+# 与 8) / 9) 一样：出现 SKIP 而没有 PASS 判失败（那是"关音频所以没验"的意思）。
+$rBgm = Invoke-GodotStep -Name 'bgm_check' -Extra @('--script', 'res://tools/bgm_check.gd')
+$bgmPass = @($rBgm.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+$bgmSkip = @($rBgm.Lines | Where-Object { $_ -match 'SKIP' }).Count -gt 0
+if ($bgmSkip -and -not $bgmPass) {
+	$fail.Add('BGM 联调  FAIL  出现 SKIP（AudioConfig.enabled=false 时不算通过）')
 }
 
 # ---- 10) 主场景 900 帧 + 生成统计比对基线 ----

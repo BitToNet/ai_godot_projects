@@ -216,7 +216,7 @@
 | **第二轮** | 安全网：`tools/gen_fingerprint.gd`（原计划名 `gen_determinism_check.gd`）+ `tools/perf_probe.gd` 性能基准 + 一键门禁 `tools/run_checks.ps1` | **已完成**（2026-10-12；改动与实测见第八节） |
 | 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | ✅ **已完成**：`HUD.gd` 拆分（`eddd8c2`）、`InputMap` / `InputRouter`（`8063a9e`）、`Main.gd` 拆分四批（`a54d9d5` / `f9a09a8` / `951d3b2` / 本批，**854 → 191 行**，见 9.5）；另修掉门禁挂死隐患（工具脚本调用已改名方法 + 每步 180 s 硬超时） |
 | 第四轮 | 玩法闭环：`CampaignState` 经济 + 城镇交互 + 遭遇多选项 + 存档 | 🔄 **进行中**：4a 经济（钱袋 / 军费 / 士气 / 战利品 / HUD）已完成并通过门禁，见 §10.1–10.5；4b-1 城镇交互**逻辑层**（服务表 / 繁荣度定价 / 招募 / 贸易 / 驻军）已完成并通过门禁，见 §10.6；4b-2 进城**菜单界面 + 交互键**（G / 手柄 A、灰条目带原因、到地提示）已完成并通过门禁，见 §10.7；4c 遭遇**多选项**（选项表数据驱动 + 四条路各自的效果与代价 + 结算台账）已完成并通过门禁，见 §10.8；4d 存档待办 |
-| 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | 待办 |
+| 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | 🔄 **进行中**：5a 音频总线（`default_bus_layout.tres` + `AudioBus` + 扇子音 duck + `audio_check`）已完成并通过门禁，见 §11.1；5b 合成热点、5c PCM 缓存待办 |
 | 第六轮 | 规模扩展（植被 / 地形 / 寻路）+ i18n + 导出预设与 CI | 待办 |
 
 > 第四轮之后按「内容产能」推进：小兵单位 → 武器招式表 → 势力战争。
@@ -229,7 +229,8 @@
 $GODOT = "G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe"
 $PROJ  = "F:\aigc_code\ai_godot_projects"
 
-# 0) 【推荐】一键跑完全部门禁（12 步 / 16 项断言，约 45~55 秒）—— 本工程唯一需要的命令
+# 0) 【推荐】一键跑完全部门禁（14 步 / 17~18 项断言，约 43~55 秒）—— 本工程唯一需要的命令
+#    （项数在 17~18 之间浮动，差的那一项是 perf_probe 偶尔给出的 WARN 提示行，不判失败）
 powershell -File tools\run_checks.ps1
 #    ⚠ 必须用 powershell 而不是 pwsh：本机只有 Windows PowerShell 5.1，没有 pwsh 7
 
@@ -257,10 +258,21 @@ powershell -File tools\run_checks.ps1
 # 4e) 遭遇选项表定式（四条路的定价 / 可用条件 / 各自效果、不合法动作静默拒绝、
 #     撤退或买路之后时间锁有没有真的解开、战斗结算台账）—— 主场景里玩家不动，
 #     一次遭遇都不会触发，这张表在 900 帧里同样是死的
+& $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/encounter_check.gd
+
 # 4f) 存档定式（存档格式 / 三道身份门（版本 / magic / 种子+实体 id）/ 坏数据钳制 /
 #     读档后的引用修复 / 文件读写与往返稳定性）—— 900 帧里没人去按 F5 / F9
 #     （存读档要玩家触发），而且地图重建要 6~7 秒，整条存档链只能靠定式验
-& $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/encounter_check.gd
+& $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/save_check.gd
+
+# 4g) 音频总线定式（布局是否真被引擎加载 / AudioBus 写回与降级 / Sfx 与 Bgm 的路由与
+#     「总音量只算一次」/ duck 的触发与到点恢复 / 静音走增益淡出）—— 900 帧里玩家
+#     不按键、不切曲，总线挂错、总音量算两遍这类问题它一条都抓不到
+& $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/audio_check.gd
+
+# 4h) BGM 联调（两首 Ogg 真的加载并循环 / 大地图曲起播 / 遭遇→Boss 战→结算的切曲 /
+#     M 键静音与恢复 / stop()）—— 它跑一遍真主场景，约 7 秒
+& $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/bgm_check.gd
 
 # 5) 生成物指纹（确定性自检；与 tools/gen_fingerprint.json 存档比对）
 & $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/gen_fingerprint.gd
@@ -945,3 +957,98 @@ Boss 战 → 结算整条链，257 兵领主：HP 583 / 破防 147 / 缴获 154 
   真要做「跨版本迁移」就必须补这一步。
 - 读档要重建整张地图（6~7 秒），**没有增量读档**。
 - 存档不含 AI 内部计时与 RNG 内部状态：读档后强盗的游荡方向会重来（刻意，见取舍 4）。
+
+---
+
+## 十一、第五轮变更记录（音频总线 / 合成热点 / PCM 缓存）
+
+> 第五轮要解决的是音频从「能响」到「能调、能验、不卡」这三件事：
+> **5a 总线**（谁听谁的、怎么临时让路）、**5b 合成热点**（28 个音色生成时最贵的那几处）、
+> **5c PCM 缓存**（冷启动不必每次重新合成）。
+> 外部设计文档（骑砍 / 原版）在这里只提供「该有什么」的清单，具体数值一律按本工程实测来定，不照搬。
+
+### 11.1 5a 音频总线（`default_bus_layout.tres` + `AudioBus`）
+
+**问题（缺陷 G4「无音频总线」）**：改动前全仓库只有 `Sfx.gd` 里一处 `bus = "Master"`、零 `AudioServer`
+调用 —— 28 个音效与两首 BGM 全挤在 Master 上，只能靠「每条音各自的 `volume_db`」分别调，于是有两个实际后果：
+
+1. **总音量管不住音乐**：`AudioConfig.master_db` 只逐声叠在音效上，BGM 完全不受它影响 ——
+   把总音量拉到静音，背景音乐照样响。
+2. **没有「让路」的手段**：号角 / 开战 / 结算这类**扇子音**想压住正在播的音乐时，只能去改每条 BGM
+   播放器的音量，还得记住原值再改回来。
+
+**方案**：三条总线 `Master → Music / Sfx`（`default_bus_layout.tres` 交给引擎自己
+`generate_bus_layout()` 落盘，不手写 `.tres` —— 写错格式会让引擎在启动时打 `ERROR`，而门禁对 `ERROR` 零容忍），
+新增 `scripts/audio/AudioBus.gd` 作为**唯一写入口**：
+
+| 事项 | 改动前 | 改动后 |
+|---|---|---|
+| 总音量 `master_db` | 逐声叠在 `Sfx._final_db()` 里（**音乐不受影响**） | 写在 **Master 总线**上，音效与音乐一起听令 |
+| 音乐音量 `bgm_db` | 逐条叠在 `Bgm` 播放器的 `volume_db` 上 | 写在 **Music 总线**上；播放器只留单曲偏移 × 淡入增益 |
+| 分类音量（combat / parry / move / voice / ui） | 逐声相加 | **不动**：那五档是「音色设计」的一部分，不是混音台的推子 |
+| 让路（duck） | 无 | `AudioBus.duck(db, sec)` 临时压低 Music 总线，`SceneTree` 定时器到点自动恢复 |
+| 找不到总线时 | —— | `AudioBus.route()` 退 **Master**：降级而不是静音整场（老检出删了 `.tres` 也不会炸） |
+
+**两个刻意的设计决定：**
+
+- **扇子音名单写在代码里**（`Sfx.FANFARE` = `order` / `battle_start` / `result_win` / `result_lose`），
+  只有深度与时长是配置项（`AudioConfig.fanfare_duck_db = -5.0` dB、`fanfare_duck_time = 1.6` s）：
+  「谁是扇子音」属于混音行为，不该是玩家在设置里能改的东西。
+- **静音走增益淡出，不用总线静音**：`Sfx.set_muted()` 保持原实现（逐播放器淡到 `SILENT_GAIN`），
+  刻意**不**调 `set_bus_mute()` —— 总线静音是硬切，玩家按 M 想听到的是「淡下去」。
+  自检把这条写成断言，防止以后有人「顺手优化」成总线静音。
+
+**改动文件：**
+
+| 文件 | 改动 |
+|---|---|
+| `default_bus_layout.tres` | **新**：引擎生成，Master → Music / Sfx |
+| `scripts/audio/AudioBus.gd` | **新**（107 行）：总线名 / `apply()` / `route()` / `master_db()` / `music_db()` / `sfx_db()` / `duck()` / `stats()` / `reset()` |
+| `scripts/audio/Sfx.gd` | 改（234 → 273 行）：池播放器挂 Sfx 总线、`_duck_for_fanfare()`、`set_master_db()` 立刻写总线、`_final_db()` 去掉 `master_db`、新增 `volume_db_of()` / `player_bus()` / `bank_size()` 三个自检访问器 |
+| `scripts/audio/Bgm.gd` | 改（168 → 193 行）：播放器挂 Music 总线、`_base_db()` 去掉 `bgm_db`、`setup()` 里 `AudioBus.apply()`、新增 `bus_of()` / `db_of()` 自检访问器 |
+| `scripts/audio/AudioConfig.gd` | 改（74 → 80 行）：`master_db` / `bgm_db` 注释改成「写在总线上」、新增 `fanfare_duck_db` / `fanfare_duck_time` |
+| `tools/audio_check.gd` | **新**（187 行 / **46** 项断言） |
+| `tools/run_checks.ps1` | 改（282 → 308 行）：新增 **6d) audio_check** 与 **9b) bgm_check**（12 步 → **14 步**） |
+| `project.godot` | 改（−1 行）：编辑器顺手删掉的一处空行（与音频无关，同批入库） |
+
+**实测（2026-10-13）：**
+
+- **门禁 14 步全绿，用时 43.4 s**（新增 `audio_check` 1.5 s + `bgm_check` 7.2 s）；
+  指纹 `19d42d358f8d5495…` 与生成统计（定居点 18 / 桥梁 7 / 植被 5163）**均不变** ——
+  本批不碰 RNG、不碰生成顺序。
+- 自检断言数：`audio_check` **46**（新）、`save_check` 137、`input_check` 135、`encounter_check` 117、
+  `settlement_check` 104、`hud_check` 68、`economy_check` 48，全部通过；
+  `sfx_battle_check` / `sfx_map_check` / `bgm_check` 三条联调仍是 PASS（音色触发路径没动）。
+- `audio_check` 覆盖的是「读真对象」而不是「读常量」：布局是否真被引擎加载（`bus_count == 3`、
+  `Music`/`Sfx` 的 `send` 指向 Master）、`route()` 的降级、**总音量只算一次**
+  （`volume_db_of("hit_light") == combat_db + (−1.0)`，播放器里不再含 `master_db`）、
+  BGM 播放器只留单曲偏移（`db_of("map") == bgm_map_db`）、duck 的触发 / 拒绝 / 到点恢复、
+  静音期间 `play()` 既不计数也不压低音乐。
+
+**本批踩到的坑：**
+
+1. **同一个仓库里两种行尾**：`Sfx.gd` 是 CRLF，而 `Bgm.gd` / `AudioConfig.gd` / `SfxSynth.gd` 是 LF。
+   用「带 `\r\n` 的字面量」批量打补丁时，同一个模式在一半文件里必然匹配 0 次 ——
+   报错反而是好事，真正危险的是**不校验就 `.Replace()`**（静默不生效，改完像是做了事）。
+2. **`class_name AudioBus` 不在全局类缓存里**：新脚本必须先 `--import` 一次，否则引用它的脚本一律
+   `Parse Error: Identifier "AudioBus" not declared in the current scope`。
+3. **自检里没有 `Main`，就没人调 `Bgm.tick()`**：第一次跑 `audio_check` 时「大地图曲已起播」120 帧都不过 ——
+   淡入淡出是靠 `Main._process` 每帧驱动 `Bgm.tick(delta)` 的。自检必须**自己驱动**，
+   这与 `bgm_check` 走真主场景的路线正好互补（一个验对象、一个验流程）。
+4. **双 BOM 又踩了一次**（第一次是 4d 写 `run_checks.ps1`，见 §10.9 坑 3）：`UTF8.GetString()` 不剥 BOM，
+   写回时 `UTF8Encoding($true)` 再加一个 → `EF BB BF EF BB BF`。症状一如既往地阴：PowerShell 报
+   `The term '#' is not recognized`，但**门禁照样全绿**、退出码也是 0。修法固定为
+   「写回前循环剥掉所有前导 `U+FEFF`，写回后核对首三字节 = `EF BB BF`」。
+
+**本批欠账：**
+
+- 只做了**路由**，没挂任何**效果器**：总线上没有 limiter / compressor / reverb。
+  28 个音同时响时仍靠合成期的 `_soft_clip()` 削顶，总线侧动态控制等真需要时再上。
+- 没有**音量设置界面**：`master_db` / `bgm_db` / 分类音量目前只有 API
+  （`Sfx.set_master_db()` 至今没有 UI 调用方），玩家能用的只有 M 静音。
+- `duck()` **不做嵌套计数**：两次 duck 重叠时，先到点的那个会提前恢复
+  （当前扇子音间隔远大于 1.6 s，听不出来）。
+- `AudioBus.apply()` 把 `bgm_db` 与 duck 深度**相加后**写进 Music 总线，没有独立的 duck 总线；
+  若有别的模块再往 Music 上写 `volume_db`，两边会互相覆盖（约定：Music 总线只由 `AudioBus` 写）。
+- 5b / 5c 待办：`SfxSynth._biquad()` 的扫频分支**每个采样分配一个 `Array`**（33 处调用里约 28 处走扫频）、
+  `_env()` 的逐采样 `exp(pow())`，以及尚未开始的 PCM 缓存。
