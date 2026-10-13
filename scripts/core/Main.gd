@@ -33,6 +33,7 @@ var water: WaterBuilder
 var vegetation: VegetationScatter
 var player: PlayerParty
 var ai_parties: Array[AIParty] = []
+var spawner: PartySpawner                  ## 开局摆部队（见 PartySpawner.gd）
 var fog: FogOfWar
 var lights_root: Node3D
 
@@ -128,10 +129,17 @@ func _ready() -> void:
 	# ---------------- 6. 材质与网格 ----------------
 	await _step("生成着色器与地形分块网格…")
 	_make_materials()
+	# 部队生成器在这里就位：地形要拿玩家出生点（王都旁），部队也在同一步之后落地
+	spawner = PartySpawner.new()
+	spawner.cfg = cfg
+	spawner.data = data
+	spawner.host = self
+	spawner.mat = party_mat
+	spawner.parties = ai_parties
 	terrain = TerrainManager.new()
 	terrain.name = "Terrain"
 	add_child(terrain)
-	terrain.setup(cfg, data, terrain_mat, _player_start())
+	terrain.setup(cfg, data, terrain_mat, spawner.player_start())
 
 	await _step("注入海洋 / 湖泊 / 河流水面…")
 	water = WaterBuilder.new()
@@ -155,8 +163,9 @@ func _ready() -> void:
 
 	# ---------------- 7. 部队 / 相机 / 迷雾 / UI ----------------
 	await _step("集结部队…")
-	_spawn_player()
-	_spawn_ai_parties()
+	player = spawner.spawn_player()
+	spawner.player_target = player    # 强盗追击的目标（typed 注入，替掉 data.set_meta("player_ref")）
+	spawner.spawn_ai_parties()
 
 	await _step("设置相机与环境…")
 	day_night = DayNightCycle.new()
@@ -217,23 +226,6 @@ func _step(text: String) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 
-func _player_start() -> Vector3:
-	# 玩家出生在该势力王都附近
-	var cap: Settlement = null
-	for s in data.settlements:
-		if s.kind == Settlement.Kind.CASTLE:
-			cap = s
-			break
-	if cap == null and data.settlements.size() > 0:
-		cap = data.settlements[0]
-	var p := Vector2(cfg_center(), cfg_center())
-	if cap != null:
-		p = cap.pos + Vector2(18, 26)
-	return Vector3(p.x, data.hm.height_at(p.x, p.y), p.y)
-
-func cfg_center() -> float:
-	return config.map_size * 0.5
-
 func _build_loading_ui() -> void:
 	hud = HUD.new()
 	hud.name = "HUD"
@@ -241,30 +233,12 @@ func _build_loading_ui() -> void:
 	hud.setup(config)
 
 func _make_materials() -> void:
-	var cfg := config
-	terrain_mat = ShaderMaterial.new()
-	terrain_mat.shader = load("res://shaders/terrain.gdshader")
-	terrain_mat.set_shader_parameter("splat_map", data.splat_texture)
-	terrain_mat.set_shader_parameter("map_size", cfg.map_size)
-	terrain_mat.set_shader_parameter("sea_level", cfg.sea_level)
-	terrain_mat.set_shader_parameter("snow_line", cfg.snow_line)
-	terrain_mat.set_shader_parameter("mountain_line", cfg.mountain_line)
-	terrain_mat.set_shader_parameter("night_amount", 0.0)
-
-	settlement_mat = ShaderMaterial.new()
-	settlement_mat.shader = load("res://shaders/settlement.gdshader")
-	settlement_mat.set_shader_parameter("map_size", cfg.map_size)
-	settlement_mat.set_shader_parameter("night_glow", 0.0)
-
-	party_mat = ShaderMaterial.new()
-	party_mat.shader = load("res://shaders/settlement.gdshader")
-	party_mat.set_shader_parameter("map_size", cfg.map_size)
-	party_mat.set_shader_parameter("night_glow", 0.0)
-
-	vegetation_mat = ShaderMaterial.new()
-	vegetation_mat.shader = load("res://shaders/vegetation.gdshader")
-	vegetation_mat.set_shader_parameter("map_size", cfg.map_size)
-	vegetation_mat.set_shader_parameter("night_amount", 0.0)
+	var mf := MaterialFactory.new()
+	mf.build(config, data)
+	terrain_mat = mf.terrain
+	settlement_mat = mf.settlement
+	party_mat = mf.party
+	vegetation_mat = mf.vegetation
 
 func _build_settlement_lights() -> void:
 	for s in data.settlements:
@@ -279,127 +253,6 @@ func _build_settlement_lights() -> void:
 		l.visible = false
 		l.shadow_enabled = false
 		lights_root.add_child(l)
-
-func _spawn_player() -> void:
-	var cfg := config
-	player = PlayerParty.new()
-	player.name = "PlayerParty"
-	add_child(player)
-	var start := _player_start()
-	player.position = start
-	var mesh := PartyModelBuilder.build("player", data.faction(0).color, PartyModelBuilder.HORSE_BROWN, data.faction(0).color)
-	var mat := party_mat
-	player.setup_player(data, cfg, "%s的部队" % data.faction(0).name.substr(0, 4), 0, 37, mat, mesh)
-	player.refresh_label()
-	player.label.text = "玩家部队 · 37 人"
-	data.set_meta("player_ref", player)
-
-func _spawn_ai_parties() -> void:
-	var cfg := config
-	var total := cfg.ai_party_count
-	var lords := data.factions.size()
-	var caravans := maxi(2, int(round(float(total) * 0.28)))
-	var bandits := maxi(1, total - lords - caravans)
-	var idx := 0
-	# 领主：每个势力一个
-	for f in data.factions:
-		var home: Settlement = null
-		for s in data.settlements:
-			if s.faction_id == f.id and s.kind == Settlement.Kind.CASTLE:
-				home = s
-				break
-		if home == null:
-			continue
-		var p := home.pos + Vector2(cos(float(idx)) * 30.0, sin(float(idx)) * 30.0)
-		var mesh := PartyModelBuilder.build("lord", f.color, PartyModelBuilder.HORSE_WHITE, f.color)
-		var lp := _add_ai(AIParty.Kind.LORD, NameForge.new(cfg.map_seed + 31 + f.id).make_lord(f.id), f.id,
-			randi_range_seed(cfg.map_seed + f.id * 7, 140, 280), p, mesh, cfg.ai_speed * 1.08, true)
-		lp.is_boss = true
-		lp.boss_title = "%s · %s领主" % [lp.party_name, f.name]
-		idx += 1
-	# 商队
-	for i in caravans:
-		var town := _random_town(i * 13 + 3)
-		if town == null:
-			continue
-		var fid := town.faction_id
-		var p2 := town.pos + Vector2(cos(float(i)) * 22.0, sin(float(i)) * 22.0)
-		var mesh2 := PartyModelBuilder.build("caravan", data.faction(fid).color, PartyModelBuilder.HORSE_BROWN, data.faction(fid).color.darkened(0.2))
-		var np := NameForge.new(cfg.map_seed + 91 + i)
-		var cp := _add_ai(AIParty.Kind.CARAVAN, np.make_caravan(), fid,
-			randi_range_seed(cfg.map_seed + i * 5, 18, 45), p2, mesh2, cfg.ai_speed * 0.82, false)
-		cp.is_boss = true
-		cp.boss_title = "%s · 护卫长" % cp.party_name
-	# 强盗：野外
-	var bandit_leader: AIParty = null
-	var best_bandit := -1
-	for i in bandits:
-		var p3 := _random_wilderness(i * 29 + 5)
-		var mesh3 := PartyModelBuilder.build("bandit", Color(0.45, 0.35, 0.25), PartyModelBuilder.HORSE_BLACK, Color(0.22, 0.18, 0.16))
-		var np2 := NameForge.new(cfg.map_seed + 171 + i)
-		var bp := _add_ai(AIParty.Kind.BANDIT, np2.make_bandit(), -1,
-			randi_range_seed(cfg.map_seed + i * 11, 22, 78), p3, mesh3, cfg.ai_speed * 0.92, false)
-		bp.is_boss = true
-		bp.boss_title = "%s（强盗头目）" % bp.party_name
-		if bp.troop_count >= best_bandit:
-			best_bandit = bp.troop_count
-			bandit_leader = bp
-	# 人数最多的强盗团伙 = 强盗首领（Boss 战对手）
-	if bandit_leader != null:
-		bandit_leader.boss_title = "%s（强盗首领）" % bandit_leader.party_name
-		bandit_leader.heavy = true
-
-func randi_range_seed(s: int, a: int, b: int) -> int:
-	var r := RandomNumberGenerator.new()
-	r.seed = s
-	return r.randi_range(a, b)
-
-func _random_town(salt: int) -> Settlement:
-	var towns: Array[Settlement] = []
-	for s in data.settlements:
-		if s.kind != Settlement.Kind.VILLAGE:
-			towns.append(s)
-	if towns.is_empty():
-		return null
-	return towns[absi(salt) % towns.size()]
-
-func _random_wilderness(salt: int) -> Vector2:
-	var r := RandomNumberGenerator.new()
-	r.seed = config.map_seed + salt
-	for _t in 400:
-		var p := Vector2(r.randf_range(60.0, config.map_size - 60.0), r.randf_range(60.0, config.map_size - 60.0))
-		if data.is_water(p.x, p.y):
-			continue
-		var cell := data.nav_fine.cell_of(p)
-		if data.nav_fine.is_blocked(cell.x, cell.y):
-			continue
-		# 离定居点远一点
-		var far := true
-		for s in data.settlements:
-			if p.distance_to(s.pos) < 60.0:
-				far = false
-				break
-		if far:
-			return p
-	return Vector2(config.map_size * 0.5, config.map_size * 0.5)
-
-func _add_ai(kind: int, pname: String, faction: int, count: int, pos: Vector2, mesh: Mesh, speed: float, heavy: bool) -> AIParty:
-	var p := AIParty.new()
-	p.name = "AI_%s_%d" % [pname, ai_parties.size()]
-	add_child(p)
-	p.position = Vector3(pos.x, data.hm.height_at(pos.x, pos.y), pos.y)
-	p.setup_ai(data, config, kind, pname, faction, count, speed, party_mat, mesh, config.map_seed + ai_parties.size() * 97 + 7)
-	p.heavy = heavy
-	if kind == AIParty.Kind.CARAVAN:
-		var cart := MeshInstance3D.new()
-		cart.mesh = PartyModelBuilder.build_cart()
-		cart.material_override = party_mat
-		cart.position = Vector3(0, 0, 3.4)
-		cart.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		p.add_child(cart)
-	p.refresh_label()
-	ai_parties.append(p)
-	return p
 
 func _setup_ui() -> void:
 	hud.bind(data, day_night)
@@ -564,10 +417,9 @@ func _open_encounter(a: AIParty) -> void:
 	if player.moving:
 		player.halt()          # 遭遇打断行军：部队停在原地
 	_eval_time_flow()
-	var fname := "无阵营"
+	var fname := GameState.faction_name(data, a.faction_id)
 	var col := Color(0.9, 0.85, 0.7)
 	if a.faction_id >= 0:
-		fname = data.faction(a.faction_id).name
 		col = data.faction(a.faction_id).color
 	var kindname: String = {"lord": "领主部队", "caravan": "商队", "bandit": "强盗团伙"}.get(a.ai_kind(), "部队")
 	var lead_line := ""
@@ -670,9 +522,7 @@ func _update_hover() -> void:
 		if a == null or not is_instance_valid(a):
 			continue
 		if Vector2(a.position.x, a.position.z).distance_to(p) < 7.0:
-			var fname := "无阵营（流寇）"
-			if a.faction_id >= 0:
-				fname = data.faction(a.faction_id).name
+			var fname := GameState.faction_name(data, a.faction_id, "无阵营（流寇）")
 			var kindname: String = {"lord": "领主部队", "caravan": "商队", "bandit": "强盗团伙"}.get(a.ai_kind(), "部队")
 			var lead: String = ("\n首领：%s" % a.boss_title) if a.boss_title != "" else ""
 			var hint: String = {"lord": "\n（可发起 Boss 战 · 最强）", "bandit": "\n（可发起 Boss 战）",
@@ -689,7 +539,7 @@ func _update_hover() -> void:
 			var terr := data.faction_at(s.pos.x, s.pos.y)
 			hud.show_tooltip("%s\n类型：%s\n势力：%s\n驻军：%d 人\n领地归属：%s" % [
 				s.name, s.kind_name(), f.name, s.garrison,
-				data.faction(terr).name if terr != 255 else "无主之地"], mouse)
+				GameState.faction_name(data, terr, "无主之地")], mouse)
 			hud.set_terrain_text(data.nav_fine.describe_at_world(p))
 			return
 	hud.clear_tooltip()

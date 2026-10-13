@@ -30,6 +30,9 @@ var rng: RandomNumberGenerator
 var heavy: bool = false   ## 领主部队（用于 UI 区分）
 var is_boss: bool = true       ## 该部队的首领会作为 Boss 出场（现在所有部队都会进战斗场景）
 var boss_title: String = ""    ## Boss 战里显示的名号（领主 / 商队护卫长 / 强盗头目 / 强盗首领）
+## 强盗追击的目标。由 PartySpawner 显式注入（typed）；
+## 以前是 data.set_meta("player_ref", player) + 每帧 get_meta 取回的弱类型侧信道。
+var player_target: PartyBase = null
 
 func setup_ai(p_data: MapData, p_cfg: MapConfig, p_kind: int, p_name: String, p_faction: int, p_count: int, p_speed: float, mat: Material, model_mesh: Mesh, p_seed: int) -> void:
 	kind = p_kind
@@ -63,8 +66,8 @@ func step(delta: float) -> void:
 
 # ---------------------------------------------------------------- 强盗
 func _bandit_think(_delta: float) -> void:
-	var player = data.get_meta("player_ref", null)
-	if player == null:
+	var player := player_target
+	if player == null or not is_instance_valid(player):
 		return
 	var pd := Vector2(player.position.x, player.position.z)
 	var my := Vector2(position.x, position.z)
