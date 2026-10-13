@@ -5,16 +5,18 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行 6 步；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行 7 步；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
 #    3) 指纹 A 还必须与 tools/gen_fingerprint.json 里存档的指纹一致
 #       —— 只比 A=B 挡不住"两次跑出同一个新指纹"，那说明生成结果已经变了
-#    4) 性能基准采样（tools/perf_probe.gd）
-#    5) Boss 战音效联调（tools/sfx_battle_check.gd）
-#    6) 大地图音效联调（tools/sfx_map_check.gd）
-#    7) 主场景跑 900 帧 —— 无 ERROR，且生成统计与 tools/gen_fingerprint.json 基线一致
+#    4) HUD 对外接口冒烟（tools/hud_check.gd）—— 主场景 900 帧里玩家不动、不触发遭遇，
+#       UI 的交互路径（遭遇框开关 / 提示抑制 / 提示条淡出）那一步是覆盖不到的
+#    5) 性能基准采样（tools/perf_probe.gd）
+#    6) Boss 战音效联调（tools/sfx_battle_check.gd）
+#    7) 大地图音效联调（tools/sfx_map_check.gd）
+#    8) 主场景跑 900 帧 —— 无 ERROR，且生成统计与 tools/gen_fingerprint.json 基线一致
 #
 #  为什么是这些：本工程「一切由种子生成 + 运行时合成音效 + 纯代码 UI」，
 #  一旦 RNG 抽取顺序、音色触发路径或主场景初始化被改坏，靠肉眼很难发现。
@@ -130,7 +132,14 @@ if ($null -ne $baseline -and $null -ne $baseline.fingerprint -and $fpA -ne '') {
 	}
 }
 
-# ---- 3) 性能基准 ----
+# ---- 3) HUD 对外接口冒烟 ----
+$rHud = Invoke-GodotStep -Name 'hud_check' -Extra @('--script', 'res://tools/hud_check.gd')
+$hudPass = @($rHud.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rHud.Ok -and -not $hudPass) {
+	$fail.Add('HUD 冒烟  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 4) 性能基准 ----
 $r3 = Invoke-GodotStep -Name 'perf_probe' -Extra @('--script', 'res://tools/perf_probe.gd')
 $warn3 = @($r3.Lines | Where-Object { $_ -match 'WARN' })
 if ($r3.Ok -and $warn3.Count -gt 0) {
@@ -138,7 +147,7 @@ if ($r3.Ok -and $warn3.Count -gt 0) {
 	$pass.Add("性能基准  注意  有 $($warn3.Count) 条 WARN（未超容差，不判失败）")
 }
 
-# ---- 4) / 5) 音效联调 ----
+# ---- 6) / 7) 音效联调 ----
 $r4 = Invoke-GodotStep -Name 'sfx_battle_check' -Extra @('--script', 'res://tools/sfx_battle_check.gd')
 $r5 = Invoke-GodotStep -Name 'sfx_map_check' -Extra @('--script', 'res://tools/sfx_map_check.gd')
 foreach ($r in @($r4, $r5)) {
@@ -149,7 +158,7 @@ foreach ($r in @($r4, $r5)) {
 	}
 }
 
-# ---- 6) 主场景 900 帧 + 生成统计比对基线 ----
+# ---- 8) 主场景 900 帧 + 生成统计比对基线 ----
 $r6 = Invoke-GodotStep -Name 'main_scene_900' -Extra @('--quit-after', '900')
 $statLine = @($r6.Lines | Where-Object { $_ -match '地图生成完成' })
 if ($statLine.Count -eq 0) {
