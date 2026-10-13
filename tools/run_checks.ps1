@@ -26,6 +26,8 @@
 #        四条路的定价、可用性与代价，外加「不合法动作一律静默拒绝」与时间锁有没有解开。
 #        这张表同样在 900 帧里走不到：主场景里玩家不动，一次遭遇都不会触发
 #    7) 性能基准采样（tools/perf_probe.gd）
+#    6c) 存档定式（tools/save_check.gd）—— 存档格式 / 三道门（版本 / 种子 / 实体 id）/
+#        坏数据钳制 / 读档后的引用修复 / 文件读写（不建世界，纯定式）
 #    8) Boss 战音效联调（tools/sfx_battle_check.gd）
 #    9) 大地图音效联调（tools/sfx_map_check.gd）
 #    10) 主场景跑 900 帧 —— 无 ERROR，且生成统计与 tools/gen_fingerprint.json 基线一致
@@ -210,6 +212,16 @@ $rEnc = Invoke-GodotStep -Name 'encounter_check' -Extra @('--script', 'res://too
 $encPass = @($rEnc.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rEnc.Ok -and -not $encPass) {
 	$fail.Add('遭遇选项  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 6c) 存档定式（格式 / 校验 / 坏数据钳制 / 读档修引用）----
+# 断言在 tools/save_check.gd 里；这里同样只确认「退出码 0 且打印了 PASS」。
+# 门禁的 900 帧主场景不会去按 F5 / F9（存读档是要玩家触发的），所以整条存档链
+# 必须靠这个不建世界的入口来验。
+$rSave = Invoke-GodotStep -Name 'save_check' -Extra @('--script', 'res://tools/save_check.gd')
+$savePass = @($rSave.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rSave.Ok -and -not $savePass) {
+	$fail.Add('存档  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 7) 性能基准 ----

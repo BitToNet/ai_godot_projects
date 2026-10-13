@@ -27,6 +27,11 @@ signal faction_labels_requested(faction_id: int)
 ## 进城 / 交互（第四轮 4b-2）：只表示「玩家想跟脚下的定居点打交道」，
 ## 附近有没有定居点、能不能进，由 SettlementSystem 判断 —— 路由不认识地图数据。
 signal interact_requested
+## 存 / 读档（第四轮 4d）。刻意**不**经过「面板在场就整体让路」那道闸：
+## 面板状态不进存档（见 SaveGame.gd 文件头取舍 3），所以「能不能存」由业务层判并说明理由，
+## 而不是按了没反应。
+signal save_requested
+signal load_requested
 
 var camera_rig: CameraRig
 var hud: HUD
@@ -39,6 +44,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 遭遇 / 进城对话框在场时键盘鼠标都属于它。否则按 R / V / M / 1 会在
 	# 「请决定行动」的同时把地图改掉，而对话框自己收不到任何按键。
 	# 进城菜单同理：菜单开着时点地图行军 / 切流速都该被挡住（菜单自己会锁世界时间）。
+	# 存 / 读档先于「对话框让路」：面板开着时也要能把请求送出去，
+	# 由 Main 决定拒还是放（并给出一句为什么），见上面的信号注释。
+	if event.is_action_pressed("quicksave"):
+		save_requested.emit()
+		return
+	if event.is_action_pressed("quickload"):
+		load_requested.emit()
+		return
 	if hud != null and hud.is_any_dialog_open():
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:

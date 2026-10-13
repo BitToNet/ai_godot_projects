@@ -207,12 +207,16 @@ func upgrade_tier() -> bool:
 	changed.emit()
 	return true
 
-## 直接改士气（撤退代价 / 战斗结果等事件用）。钳到 [0,100]，
-## 与原文 change_party_morale 的钳位一致（01 §3.3）。
+## 直接改士气（撤退代价 / 战斗结果等事件用）。
+##
+## ⚠ 先把**读到的**士气钳一次，再加 delta、再钳一次 —— 02-玩法设计 §3.4.1 的设计
+## 含义【实证】：原版 change_player_party_morale 就是这么写的，防的正是「存档或别的
+## 脚本塞进一个越界值（比如 300）」：只钳结果的话 300 − 5 → 295 → 钳到 100，
+## 那个坏值会一直**粘在 100** 上再也降不下来。读档侧的同类防御见 SaveGame._clamp_warn。
 func add_morale(delta: int) -> void:
 	if delta == 0:
 		return
-	morale = clampi(morale + delta, 0, 100)
+	morale = clampi(clampi(morale, 0, 100) + delta, 0, 100)
 	changed.emit()
 
 # ------------------------------------------------------------------ 每日 / 每周结算

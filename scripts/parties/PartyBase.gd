@@ -15,6 +15,9 @@ var faction_id: int = 0
 var troop_count: int = 20
 var speed_base: float = 40.0
 var is_player: bool = false
+## 生成顺序的序号：读档时用它对**稳定对齐**实体（见 SaveGame.gd 文件头取舍 2）。
+## 不能拿数组下标当 id —— 打赢一场 Boss 战会 ctx.parties.erase() 掉一格，之后全体错位。
+var spawn_id: int = -1
 
 var path: PackedVector3Array = PackedVector3Array()
 var path_index: int = 0

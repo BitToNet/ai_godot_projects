@@ -281,6 +281,9 @@ func run() -> WorldContext:
 	settlements.menu_changed.connect(Callable(host, "_on_settlement_menu_changed"))
 	settlements.closed.connect(Callable(host, "_on_settlement_closed"))
 	router.interact_requested.connect(Callable(host, "_on_interact_requested"))
+	# 4d：快速存档 / 快速读档（数据格式与校验在 SaveGame.gd，这里只接线）
+	router.save_requested.connect(Callable(host, "_on_quicksave_requested"))
+	router.load_requested.connect(Callable(host, "_on_quickload_requested"))
 	return ctx
 
 # =============================================================== 内部

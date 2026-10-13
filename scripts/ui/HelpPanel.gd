@@ -22,6 +22,8 @@ const LINES: Array = [
 	["faction_labels_1", "只看某势力领地标签（其余势力见下方两行）"],
 	["faction_labels_2", "另看一个势力的领地标签"],
 	["faction_labels_3", "再看最后一个势力的领地标签"],
+	["quicksave", "快速存档（没有面板 / 不在战斗时才允许）"],
+	["quickload", "快速读档（回到上次存档；会重跑一遍地图生成）"],
 ]
 
 func _ready() -> void:
@@ -29,7 +31,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	offset_left = 16
-	offset_top = -352
+	offset_top = -390
 	offset_bottom = -16
 	add_child(UiTheme.label(_build_text(), 14, Color(0.86, 0.90, 0.94)))
 

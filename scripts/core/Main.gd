@@ -213,6 +213,76 @@ func _on_day_settled(report: Dictionary) -> void:
 	if not notices.is_empty() and hud != null:
 		hud.show_toast("　".join(notices), 6.0)
 
+# =============================================================== 存档 / 读档
+## 快速存档 / 快速读档（第四轮 4d）。数据格式与校验全在 SaveGame.gd，这里只管
+## 「什么时候允许、说给玩家听的话」。允许的条件写得很紧：
+##   · 地图上（不在 Boss 战里；战斗中 router 本来也被关掉了，这里再兜一层）
+##   · 没有面板开着（面板状态不进存档 —— 存下来读回去会得到「面板开着但对象换了」的错位）
+func _blocked_reason() -> String:
+	if battler != null and battler.battle != null:
+		return "战斗进行中"
+	if hud != null and hud.is_any_dialog_open():
+		return "有面板开着（先关掉它：面板状态不进存档）"
+	return ""
+
+func _on_quicksave_requested() -> void:
+	if ctx == null or campaign == null:
+		return
+	var why := _blocked_reason()
+	if why != "":
+		if hud != null:
+			hud.show_toast("现在不能存档：%s" % why, 3.0)
+		return
+	var r := SaveGame.write(SaveGame.SLOT_QUICK, SaveGame.collect(ctx, encounters))
+	if bool(r.get("ok", false)):
+		print("[存档] 已写入 %s（%d 字节）：%s" % [
+			str(r.get("path", "")), int(r.get("bytes", 0)), campaign.debug_line()])
+		if hud != null:
+			hud.show_toast("已存档：第 %d 天　金 %d　兵 %d　（%s 可再按一次覆盖）" % [
+				campaign.day, campaign.denars, campaign.troops(),
+				InputRouter.action_hint_text("quicksave")], 4.0)
+	else:
+		print("[存档] 失败：%s" % str(r.get("error", "")))
+		if hud != null:
+			hud.show_toast("存档失败：%s" % str(r.get("error", "")), 4.0)
+
+func _on_quickload_requested() -> void:
+	if ctx == null or campaign == null:
+		return
+	var why := _blocked_reason()
+	if why != "":
+		if hud != null:
+			hud.show_toast("现在不能读档：%s" % why, 3.0)
+		return
+	if not SaveGame.exists(SaveGame.SLOT_QUICK):
+		if hud != null:
+			hud.show_toast("没有存档 —— 先按 %s 存一个" % InputRouter.action_hint_text("quicksave"), 3.0)
+		return
+	var r := SaveGame.read(SaveGame.SLOT_QUICK)
+	if not bool(r.get("ok", false)):
+		if hud != null:
+			hud.show_toast("读档失败：%s" % str(r.get("error", "")), 4.5)
+		return
+	var a := SaveGame.apply(ctx, r.get("data", {}), encounters, settlements)
+	if not bool(a.get("ok", false)):
+		print("[读档] 拒绝：%s" % str(a.get("error", "")))
+		if hud != null:
+			hud.show_toast("读档被拒绝：%s" % str(a.get("error", "")), 5.0)
+		return
+	var info: Dictionary = a.get("info", {})
+	# 迷雾要在这里揭（WorldContext 里没有 fog 这一项，也没必要为读档加一条引用）
+	if fog != null and player != null:
+		fog.reveal(Vector2(player.position.x, player.position.z), config.fog_reveal_radius * 1.4)
+	var warns: Array = a.get("warnings", [])
+	print("[读档] 已载入第 %d 天：金 %d　粮 %d　士气 %d　兵 %d　部队 %d 支（打掉的 %d 支保持消失）%s" % [
+		int(info.get("day", 0)), int(info.get("denars", 0)), int(info.get("supplies", 0)),
+		int(info.get("morale", 0)), int(info.get("troops", 0)), int(info.get("parties", 0)),
+		int(info.get("parties_gone", 0)),
+		"" if warns.is_empty() else "　⚠ 修掉 %d 处坏数据" % warns.size()])
+	if hud != null:
+		var tail := "" if warns.is_empty() else "（修掉 %d 处坏数据）" % warns.size()
+		hud.show_toast("已读档：第 %d 天　金 %d　兵 %d%s" % [
+			int(info.get("day", 0)), int(info.get("denars", 0)), int(info.get("troops", 0)), tail], 4.0)
 # =============================================================== 输入
 ## 键码 → 语义的分发已经搬进 InputRouter（含「遭遇对话框在场时整体让路」）。
 ## 这里只负责「按下之后改什么」，因此不再出现任何物理键码。

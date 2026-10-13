@@ -147,6 +147,8 @@ func _random_wilderness(salt: int) -> Vector2:
 
 func _add_ai(kind: int, pname: String, faction: int, count: int, pos: Vector2, mesh: Mesh, speed: float, heavy: bool) -> AIParty:
 	var p := AIParty.new()
+	# 稳定实体 id = 生成顺序的序号（同一种子必然一致；读档靠它对齐，见 SaveGame.gd）
+	p.spawn_id = parties.size()
 	p.name = "AI_%s_%d" % [pname, parties.size()]
 	host.add_child(p)
 	p.position = Vector3(pos.x, data.hm.height_at(pos.x, pos.y), pos.y)
