@@ -4,133 +4,133 @@
 	"path_coarse_detail": [
 		{
 			"expanded": 15,
-			"ms": 0.554,
+			"ms": 0.426,
 			"pts": 2
 		},
 		{
 			"expanded": 21,
-			"ms": 0.662,
+			"ms": 0.488,
 			"pts": 2
 		},
 		{
 			"expanded": 13,
-			"ms": 0.349,
+			"ms": 0.25,
 			"pts": 2
 		},
 		{
 			"expanded": 13,
-			"ms": 0.438,
+			"ms": 0.312,
 			"pts": 2
 		},
 		{
 			"expanded": 25,
-			"ms": 0.9,
+			"ms": 0.738,
 			"pts": 2
 		},
 		{
 			"expanded": 24,
-			"ms": 0.874,
+			"ms": 0.698,
 			"pts": 2
 		},
 		{
 			"expanded": 626,
-			"ms": 10.19,
+			"ms": 6.325,
 			"pts": 5
 		},
 		{
 			"expanded": 62,
-			"ms": 1.35,
+			"ms": 0.925,
 			"pts": 3
 		},
 		{
 			"expanded": 430,
-			"ms": 7.2,
+			"ms": 4.74,
 			"pts": 4
 		},
 		{
 			"expanded": 24,
-			"ms": 0.645,
+			"ms": 0.506,
 			"pts": 4
 		},
 		{
 			"expanded": 18,
-			"ms": 0.617,
+			"ms": 0.481,
 			"pts": 2
 		},
 		{
 			"expanded": 3913,
-			"ms": 65.619,
+			"ms": 45.796,
 			"pts": 10
 		}
 	],
 	"path_coarse_expanded": 5184,
-	"path_coarse_max_ms": 65.619,
-	"path_coarse_total_ms": 89.398,
+	"path_coarse_max_ms": 45.796,
+	"path_coarse_total_ms": 61.685,
 	"path_fine_detail": [
 		{
 			"expanded": 31,
-			"ms": 1.349,
+			"ms": 1.214,
 			"pts": 2
 		},
 		{
 			"expanded": 41,
-			"ms": 1.596,
+			"ms": 1.408,
 			"pts": 2
 		},
 		{
 			"expanded": 21,
-			"ms": 0.701,
+			"ms": 0.541,
 			"pts": 2
 		},
 		{
 			"expanded": 49,
-			"ms": 1.373,
+			"ms": 1.033,
 			"pts": 2
 		},
 		{
 			"expanded": 133,
-			"ms": 3.524,
+			"ms": 3.062,
 			"pts": 2
 		},
 		{
 			"expanded": 49,
-			"ms": 2.316,
+			"ms": 2.091,
 			"pts": 2
 		},
 		{
 			"expanded": 30,
-			"ms": 1.096,
+			"ms": 0.982,
 			"pts": 2
 		},
 		{
 			"expanded": 52,
-			"ms": 2.314,
+			"ms": 1.49,
 			"pts": 3
 		},
 		{
 			"expanded": 296,
-			"ms": 7.103,
+			"ms": 4.7,
 			"pts": 5
 		},
 		{
 			"expanded": 53,
-			"ms": 1.488,
+			"ms": 1.237,
 			"pts": 5
 		},
 		{
 			"expanded": 37,
-			"ms": 1.548,
+			"ms": 1.293,
 			"pts": 2
 		},
 		{
 			"expanded": 351,
-			"ms": 14.127,
+			"ms": 12.958,
 			"pts": 5
 		}
 	],
 	"path_fine_expanded": 1143,
-	"path_fine_max_ms": 14.127,
-	"path_fine_total_ms": 38.535,
+	"path_fine_max_ms": 12.958,
+	"path_fine_total_ms": 32.009,
 	"path_n": 12,
 	"path_pairs": [
 		[
@@ -206,32 +206,32 @@
 			527.889
 		]
 	],
-	"prim_height_at_us": 0.75,
-	"prim_normal_at_us": 3.684,
+	"prim_height_at_us": 0.755,
+	"prim_normal_at_us": 3.279,
 	"seed": 20250929,
 	"terrain_chunks": 64,
 	"terrain_idx_hash": "ed3c6f4ec427b094",
-	"terrain_lod0_max_ms": 2.589,
-	"terrain_lod0_median_ms": 1.571,
+	"terrain_lod0_max_ms": 2.613,
+	"terrain_lod0_median_ms": 1.537,
 	"terrain_lod0_n": 64,
-	"terrain_lod0_sum_ms": 101.22,
+	"terrain_lod0_sum_ms": 103.44,
 	"terrain_lod0_verts": 1601,
-	"terrain_lod1_max_ms": 0.589,
-	"terrain_lod1_median_ms": 0.455,
+	"terrain_lod1_max_ms": 0.482,
+	"terrain_lod1_median_ms": 0.457,
 	"terrain_lod1_n": 16,
-	"terrain_lod1_sum_ms": 7.47,
-	"terrain_lod2_max_ms": 0.183,
+	"terrain_lod1_sum_ms": 6.962,
+	"terrain_lod2_max_ms": 0.185,
 	"terrain_lod2_median_ms": 0.175,
 	"terrain_lod2_n": 16,
-	"terrain_lod2_sum_ms": 2.814,
-	"terrain_lod3_max_ms": 0.098,
-	"terrain_lod3_median_ms": 0.081,
+	"terrain_lod2_sum_ms": 2.797,
+	"terrain_lod3_max_ms": 0.093,
+	"terrain_lod3_median_ms": 0.078,
 	"terrain_lod3_n": 16,
-	"terrain_lod3_sum_ms": 1.342,
+	"terrain_lod3_sum_ms": 1.248,
 	"terrain_norm_hash": "a712dd9038c7b2ef",
 	"terrain_pos_hash": "5a2e59665239f171",
 	"veg_chunks": 212,
-	"veg_emit_ms": 2.102,
+	"veg_emit_ms": 2.081,
 	"veg_instances": 5163,
 	"veg_kinds": {
 		"broadleaf": 2132,
@@ -240,6 +240,6 @@
 		"deadtree": 211,
 		"rock": 611
 	},
-	"veg_total_ms": 941.245,
+	"veg_total_ms": 937.495,
 	"veg_xform_hash": "df5b0d581cff76f2"
 }

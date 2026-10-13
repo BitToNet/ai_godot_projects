@@ -129,6 +129,21 @@ func find_path(from_world: Vector2, to_world: Vector2) -> PackedVector3Array:
 	_state[si] = 1
 	_heap_push(si)
 
+	# ---- 热点内联 ----
+	# 下面这个双层循环每次搜索要跑几十万次（细栅格 257² = 66049 格，每格 8 个邻格）。
+	# 原来每邻格都要付三笔脚本层的开销：nav.is_blocked()（对角时 3 次方法调用）、
+	# nav.speed[] / nav.cell 的属性取用、_heuristic() 里的 Vector2i 构造。
+	# 语义与 NavGrid.is_blocked / _heuristic 完全一致（越界即障碍；(float(mn)*DIAG + float(mx-mn))
+	# * cell * (1/1.2) * weight），**并保持完全相同的浮点运算顺序**，所以搜索结果不该有任何变化 ——
+	# 探针断言「每对的路径点数与展开节点数逐对不变」就是这句话的证据。
+	var res := nav.res
+	var cell := nav.cell
+	var blocked := nav.blocked
+	var speed := nav.speed
+	var k12 := 1.0 / 1.2
+	var hw := heuristic_weight
+	var tx := t.x
+	var tz := t.y
 	var expanded := 0
 	var found := false
 	while _heap_size > 0:
@@ -143,21 +158,30 @@ func find_path(from_world: Vector2, to_world: Vector2) -> PackedVector3Array:
 		last_expanded = expanded
 		if expanded > max_expand:
 			break
-		var cx := cur % nav.res
-		var cz := cur / nav.res
+		var cx := cur % res
+		var cz := cur / res
+		var gcur := _g[cur]
+		var scur := speed[cur]
 		for d in 8:
 			var dx: int = NEI_X[d]
 			var dz: int = NEI_Z[d]
 			var nx := cx + dx
 			var nz := cz + dz
-			if nav.is_blocked(nx, nz):
+			if nx < 0 or nz < 0 or nx >= res or nz >= res or blocked[nz * res + nx] == 1:
 				continue
 			var diagonal := dx != 0 and dz != 0
 			# 禁止切角：对角移动要求两侧正交格都不是障碍
 			if diagonal:
-				if nav.is_blocked(cx + dx, cz) or nav.is_blocked(cx, cz + dz):
+				# 注意这里是 (cx+dx, cz) 与 (cx, cz+dz)：两个**正交**邻格，不是对角格本身
+				# （第一版内联时我写成了 (cx+dx, cz+dz)，探针立刻报展开数 1143 → 1135 ——
+				#   这条「展开节点数必须逐对不变」的契约断言就是为这种错准备的）
+				var ax := cx + dx
+				if ax < 0 or cz < 0 or ax >= res or cz >= res or blocked[cz * res + ax] == 1:
 					continue
-			var ni := nz * nav.res + nx
+				var bz := cz + dz
+				if cx < 0 or bz < 0 or cx >= res or bz >= res or blocked[bz * res + cx] == 1:
+					continue
+			var ni := nz * res + nx
 			if _stamp[ni] != _cur_stamp:
 				_stamp[ni] = _cur_stamp
 				_g[ni] = 1e30
@@ -167,15 +191,18 @@ func find_path(from_world: Vector2, to_world: Vector2) -> PackedVector3Array:
 			if _state[ni] == 2:
 				continue
 			# 代价 = 距离 / 速度
-			var sp := nav.speed[ni]
+			var sp := speed[ni]
 			if diagonal:
-				sp = (sp + nav.speed[cur]) * 0.5
+				sp = (sp + scur) * 0.5
 			sp = maxf(sp, 0.2)
-			var step := nav.cell * (DIAG if diagonal else 1.0)
-			var ng := _g[cur] + step / sp
+			var step := cell * (DIAG if diagonal else 1.0)
+			var ng := gcur + step / sp
 			if ng < _g[ni]:
 				_g[ni] = ng
-				_f[ni] = ng + _heuristic(Vector2i(nx, nz), t)
+				var adx := absi(nx - tx)
+				var adz := absi(nz - tz)
+				var amn := mini(adx, adz)
+				_f[ni] = ng + (float(amn) * DIAG + float(maxi(adx, adz) - amn)) * cell * k12 * hw
 				_from[ni] = cur
 				_state[ni] = 1
 				_heap_push(ni)
