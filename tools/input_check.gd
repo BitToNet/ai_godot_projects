@@ -329,14 +329,31 @@ func _check_dialog() -> void:
 	_ok(hud.dialog.attack_button.has_focus(), "遭遇框打开时「攻击」拿到焦点")
 	_ok(hud.dialog.hint_label.text.contains("回车") and hud.dialog.hint_label.text.contains("Esc"),
 		"对话框键位提示来自 InputMap：%s" % hud.dialog.hint_label.text)
+	_ok(hud.dialog.row_actions() == ["attack", "retreat"],
+		"没给数据时面板用兜底两行：%s" % [hud.dialog.row_actions()])
 
 	# 取消键 → 撤退（焦点在按钮上时没人消费 dialog_cancel，落到对话框自己的 _unhandled_input）
 	var esc := _key(KEY_ESCAPE)
 	_ok(esc.is_action_pressed("dialog_cancel"), "Esc 匹配动作 dialog_cancel")
 	hud.dialog._unhandled_input(esc)
 	_ok(choices == ["retreat"], "Esc → 撤退（得到 %s）" % [choices])
-	_ok(not hud.is_encounter_open(), "撤退后对话框关闭")
+	# 第四轮 4c 起与进城菜单同规矩：面板自己**不关**，关它的是业务层
+	# （EncounterSystem.resolve → HUD.hide_encounter）。
+	_ok(hud.is_encounter_open(), "Esc 后面板仍开着（关不关由业务层决定）")
+	hud.hide_encounter()
 	_ok(not hud.dialog.attack_button.has_focus(), "关闭后焦点已释放（免得空格又按到上次的按钮）")
+
+	# 取消键**不跟随光标**：焦点挪到第二行再按 Esc，得到的仍是「撤退」而不是攻击
+	choices.clear()
+	hud.show_encounter("遭遇 测试部队", "测试说明", Color(1, 1, 1))
+	await process_frame
+	_press(KEY_DOWN)
+	await process_frame
+	await process_frame
+	_ok(hud.dialog.retreat_button.has_focus(), "↓ 把焦点移到第二行「撤退」")
+	hud.dialog._unhandled_input(_key(KEY_ESCAPE))
+	_ok(choices == ["retreat"], "取消键不跟随光标：焦点在第二行也是撤退（得到 %s）" % [choices])
+	hud.hide_encounter()
 
 	# 确认键走完整输入管线：焦点在「攻击」上，回车应当把它按下去
 	choices.clear()
@@ -347,6 +364,7 @@ func _check_dialog() -> void:
 	await process_frame
 	await process_frame
 	_ok(choices == ["attack"], "回车（dialog_confirm）→ 攻击（得到 %s）" % [choices])
+	hud.hide_encounter()
 
 	# 手柄确认键：内建 ui_accept 没有手柄事件，全靠 dialog_confirm
 	choices.clear()
@@ -356,6 +374,7 @@ func _check_dialog() -> void:
 	await process_frame
 	await process_frame
 	_ok(choices == ["attack"], "手柄 A（dialog_confirm）→ 攻击（得到 %s）" % [choices])
+	hud.hide_encounter()
 
 	# 手柄取消键
 	choices.clear()
@@ -365,32 +384,57 @@ func _check_dialog() -> void:
 	await process_frame
 	await process_frame
 	_ok(choices == ["retreat"], "手柄 B（dialog_cancel）→ 撤退（得到 %s）" % [choices])
+	hud.hide_encounter()
 
-	# 焦点可以在两个按钮之间移动（键盘 →，手柄十字键 / 肩键同理）
+	# 焦点可以在条目之间移动。⚠ 第四轮 4c 起选项表是**竖排**（与进城菜单同构），
+	# 所以要按 ↑↓ 而不是 ←→：老版本是两个并排按钮，横排用 → 是对的；
+	# 竖排之后 → 在几何上没有邻居，按下去焦点不动（这条断言就是这么被抓出来的）。
 	choices.clear()
 	hud.show_encounter("遭遇 测试部队", "测试说明", Color(1, 1, 1))
 	await process_frame
-	_press(KEY_RIGHT)
+	_press(KEY_DOWN)
 	await process_frame
 	await process_frame
-	_ok(hud.dialog.retreat_button.has_focus(), "→ 把焦点移到「撤退」")
+	_ok(hud.dialog.retreat_button.has_focus(), "↓ 把焦点移到「撤退」")
 	_press(KEY_ENTER)
 	await process_frame
 	await process_frame
 	_ok(choices == ["retreat"], "回车确认焦点上的「撤退」（得到 %s）" % [choices])
+	hud.hide_encounter()
 
 	# 手柄 D-pad 也能切换焦点
 	choices.clear()
 	hud.show_encounter("遭遇 测试部队", "测试说明", Color(1, 1, 1))
 	await process_frame
-	Input.parse_input_event(_pad_button(JOY_BUTTON_DPAD_RIGHT))
+	Input.parse_input_event(_pad_button(JOY_BUTTON_DPAD_DOWN))
 	await process_frame
 	await process_frame
-	_ok(hud.dialog.retreat_button.has_focus(), "手柄十字键→ 把焦点移到「撤退」")
-	Input.parse_input_event(_pad_button(JOY_BUTTON_DPAD_LEFT))
+	_ok(hud.dialog.retreat_button.has_focus(), "手柄十字键↓ 把焦点移到「撤退」")
+	Input.parse_input_event(_pad_button(JOY_BUTTON_DPAD_UP))
 	await process_frame
 	await process_frame
-	_ok(hud.dialog.attack_button.has_focus(), "手柄十字键← 把焦点移回「攻击」")
+	_ok(hud.dialog.attack_button.has_focus(), "手柄十字键↑ 把焦点移回「攻击」")
+	hud.hide_encounter()
+
+	# 灰行在焦点链里被跳过（遭遇多选项与进城菜单共用同一套规矩）
+	choices.clear()
+	var enc: Array[Dictionary] = [
+		{"id": "attack", "label": "攻 击", "enabled": true, "hint": "进入 Boss 战"},
+		{"id": "bribe", "label": "花钱买路（180 金）", "enabled": false, "hint": "现有 120 金"},
+		{"id": "retreat", "label": "撤 退", "enabled": true, "hint": "不战而走"},
+	]
+	hud.show_encounter("遭遇 测试部队", "测试说明", Color(1, 1, 1), enc)
+	await process_frame
+	_ok(hud.dialog.row_enabled() == [true, false, true],
+		"四条数据里的灰行落到 disabled 上：%s" % [hud.dialog.row_enabled()])
+	_press(KEY_DOWN)
+	await process_frame
+	await process_frame
+	_ok(hud.dialog.row_button(2).has_focus(), "↓ 跳过灰行，焦点落到第三行（撤退）")
+	_press(KEY_ENTER)
+	await process_frame
+	await process_frame
+	_ok(choices == ["retreat"], "回车确认第三行（得到 %s）" % [choices])
 	hud.hide_encounter()
 
 	hud.free()

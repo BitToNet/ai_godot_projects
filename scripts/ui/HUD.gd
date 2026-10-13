@@ -122,8 +122,11 @@ func show_tooltip(text: String, screen_pos: Vector2) -> void:
 func clear_tooltip() -> void:
 	_tooltip.clear()
 
-func show_encounter(title: String, info: String, color: Color) -> void:
-	dialog.open(title, info, color)
+## entries 是 EncounterSystem.options() 的原样数据（{id,label,enabled,hint}）：
+## 与进城菜单一样走「传数据」而不是「传系统」，hud_check 不用建世界就能单独测面板。
+## 不传 entries 时用对话框自带的兜底两行（攻击 / 撤退）—— 截图脚本与早期自检走这条。
+func show_encounter(title: String, info: String, color: Color, entries: Array = []) -> void:
+	dialog.open(title, info, color, entries)
 	_tooltip.clear()
 
 func hide_encounter() -> void:

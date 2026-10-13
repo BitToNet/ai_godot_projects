@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行 10 步；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行 11 步；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -22,6 +22,9 @@
 #    6) 城镇交互定式（tools/settlement_check.gd）—— 补给 / 招募 / 贸易 / 驻军的价格、
 #       边界（钱不够 / 编制满 / 池子空 / 城里没兵）与「低买高卖」是否真的有利可图。
 #       菜单的分支同样在 900 帧里一个都走不到，而它是整个经济闭环的入口
+#    6b) 遭遇选项表定式（tools/encounter_check.gd）—— 攻击 / 花钱买路 / 索要买路钱 / 撤退
+#        四条路的定价、可用性与代价，外加「不合法动作一律静默拒绝」与时间锁有没有解开。
+#        这张表同样在 900 帧里走不到：主场景里玩家不动，一次遭遇都不会触发
 #    7) 性能基准采样（tools/perf_probe.gd）
 #    8) Boss 战音效联调（tools/sfx_battle_check.gd）
 #    9) 大地图音效联调（tools/sfx_map_check.gd）
@@ -199,6 +202,14 @@ $rStl = Invoke-GodotStep -Name 'settlement_check' -Extra @('--script', 'res://to
 $stlPass = @($rStl.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rStl.Ok -and -not $stlPass) {
 	$fail.Add('城镇交互  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 6b) 遭遇选项表定式（攻击 / 花钱买路 / 索要买路钱 / 撤退）----
+# 断言在 tools/encounter_check.gd 里；同样只确认「退出码 0 且打印了 PASS」。
+$rEnc = Invoke-GodotStep -Name 'encounter_check' -Extra @('--script', 'res://tools/encounter_check.gd')
+$encPass = @($rEnc.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rEnc.Ok -and -not $encPass) {
+	$fail.Add('遭遇选项  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 7) 性能基准 ----

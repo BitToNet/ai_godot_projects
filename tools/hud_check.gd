@@ -112,7 +112,7 @@ func _run() -> void:
 	hud.clear_tooltip()
 	_ok(not hud._tooltip.visible, "clear_tooltip 收起提示")
 
-	# ---- 遭遇对话框 ----
+	# ---- 遭遇对话框（第四轮 4c 起：选项表数据驱动，面板自己不关）----
 	var got: Array = []
 	hud.encounter_choice.connect(func(a: String): got.append(a))
 
@@ -130,24 +130,53 @@ func _run() -> void:
 	# 容差 1 px：CenterContainer 按整数像素取整，is_equal_approx 的 1e-5 会把 0.5 px 差额判失败。
 	_ok((_dpanel.position - (vp - _dpanel.size) * 0.5).length() <= 1.0,
 		"面板居中（pos=%s，视口 %s）" % [_dpanel.position, vp])
+	_ok(hud.dialog.row_actions() == ["attack", "retreat"],
+		"不传 entries 时用兜底两行：%s" % [hud.dialog.row_actions()])
 	_ok(hud.dialog.attack_button.text.contains("攻"), "攻击按钮就位")
+	_ok(hud.dialog.row_button(0).has_focus(), "打开时焦点给第一个可用条目")
 
 	hud.show_tooltip("提示", Vector2(10, 10))
 	_ok(not hud._tooltip.visible, "对话框打开时悬停提示被抑制")
 
 	hud.dialog.attack_button.pressed.emit()
 	await process_frame
-	_ok(not hud.is_encounter_open(), "点「攻击」后对话框自动关闭")
 	_ok(got == ["attack"], "re-emit 成 encounter_choice（得到 %s）" % str(got))
+	_ok(hud.is_encounter_open(), "面板自己不关：何时关由 EncounterSystem 决定")
 
 	hud.show_encounter("遭遇 测试部队", "测试说明", Color(1, 1, 1))
 	hud.dialog.retreat_button.pressed.emit()
 	await process_frame
 	_ok(got == ["attack", "retreat"], "「撤退」同样转发")
-
-	hud.show_encounter("x", "y", Color(1, 1, 1))
 	hud.hide_encounter()
 	_ok(not hud.is_encounter_open(), "hide_encounter 关闭对话框")
+
+	# ---- 遭遇多选项（第四轮 4c）：条目整条来自 EncounterSystem.options() ----
+	var enc: Array[Dictionary] = [
+		{"id": "attack", "label": "攻 击", "enabled": true, "hint": "进入 Boss 战：预计掉队 7 人"},
+		{"id": "bribe", "label": "花钱买路（180 金）", "enabled": false, "hint": "现有 120 金；声望折扣 −6%"},
+		{"id": "demand", "label": "索要买路钱（216 金）", "enabled": true, "hint": "你的战力 37，需要 ≥ 36"},
+		{"id": "retreat", "label": "撤 退", "enabled": true, "hint": "不战而走（有代价）"},
+	]
+	hud.show_encounter("遭遇 测试部队", "测试说明", Color(1, 1, 1), enc)
+	await process_frame
+	_ok(hud.dialog.row_actions() == ["attack", "bribe", "demand", "retreat"],
+		"四条选项按数据顺序排列：%s" % [hud.dialog.row_actions()])
+	_ok(hud.dialog.row_enabled() == [true, false, true, true],
+		"可用性原样来自数据：%s" % [hud.dialog.row_enabled()])
+	_ok(hud.dialog.row_hints()[1].contains("现有 120 金"),
+		"灰掉的行必须带原因：%s" % hud.dialog.row_hints()[1])
+	_ok(hud.dialog.row_button(1).disabled
+		and hud.dialog.row_button(1).focus_mode == Control.FOCUS_NONE,
+		"灰行不进焦点链（连按 ↓ 不会卡在点不动的按钮上）")
+	_ok(hud.dialog.row_button(0).has_focus(), "焦点给第一个可用条目")
+	_ok(hud.dialog.row_button(0).text.contains("攻") and hud.dialog.attack_button == hud.dialog.row_button(0),
+		"按数据画出来的攻击行就是 attack_button")
+	hud.dialog.row_button(2).pressed.emit()
+	await process_frame
+	_ok(got == ["attack", "retreat", "demand"], "「索要买路钱」也能转发（得到 %s）" % [str(got)])
+	_ok(hud.is_encounter_open(), "选完一条遭遇选项面板同样不自己关")
+	hud.hide_encounter()
+	_ok(not hud.is_encounter_open() and not hud.is_any_dialog_open(), "hide_encounter 后归零")
 
 	# ---- 进城菜单（第四轮 4b-2）：HUD 只负责画，条目数据整条来自系统 ----
 	var sent: Array = []

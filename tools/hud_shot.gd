@@ -10,7 +10,8 @@
 ##  「界面没塌」。脚本跑一遍真实主场景，截三张图供人眼确认：
 ##    hud_loading.png —— 开场加载遮罩（必须铺满全屏：它曾因只设 anchors 而缩成 0×0）
 ##    hud_normal.png  —— 正常大地图（左上信息栏 / 右上小地图 / 左下说明 / 右下性能）
-##    hud_dialog.png  —— 遭遇对话框打开 + 提示条（验证遮挡层级与按钮布局）
+##    hud_dialog.png  —— 遭遇对话框打开 + 提示条（第四轮 4c 起是四行选项表：
+##                       验证遮挡层级、按钮布局、灰行与理由是否真的画出来了）
 ##
 ##  退出码：0 = 三张图都写出成功；1 = 有失败
 ## =============================================================================
@@ -61,10 +62,21 @@ func _run() -> void:
 
 	_shot("hud_normal.png")
 
-	# 第二张：遭遇对话框 + 提示条同时在场（验证层级：提示条应盖在对话框之上）
-	main.hud.show_encounter("遭遇 测试部队",
-		"领主部队 · 测试势力\n兵力：200 人     你的兵力：37 人\n\n时间已暂停 —— 请决定行动。",
-		Color(0.92, 0.86, 0.60))
+	# 第二张：遭遇对话框 + 提示条同时在场（验证层级：提示条应盖在对话框之上）。
+	# 第四轮 4c 起遭遇框是**数据驱动的四行选项表**，所以这里直接取生产代码
+	# EncounterSystem.options() 的真实输出 —— 截出来的就是玩家会看到的那张表
+	# （挑 78 人的大盗：买路买得起、索要唬不住，一屏里既有亮行也有灰行与理由）。
+	var foe := AIParty.new()
+	foe.kind = AIParty.Kind.BANDIT
+	foe.party_name = "大盗"
+	foe.faction_id = -1
+	foe.troop_count = 78
+	foe.boss_title = "大盗头目"
+	main.encounters.current = foe
+	main.hud.show_encounter("遭遇 大盗",
+		"强盗团伙 · 无阵营\n敌方首领：大盗头目\n兵力：78 人     你的兵力：37 人\n\n时间已暂停 —— 请决定行动。",
+		Color(0.92, 0.86, 0.60),
+		main.encounters.options())
 	main.hud.show_toast("截图验证：提示条与遭遇框同时在场", 30.0)
 	for i in 10:
 		await process_frame
@@ -72,6 +84,8 @@ func _run() -> void:
 	_shot("hud_dialog.png")
 
 	# 收尾：主动清理，否则会打印「resources still in use at exit」而被门禁的 ERROR 断言判失败
+	main.encounters.current = null
+	foe.free()
 	main.hud.hide_encounter()
 	main.free()
 
