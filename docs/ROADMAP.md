@@ -232,8 +232,8 @@
 $GODOT = "G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe"
 $PROJ  = "F:\aigc_code\ai_godot_projects"
 
-# 0) 【推荐】一键跑完全部门禁（17 步 / 21~22 项断言，约 42~44 秒）—— 本工程唯一需要的命令
-#    （项数在 21~22 之间浮动，差的那一项是 perf_probe / scale_probe 偶尔给出的 WARN 提示行，不判失败）
+# 0) 【推荐】一键跑完全部门禁（17 步 / 20~21 项断言，约 42~44 秒）—— 本工程唯一需要的命令
+#    （项数在 20~21 之间浮动，差的那一项是 perf_probe / scale_probe 偶尔给出的 WARN 提示行，不判失败）
 #    （5c 之后门禁反而快了：PCM 缓存让 sfx_map_check / bgm_check / main_scene_900 都走热启动）
 powershell -File tools\run_checks.ps1
 #    ⚠ 必须用 powershell 而不是 pwsh：本机只有 Windows PowerShell 5.1，没有 pwsh 7
@@ -1269,7 +1269,7 @@ Boss 战 → 结算整条链，257 兵领主：HP 583 / 破防 147 / 缴获 154 
 **顺手做的**：`Pathfinder.last_expanded`（只写不读的探针字段）—— 6d 要证明「改动只影响速度、
 不影响搜索结果」，靠的就是它：展开节点数与路径点数必须逐对不变。
 
-**门禁接入**：7b) 步（16 → **17 步**，20 → 21~22 项，热 42.2 s / 冷 43.2 s）。
+**门禁接入**：7b) 步（16 → **17 步**；断言项数 19~20 → **20~21**，随 `perf_probe` / `scale_probe` 的 WARN 提示行浮动。热 42.2 s / 冷 43.2 s）。
 结构量必须精确一致；耗时超 1.6× 记 WARN、超 2.5× 判失败。
 
 **本批踩到的坑（两条，都是工具链的）：**

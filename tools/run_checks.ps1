@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行 17 步（21~22 项断言，约 44 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行 17 步（20~21 项断言，约 42~44 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）

@@ -232,7 +232,7 @@ godot_opus5.5/
 │       ├── map_theme.ogg             # 大地图主题「旧时日」（120.6 秒 / 44.1 kHz 立体声）
 │       └── battle_theme.ogg          # Boss 战主题「降临 · The Descent」（88.7 秒 / 44.1 kHz 立体声）
 ├── tools/                            # 命令行自检工具（不参与游戏运行）
-│   ├── run_checks.ps1                # ★ 一键跑完全部门禁（17 步 / 21~22 项断言，约 42~44 s，唯一需要的命令）
+│   ├── run_checks.ps1                # ★ 一键跑完全部门禁（17 步 / 20~21 项断言，约 42~44 s，唯一需要的命令）
 │   ├── gen_fingerprint.gd            # 生成物指纹（确定性自检，与 gen_fingerprint.json 比对）
 │   ├── perf_probe.gd                 # 性能基准（生成耗时 / 每帧开销，与 perf_baseline.json 比对）
 │   ├── scale_probe.gd                # 规模热点探针（植被筛选 / 地形建块 / A*，含结构量指纹）
