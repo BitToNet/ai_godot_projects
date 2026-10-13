@@ -28,6 +28,8 @@ var view: OverworldView
 var day_night: DayNightCycle
 var player: PlayerParty
 var parties: Array[AIParty] = []
+var economy: EconomyRules        ## 经济数值表（第四轮）
+var campaign: CampaignState      ## 战役可变状态：钱袋 / 补给 / 士气 / 声望（第四轮）
 
 ## 相机的输入开关。遭遇框（选项切换复用方向键）与 Boss 战期间都要关掉地图操作，
 ## 不关的话「在对话框里按 →」会连带把镜头也拖走。

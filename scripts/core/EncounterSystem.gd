@@ -88,27 +88,50 @@ func on_battle_finished(result: String, a: AIParty) -> void:
 		ctx.parties.erase(a)
 		a.queue_free()
 		var kind := a.ai_kind()
-		var spoils := int(round(float(a.troop_count) * r.loot_rate(kind)))
+		# 战利品：EncounterRules.loot_rate(kind) 是「按敌人档位分档」的系数
+		# （对应 01 §2.9：类型不同，商品掷骰分别是满额 / 减半 / 五分之一），
+		# EconomyRules.loot_per_troop 是每人基准金（本地化，见那边的说明）。
+		var spoils := int(round(float(a.troop_count) * r.loot_rate(kind) * ctx.economy.loot_per_troop))
 		var loss := int(a.troop_count * r.loss_rate(kind))
 		var loot_word := r.loot_word(kind)
-		ctx.player.troop_count = maxi(5, ctx.player.troop_count - loss)
-		ctx.player.refresh_label()
-		ctx.player.label.text = "玩家部队 · %d 人" % ctx.player.troop_count
-		ctx.hud.show_toast("击败了 %s！缴获%s %d" % [title, loot_word, spoils])
-		print("[Boss战] 胜利：击败了 %s（%s），缴获%s %d，当前兵力 %d" % [
-			title, kind, loot_word, spoils, ctx.player.troop_count])
+		ctx.campaign.lose_troops(loss)
+		ctx.campaign.add_spoils(spoils, loot_word)
+		# 声望：本地化新增（原文用领主关系 / 影响力），供编制上限与军费折扣使用
+		var renown := maxi(1, a.troop_count / 10)
+		ctx.campaign.add_renown(renown)
+		ctx.hud.show_toast("击败了 %s！缴获%s %d 金，声望 +%d" % [title, loot_word, spoils, renown])
+		print("[Boss战] 胜利：击败了 %s（%s），缴获%s %d 金，损失 %d 人，当前兵力 %d，钱 %d，声望 %d" % [
+			title, kind, loot_word, spoils, loss, ctx.player.troop_count,
+			ctx.campaign.denars, ctx.campaign.renown])
 	elif result == "lose":
+		# 战败：溃散掉一部分兵力，并被劫走一部分钱财（对应 01 §5.9 的战败处置；
+		# 原文那套「30% 英雄被俘 / 假释 ±3」属于英雄系统，本工程 4c 再做玩家侧的选项）
+		var loss2 := maxi(1, ctx.player.troop_count * 2 / 5)
+		var lost := ctx.campaign.lose_troops(loss2)
+		var toll := ctx.campaign.denars / 4
+		if toll > 0:
+			ctx.campaign.spend(toll)
 		var town := nearest_town(p)
 		if town != null:
 			var h := ctx.data.hm.height_at(town.pos.x, town.pos.y)
 			ctx.player.position = Vector3(town.pos.x, h + 0.4, town.pos.y)
 			ctx.time.order_move(town.pos)
 			ctx.day_night.time_of_day = fmod(ctx.day_night.time_of_day + 0.5, 1.0)
-			ctx.hud.show_toast("战败…… 你被送回了 %s（时间推进半天）" % town.name)
-			print("[Boss战] 战败：被送回 %s，时间推进半天" % town.name)
+			ctx.hud.show_toast("战败…… 损失 %d 人、%d 金，你被送回了 %s（时间推进半天）" % [
+				lost, toll, town.name])
+			print("[Boss战] 战败：损失 %d 人、%d 金，被送回 %s，时间推进半天" % [lost, toll, town.name])
 		cooldowns[a.get_instance_id()] = r.defeat_cooldown
 	else:
-		ctx.hud.show_toast("你撤出了与 %s 的战斗" % title)
+		# 战斗里主动撤出：损失按该敌人的损失率估一份，士气代价照搬
+		# 01 §5.8 simulate_retreat 的复合式（见 EncounterRules.retreat_morale_penalty）
+		var loss3 := int(a.troop_count * r.loss_rate(a.ai_kind()))
+		var lost3 := ctx.campaign.lose_troops(loss3)
+		var pen := r.retreat_morale_penalty(lost3, lost3, maxi(1, ctx.player.troop_count + lost3))
+		if pen > 0:
+			ctx.campaign.add_morale(-pen)
+		ctx.hud.show_toast("你撤出了与 %s 的战斗（损失 %d 人，士气 −%d → %d）" % [
+			title, lost3, pen, ctx.campaign.morale])
+		print("[Boss战] 撤出：损失 %d 人，士气 −%d（当前 %d）" % [lost3, pen, ctx.campaign.morale])
 		cooldowns[a.get_instance_id()] = r.battle_retreat_cooldown
 		push_away(a.position)
 

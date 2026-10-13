@@ -47,7 +47,10 @@ func start(a: AIParty) -> void:
 	var payload := {
 		"config": bcfg,
 		"player_name": "玩家部队 · %d 人" % ctx.player.troop_count,
-		"player_hp": bcfg.player_max_hp,
+		# 玩家侧血量：兵力 × 兵员档次（见 CampaignState.combat_hp）。
+		# 开局倍率正好是 1.0，所以这一行不改变开局第一战的手感，
+		# 但让「招兵 / 升档」真的能打赢更硬的敌人 —— 否则经济就是个只出不进的坑。
+		"player_hp": ctx.campaign.combat_hp(bcfg.player_max_hp),
 		"troops": ctx.player.troop_count,
 		"terrain": terrain,
 		"boss_kind": kind,
@@ -67,8 +70,8 @@ func start(a: AIParty) -> void:
 	ctx.set_camera_active(false)   # 战斗中相机不再吃键鼠（BattleScene 自己收输入）
 	if ctx.router != null:
 		ctx.router.enabled = false  # 战斗中输入归 BattleScene，别让大地图热键漏进来
-	print("[Boss战] 进入战斗：%s（类型 %s）｜ 地形 %s ｜ 敌方兵力 %d ｜ Boss HP %.0f 破防 %.0f" % [
-		payload["boss_name"], kind, terrain, a.troop_count, bhp, bpoise])
+	print("[Boss战] 进入战斗：%s（类型 %s）｜ 地形 %s ｜ 敌方兵力 %d ｜ Boss HP %.0f 破防 %.0f ｜ 我方血量 %.0f" % [
+		payload["boss_name"], kind, terrain, a.troop_count, bhp, bpoise, payload["player_hp"]])
 	# 开战号角（鼓点 + 低音号角），同时把背景音乐切到战斗曲（短淡入，别拖过第一刀）
 	Sfx.play("battle_start")
 	Bgm.play("battle", ctx.audio.bgm_fade_battle)

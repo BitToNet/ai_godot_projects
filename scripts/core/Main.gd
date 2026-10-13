@@ -42,6 +42,8 @@ var hover: HoverInspector                  ## 悬停提示（见 HoverInspector.
 ## 这里只留一个引用；遭遇 / Boss 战用它 lock()，行军命令走 time.order_move()。
 var time: TimeFlowController
 var rules: EncounterRules            ## 遭遇 / Boss 战数值（见 EncounterRules.gd）
+var economy: EconomyRules            ## 经济与军费数值表（见 EconomyRules.gd）
+var campaign: CampaignState          ## 钱袋 / 补给 / 士气 / 声望 / 兵员档次（见 CampaignState.gd）
 var ctx: WorldContext                ## 各系统共享的世界句柄（见 WorldContext.gd）
 var encounters: EncounterSystem      ## 遭遇检测 / 对话 / 冷却（见 EncounterSystem.gd）
 var battler: BattleLauncher          ## 进出 Boss 战（见 BattleLauncher.gd）
@@ -84,6 +86,8 @@ func _ready() -> void:
 	hover = pipeline.hover
 	time = pipeline.time
 	rules = pipeline.rules
+	economy = pipeline.economy
+	campaign = pipeline.campaign
 	encounters = pipeline.encounters
 	battler = pipeline.battler
 
@@ -165,6 +169,41 @@ func _tick_party_audio(dt: float) -> void:
 
 ## 遭遇检测 / 对话框 / 冷却 / 退避都在 EncounterSystem 里（见 EncounterSystem.gd），
 ## 进出 Boss 战在 BattleLauncher 里，两者的接线在 _ready 末尾。
+
+# =============================================================== 换日结算
+## 换日结算的回调（WorldGenPipeline 把 campaign.day_settled 接到这里）。
+## 数值本身已经在 CampaignState 里落地了，这里只负责「把报告说出来」：
+## 平时只 print，出事了（断粮 / 欠薪 / 逃兵）才弹提示条，免得每 2 分钟刷一次屏。
+## 注意：这里**不播任何音效** —— 门禁的 sfx_* 自检在数音效触发次数，
+## 加一声「金币」就会让那些断言失效（要加得连自检一起改，别偷偷加）。
+func _on_day_settled(report: Dictionary) -> void:
+	var day := int(report.get("day", 0))
+	var troops := int(report.get("troops", 0))
+	var supplies := int(report.get("supplies", 0))
+	var morale := int(report.get("morale", 0))
+	var deserted := int(report.get("deserted", 0))
+	var week: Dictionary = report.get("week", {})
+	print("[日结] 第 %d 天：兵力 %d，粮 %d（吃 %d），士气 %d，钱 %d" % [
+		day, troops, supplies, int(report.get("eaten", 0)), morale, int(report.get("denars", 0))])
+
+	var notices: Array[String] = []
+	if bool(report.get("starving", false)):
+		notices.append("❗粮草耗尽，士气 −%d（去城镇/村庄补给）" % campaign.rules.starve_penalty)
+	if not week.is_empty():
+		var wage := int(week.get("wage", 0))
+		var paid := int(week.get("paid", 0))
+		if int(week.get("short", 0)) > 0:
+			notices.append("❗军费不足：周薪 %d，只付了 %d（欠薪 %d 周）" % [
+				wage, paid, int(week.get("debt_weeks", 0))])
+			print("[周结] 军费不足：应发 %d，实发 %d，欠薪 %d 周" % [
+				wage, paid, int(week.get("debt_weeks", 0))])
+		else:
+			notices.append("💰 发了本周军费 %d 金" % paid)
+			print("[周结] 军费已发：%d 金" % paid)
+	if deserted > 0:
+		notices.append("❗%d 名士兵因士气崩溃离队" % deserted)
+	if not notices.is_empty() and hud != null:
+		hud.show_toast("　".join(notices), 6.0)
 
 # =============================================================== 输入
 ## 键码 → 语义的分发已经搬进 InputRouter（含「遭遇对话框在场时整体让路」）。

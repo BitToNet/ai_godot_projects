@@ -8,7 +8,7 @@
 ##  host 契约（Main 是唯一的 host）——run() 结束时这些字段一定已经就位：
 ##    hud / data / day_night / camera_rig / router / vegetation / player /
 ##    ai_parties（同一个数组实例）/ fog / view / hover / time / rules /
-##    ctx / encounters / battler
+##    economy / campaign / ctx / encounters / battler
 ##
 ##  只在本文件里活得下去的东西（生成完就没人再看）**不再挂到 host 上**：
 ##    四份 ShaderMaterial、TerrainManager、WaterBuilder、NightLights 容器、
@@ -39,6 +39,8 @@ var view: OverworldView
 var hover: HoverInspector
 var time: TimeFlowController
 var rules: EncounterRules
+var economy: EconomyRules
+var campaign: CampaignState
 var ctx: WorldContext
 var encounters: EncounterSystem
 var battler: BattleLauncher
@@ -187,6 +189,18 @@ func run() -> WorldContext:
 	time.player = player
 	time.day_night = day_night
 	rules = EncounterRules.create()
+
+	# 第四轮：战役经济。状态本体（钱袋 / 补给 / 士气 / 声望）只在这里建一次；
+	# 必须早于 _setup_ui()，因为 HUD 要在绑定阶段拿到它来显示钱袋 / 粮 / 士气。
+	# 换日结算挂在 day_changed 上 —— 时间流速 / 暂停 / Boss 战锁时间全都自动正确，
+	# 不需要在 _process 里再判一次「今天结过没有」。
+	# 注意：这里只做纯算术与信号接线，既不抽 RNG 也不 await，生成指纹不受影响。
+	economy = EconomyRules.create()
+	campaign = CampaignState.new()
+	campaign.setup(economy, player)
+	day_night.day_changed.connect(campaign.on_day_changed)
+	campaign.day_settled.connect(Callable(host, "_on_day_settled"))
+
 	_setup_ui()
 
 	# 表现层助手：标签缩放 / 大地图整体显隐 / 悬停提示。
@@ -227,6 +241,11 @@ func run() -> WorldContext:
 	ctx.day_night = day_night
 	ctx.player = player
 	ctx.parties = parties
+
+	# 第四轮：把经济状态交给共享上下文（encounters 结算战利品 / 城镇菜单花钱都要它）
+	ctx.economy = economy
+	ctx.campaign = campaign
+
 	encounters = EncounterSystem.new()
 	encounters.ctx = ctx
 	battler = BattleLauncher.new()
@@ -275,6 +294,7 @@ func _build_settlement_lights() -> void:
 
 func _setup_ui() -> void:
 	hud.bind(data, day_night)
+	hud.bind_campaign(campaign)
 	hud.minimap.setup(data, player, parties, fog)
 	hud.set_terrain_text("草原 (1.0x)")
 

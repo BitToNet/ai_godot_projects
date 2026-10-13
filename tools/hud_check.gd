@@ -74,6 +74,38 @@ func _run() -> void:
 	_ok(hud.topbar._day_label.text.begins_with("第 1 天"), "日期行已刷新（得到「%s」）" % hud.topbar._day_label.text)
 	_ok(hud.topbar._pause_badge.text.contains("暂停"), "暂停徽标随 paused 显示")
 
+	# ---- 左上信息栏：钱袋 / 粮 / 士气 / 档次（第四轮）----
+	# 没绑战役状态时必须留空：hud_check 这条路径不建世界、也没有 CampaignState，
+	# 显示「钱袋 0 金」会让人以为游戏真的没钱了，空白才是诚实的。
+	_ok(hud.topbar._purse_label.text == "", "未绑定战役状态时钱袋行留空")
+	var e_rules := EconomyRules.create()
+	var e_pp := PlayerParty.new()
+	e_pp.troop_count = GameState.PLAYER_START_TROOPS
+	var e_cs := CampaignState.new()
+	e_cs.setup(e_rules, e_pp)
+	hud.bind_campaign(e_cs)
+	_ok(hud.topbar._purse_label.text.contains("钱袋 %d 金" % e_cs.denars),
+		"绑定后钱袋行显示金额（「%s」）" % hud.topbar._purse_label.text)
+	_ok(hud.topbar._purse_label.text.contains("粮 %d 件" % e_cs.supplies), "钱袋行显示补给")
+	_ok(hud.topbar._purse_label.text.contains("士气 %d" % e_cs.morale), "钱袋行显示士气")
+	_ok(hud.topbar._purse_label.text.contains(e_rules.tier_name(e_cs.tier)), "钱袋行显示兵员档次")
+	_ok(hud.topbar._purse_label.text.contains("%s %d/%d" % [
+			e_rules.tier_name(e_cs.tier), e_cs.troops(), e_cs.capacity()]),
+		"钱袋行显示档次 + 兵力 / 编制")
+	# 值变了要跟着变。钱袋行是 4 Hz 节流的，所以把计时器直接推到点，不靠等真时间。
+	e_cs.denars += 100
+	e_cs.add_morale(-25)                    # 40 → 15：掉进「濒临溃散」的红色档
+	hud.topbar._purse_timer = 1.0
+	await process_frame
+	_ok(hud.topbar._purse_label.text.contains("钱袋 %d 金" % e_cs.denars), "钱袋变化后跟着刷新")
+	e_cs.debt_weeks = 3
+	hud.topbar._purse_timer = 1.0
+	await process_frame
+	_ok(hud.topbar._purse_label.text.contains("欠薪 3 周"), "欠薪时显示欠薪周数")
+	hud.bind_campaign(null)
+	_ok(hud.topbar._purse_label.text == "", "解绑后钱袋行清空（不留下过期数字）")
+	e_pp.free()
+
 	# ---- 悬停提示 ----
 	hud.show_tooltip("测试提示", Vector2(100, 100))
 	_ok(hud._tooltip.visible, "show_tooltip 显示提示")

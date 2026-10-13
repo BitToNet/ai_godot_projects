@@ -84,3 +84,16 @@ func loot_word(kind: String) -> String:
 			return "赃物"
 		_:
 			return "辎重"
+
+## 撤退的士气代价（**照搬** 01 §5.8 simulate_retreat 末尾那三行，含整数截断）：
+##     share = (我方阵亡×100 / (我方阵亡 + 敌方阵亡)) × 我方阵亡 / 我方总兵力
+##     士气 += share × −30 / 100
+## 关键在它是**两个比例的乘积**：小队死 2 人可能和大队死 20 人扣得一样多，
+## 所以「撤退贵不贵」取决于「你在这支队伍里占多大比例」，而不是绝对伤亡。
+## 返回值是**要扣的正数**（0 表示不扣）。原文里 allyDead/enemyDead/allyTotal 都是
+## 那场战斗的记账部队，本工程没有这两个账本，调用点按「双方伤亡相当」估算敌方数字。
+func retreat_morale_penalty(ally_dead: int, enemy_dead: int, ally_total: int) -> int:
+	if ally_dead + enemy_dead <= 0 or ally_total <= 0:
+		return 0
+	var share := (ally_dead * 100 / (ally_dead + enemy_dead)) * ally_dead / ally_total
+	return share * 30 / 100

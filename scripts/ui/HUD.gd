@@ -18,6 +18,7 @@ signal encounter_choice(action: String)
 var cfg: MapConfig
 var data: MapData
 var day_night: DayNightCycle
+var campaign: CampaignState
 var minimap: MinimapView
 var topbar: TopBar
 var dialog: EncounterDialog
@@ -83,6 +84,13 @@ func bind(p_data: MapData, p_day_night: DayNightCycle) -> void:
 	data = p_data
 	day_night = p_day_night
 	topbar.bind(p_day_night)
+
+## 绑定战役经济（第四轮）。单独一个方法而不是塞进 bind()：
+## tools/hud_check.gd 里的 bind(data, dn) 不建世界、也没有 CampaignState，
+## 保持旧签名不变，那个自检就不用跟着改。
+func bind_campaign(p_campaign: CampaignState) -> void:
+	campaign = p_campaign
+	topbar.bind_campaign(p_campaign)
 
 # ---------------------------------------------------------------- 对外接口
 func set_loading(text: String) -> void:
