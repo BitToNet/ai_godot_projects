@@ -216,7 +216,7 @@
 | **第二轮** | 安全网：`tools/gen_fingerprint.gd`（原计划名 `gen_determinism_check.gd`）+ `tools/perf_probe.gd` 性能基准 + 一键门禁 `tools/run_checks.ps1` | **已完成**（2026-10-12；改动与实测见第八节） |
 | 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | ✅ **已完成**：`HUD.gd` 拆分（`eddd8c2`）、`InputMap` / `InputRouter`（`8063a9e`）、`Main.gd` 拆分四批（`a54d9d5` / `f9a09a8` / `951d3b2` / 本批，**854 → 191 行**，见 9.5）；另修掉门禁挂死隐患（工具脚本调用已改名方法 + 每步 180 s 硬超时） |
 | 第四轮 | 玩法闭环：`CampaignState` 经济 + 城镇交互 + 遭遇多选项 + 存档 | 🔄 **进行中**：4a 经济（钱袋 / 军费 / 士气 / 战利品 / HUD）已完成并通过门禁，见 §10.1–10.5；4b-1 城镇交互**逻辑层**（服务表 / 繁荣度定价 / 招募 / 贸易 / 驻军）已完成并通过门禁，见 §10.6；4b-2 进城**菜单界面 + 交互键**（G / 手柄 A、灰条目带原因、到地提示）已完成并通过门禁，见 §10.7；4c 遭遇**多选项**（选项表数据驱动 + 四条路各自的效果与代价 + 结算台账）已完成并通过门禁，见 §10.8；4d 存档待办 |
-| 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | 🔄 **进行中**：5a 音频总线（`default_bus_layout.tres` + `AudioBus` + 扇子音 duck + `audio_check`）已完成并通过门禁，见 §11.1；5b 合成热点、5c PCM 缓存待办 |
+| 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | 🔄 **进行中**：5a 音频总线（`default_bus_layout.tres` + `AudioBus` + 扇子音 duck + `audio_check`）已完成并通过门禁，见 §11.1；5b 合成热点（先装体检器再改，合成 −28% 且音色逐字节不变 + 音色指纹入门禁）已完成，见 §11.2–11.3；5c PCM 缓存待办 |
 | 第六轮 | 规模扩展（植被 / 地形 / 寻路）+ i18n + 导出预设与 CI | 待办 |
 
 > 第四轮之后按「内容产能」推进：小兵单位 → 武器招式表 → 势力战争。
@@ -229,7 +229,7 @@
 $GODOT = "G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe"
 $PROJ  = "F:\aigc_code\ai_godot_projects"
 
-# 0) 【推荐】一键跑完全部门禁（14 步 / 17~18 项断言，约 43~55 秒）—— 本工程唯一需要的命令
+# 0) 【推荐】一键跑完全部门禁（15 步 / 18~19 项断言，约 45~58 秒）—— 本工程唯一需要的命令
 #    （项数在 17~18 之间浮动，差的那一项是 perf_probe 偶尔给出的 WARN 提示行，不判失败）
 powershell -File tools\run_checks.ps1
 #    ⚠ 必须用 powershell 而不是 pwsh：本机只有 Windows PowerShell 5.1，没有 pwsh 7
@@ -243,6 +243,13 @@ powershell -File tools\run_checks.ps1
 & $GODOT --headless --path $PROJ --fixed-fps 60 --script res://tools/sfx_map_check.gd
 # 4) 音色体检（含总合成耗时）
 & $GODOT --headless --path $PROJ --script res://tools/sfx_tool.gd
+# 4-1) 音色指纹（28 个音色 PCM 逐字节比对 tools/sfx_pcm.json）
+#      —— 「这次改动没动音色」的证明手段：合成优化后指纹必须一模一样
+& $GODOT --headless --path $PROJ --script res://tools/sfx_tool.gd -- --check
+#     有意改过音色后必须更新基线，否则门禁会红：
+# & $GODOT --headless --path $PROJ --script res://tools/sfx_tool.gd -- --write-baseline
+# 4-2) 合成热点体检（外层算子耗时表 + 逐采样算子次数表）
+& $GODOT --headless --path $PROJ --script res://tools/sfx_tool.gd -- --profile
 
 # 4b) 输入层回归（[input] 动作表是否真进了 InputMap / InputRouter 分发与让路 /
 #     遭遇框能否用键盘与手柄作答）—— 「按了没反应」这类问题以前只能点开游戏按一按
@@ -1052,3 +1059,75 @@ Boss 战 → 结算整条链，257 兵领主：HP 583 / 破防 147 / 缴获 154 
   若有别的模块再往 Music 上写 `volume_db`，两边会互相覆盖（约定：Music 总线只由 `AudioBus` 写）。
 - 5b / 5c 待办：`SfxSynth._biquad()` 的扫频分支**每个采样分配一个 `Array`**（33 处调用里约 28 处走扫频）、
   `_env()` 的逐采样 `exp(pow())`，以及尚未开始的 PCM 缓存。
+### 11.2 5b 合成热点（先装体检器，再动手改；音色逐字节不变）
+
+**做法：先测，再改。** `SfxSynth.gd` 里加了 `prof_on` 开关与 `prof_add()` / `prof_op()`：
+按「外层算子」记调用次数 / 采样数 / 耗时；逐采样算子（`_sin` / `_env`）**不进计时器**，
+只由外层**推导**次数 —— 在它们内部插 `Time.get_ticks_usec()` 的话，计时开销会盖过被测代码本身。
+`sfx_tool.gd -- --profile` 打印两张表。动手前那一版实测（合成 1529 ms / 34.7 万采样）：
+
+| 外层算子 | 次数 | 采样 | ms | µs/采样 |
+|---|---|---|---|---|
+| `_metal` | 23 | 236818 | 414.7 | 1.751 |
+| `_brass` | 6 | 100330 | 265.3 | 2.644 |
+| `_biquad(扫频)` | 26 | 267027 | 222.4 | 0.833 |
+| `_tone` | 26 | 285770 | 137.2 | 0.480 |
+| `_noise_env` | 32 | 284447 | 80.3 | 0.282 |
+| `_wav(归一化+编码)` | 28 | 347290 | 36.7 | 0.106 |
+| `_mix` / `_mix_at` / `_biquad(定频)` / `_soft_clip` / `_blank` | 150 | 159.4 万 | 29.7 | — |
+| **合计** | | | **1529** | |
+
+推导出的逐采样算子次数：**`_sin` 280 万次**、`_env` 67.0 万次（其中 47.2 万次 `curve == 1.0`）、
+滤波器系数 `cos`/`sin` 53.4 万次、`encode_s16` 34.7 万次。
+**结论：热点不在数学上，在 GDScript 的「每次函数调用 / 每次装箱 / 每次临时分配」上。**
+
+**三条改动（都不动算法，所以 PCM 必须逐字节不变）：**
+
+| # | 改动 | 省下 |
+|---|---|---|
+| 1 | `_env()`：`curve == 1.0` 时跳过 `pow(x, 1.0)`（IEEE 规定结果就是 `x`，等价替换） | 47.2 万次 `pow`，实测只省几毫秒 —— `pow` 比预想便宜，照实记账 |
+| 2 | `_biquad()` 扫频分支把 `_coef()` 的算式**内联**进循环 | 26.7 万次函数调用 + **26.7 万个 5 元素 `Array` 分配**：222 → 119 ms |
+| 3 | `_metal()` / `_brass()` 内层循环**内联 `_sin()` 的查表** | 约 210 万次函数调用：`_metal` 415 → 185 ms、`_brass` 265 → 164 ms |
+
+**结果（同一 `--profile` 口径）：合成 1529 → 1097 ms（−28%）；默认模式 1083~1093 ms。**
+音色：`sfx_tool.gd -- --check` 报 **28 个音色 / 347290 采样与基线逐字节一致**。
+按 id 看，收益集中在两类音色：铜管类（`roar` / `battle_start` / `order` / `result_win` / `result_lose`）
+与金属类（`parry` / `parry_reflect` / `poise_break`）。
+
+### 11.3 5b 的验证手段与门禁接入（音色指纹）
+
+「音色不变」如果只是嘴上说，等于没验。加了 `tools/sfx_pcm.json` 基线 + `sfx_tool.gd` 的三个模式：
+
+| 模式 | 作用 |
+|---|---|
+| `-- --hash` | 打印 28 个音色的 PCM SHA-256（前 16 位）与合计 |
+| `-- --check` | 与 `tools/sfx_pcm.json` 逐字节比对（门禁用；不一致时点名是哪几个音色） |
+| `-- --write-baseline` | 有意改音色后更新基线（与生成指纹 `--write-baseline` 同一套路） |
+
+哈希内容 = `RATE` + 每个音色的（id 长度 / PCM 字节数 / id / PCM），带上 id 与长度是为了
+「两个音色互换」这种错误也能被抓到。门禁新增 **9c) sfx_pcm_check**（15 步），
+`run_checks.ps1` 只认「退出码 0 + 打印 PASS」。
+
+**本批踩到的坑（都值得记）：**
+
+1. **`PackedFloat32Array` 里的相位是「写回即截断到 float32」的**：原码 `ph[h] += f / RATE` 之后，
+   是拿**截断过的** `ph[h]` 去查表。我第一版内联把没截断的中间值（double）直接送进查表，
+   于是 4 个铜管音色（`battle_start` / `order` / `result_win` / `roar`）的 PCM 全变了 ——
+   音色指纹当场点名（合计 `87aecb5d…` ≠ 基线 `55bd4464…`）。教训：**逐字节断言比"应该没变"可靠得多**。
+2. **`floor()` 的返回类型是 Variant**：`var sx := p - floor(p)` 直接编译不过
+   （`Cannot infer the type of "sx"`），必须写 `var sx: float = p - floor(p)` ——
+   `_sin()` 原本就是这么写的，是我抄漏了注解。
+3. **PowerShell 的 `+` 比 `,` 结合更紧**：`@($T2+"a", $T2+"b")` 得到的**不是一个两元素数组**，
+   而是 `$T2 + ("a", $T2) + "b"` 拼成的一个字符串 —— 用变量拼多行补丁时会静默拼成一整行，
+   然后「匹配 0 次」。多行数组必须给每个元素加括号：`@(($T2+"a"), ($T2+"b"))`。
+4. 体检器的字符串键在 `prof_op()` 里被 `sort_custom` 的 lambda 用到一次（`Array.sort_custom`）——
+   在 Godot 4.7 上没问题，但**排序 lambda 不能捕获外部局部变量**（用 `self` 成员或常量）。
+
+**本批欠账：**
+
+- 只改了 3 处。`_tone`（136 ms）与 `_noise_env`（80 ms）没动：把 `_sin` 也内联进去还能再省 ~25 ms，
+  但代码重复的代价已经超过收益 —— 5c 的 PCM 缓存会让热路径彻底离开合成。
+- 体检器的 `if prof_on:` 判断留在热路径上（每次外层调用判一次，关闭时开销可测为 0）。
+  保留它是为了让 5c 之后能随时复测，但确实是「生产代码里带着调试开关」。
+- `_sin()` 的查表算式现在有**三份拷贝**（`_sin()` / `_metal()` / `_brass()`），只靠注释互相提醒。
+  改查表（例如换 `TAB_N`）必须三处同步 —— 已写进注释，但这是实打实的维护负担。

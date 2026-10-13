@@ -1,33 +1,53 @@
 ## =============================================================================
-##  sfx_tool —— 音效自检 / 试听导出工具（**不参与游戏运行**，只在命令行用）
+##  sfx_tool —— 音效自检 / 试听导出 / 音色指纹 / 合成热点体检（**不参与游戏运行**）
 ##
 ##  用法（用控制台版引擎，才能看到输出）：
 ##    Godot_v4.7-stable_win64_console.exe --headless --path <工程> \
 ##        --script res://tools/sfx_tool.gd
-##    Godot_v4.7-stable_win64_console.exe --headless --path <工程> \
-##        --script res://tools/sfx_tool.gd -- --wav
+##    ... --script res://tools/sfx_tool.gd -- --wav          # 导出试听 wav
+##    ... --script res://tools/sfx_tool.gd -- --profile      # 合成热点体检（外层算子耗时）
+##    ... --script res://tools/sfx_tool.gd -- --hash         # 打印每个音色的 PCM 指纹
+##    ... --script res://tools/sfx_tool.gd -- --check        # 与 tools/sfx_pcm.json 比对
+##    ... --script res://tools/sfx_tool.gd -- --write-baseline   # 更新音色指纹基线
 ##
-##  输出：
+##  输出（默认模式）：
 ##    · 每个音效的时长 / 峰值 / RMS / 三段能量占比（低<400Hz 中 400~2000Hz 高>2000Hz）
 ##      / 过零率（粗略亮度）/ -20dB 衰减时间（听感"尾巴"多长）
 ##    · --wav 时把每个音效导出成 audio_preview/<id>.wav 供试听
 ##      （audio_preview/ 里放了 .gdignore，Godot 不会导入这些 wav）
+##    · --profile 时额外打印两张表：外层算子耗时（ms / µs 每采样）与逐采样算子次数
+##    · --check 时只算 PCM 指纹并与基线比对（门禁用；exit 1 = 音色被改过）
+##
+##  音色指纹（--check / --write-baseline）：把 28 个音色的 16bit PCM 逐字节哈希后存档，
+##  用来把「这次改动没动音色」变成可验证的事实，而不是一句声明。**有意改音色**时
+##  必须显式跑一次 --write-baseline 更新 tools/sfx_pcm.json（和生成指纹一个套路）。
 ## =============================================================================
 extends SceneTree
 
 const OUT_DIR := "res://audio_preview"
+const PCM_JSON := "res://tools/sfx_pcm.json"
 const LP_CUT := 400.0
 const HP_CUT := 2000.0
 
 func _init() -> void:
-	var want_wav := OS.get_cmdline_user_args().has("--wav")
+	var args := OS.get_cmdline_user_args()
+	var want_wav := args.has("--wav")
+	var want_profile := args.has("--profile")
+	var want_hash := args.has("--hash")
+	var want_check := args.has("--check")
+	var write_baseline := args.has("--write-baseline")
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 0x5F3A17
 	var ids := SfxSynth.ids()
 	if want_wav:
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
+	if want_check or want_hash or write_baseline:
+		quit(_fingerprint_run(ids, rng, want_check, write_baseline))
+		return
 	print("=== 音效自检：%d 个音色（采样率 %d Hz，全部由代码合成）===" % [ids.size(), SfxSynth.RATE])
 	print("    分类/量 依据：低频占比大 = 闷响/脚步；高频占比大 = 金属/提示音；衰减时间长 = 有余韵")
+	if want_profile:
+		SfxSynth.prof_reset()
 	var t0 := Time.get_ticks_msec()
 	var total_sec := 0.0
 	var total_samples := 0
@@ -63,11 +83,124 @@ func _init() -> void:
 			bad += 1
 		if want_wav:
 			_write_wav("%s/%s.wav" % [OUT_DIR, sid], st.data, st.mix_rate)
+	if want_profile:
+		_print_profile()
 	print("--- 合计 %.2f 秒音频 / %d 个采样；合成耗时 %d ms；异常 %d 个 ---" % [
 		total_sec, total_samples, Time.get_ticks_msec() - t0, bad])
 	if want_wav:
 		print("已导出试听文件到：%s" % ProjectSettings.globalize_path(OUT_DIR))
 	quit(1 if bad > 0 else 0)
+
+# =============================================================== 音色指纹
+## 28 个音色的 PCM 逐字节指纹。哈希里带上 id 与长度，免得"两个音色互换"看不出来。
+## RATE 也进哈希：采样率变了而 PCM 字节恰好一样时同样应当报不同。
+func _fingerprint_run(ids: Array, rng: RandomNumberGenerator, check: bool, write_baseline: bool) -> int:
+	var ctx := HashingContext.new()
+	ctx.start(HashingContext.HASH_SHA256)
+	ctx.update(str(SfxSynth.RATE).to_utf8_buffer())
+	var per := {}
+	var samples := 0
+	var t0 := Time.get_ticks_msec()
+	for id in ids:
+		var sid := String(id)
+		var st := SfxSynth.build(sid, rng)
+		if st == null or st.data.is_empty():
+			print("[音色指纹] FAIL：%s 合成失败" % sid)
+			return 1
+		per[sid] = _sha256_bytes(st.data)
+		samples += st.data.size() / 2
+		var lb := PackedByteArray()
+		lb.resize(8)
+		lb.encode_u32(0, sid.length())
+		lb.encode_u32(4, st.data.size())
+		ctx.update(lb)
+		ctx.update(sid.to_utf8_buffer())
+		ctx.update(st.data)
+	var total := ctx.finish().hex_encode()
+	var ms := Time.get_ticks_msec() - t0
+	if write_baseline:
+		var f := FileAccess.open(PCM_JSON, FileAccess.WRITE)
+		if f == null:
+			print("[音色指纹] FAIL：无法写入 %s" % PCM_JSON)
+			return 1
+		f.store_string(JSON.stringify({
+			"note": "音色 PCM 指纹基线（sfx_tool.gd --write-baseline 生成；有意改音色后才更新）",
+			"rate": SfxSynth.RATE,
+			"count": ids.size(),
+			"samples": samples,
+			"total": total,
+			"ids": per,
+		}, "  ") + "\n")
+		f.close()
+		print("[音色指纹] 已写入基线 %s（%d 个音色 / %d 采样 / 合计 %s）" % [
+			PCM_JSON, ids.size(), samples, total.substr(0, 16)])
+		return 0
+	if check:
+		var base := _load_baseline()
+		if base.is_empty():
+			print("[音色指纹] FAIL：基线缺失或不可读：%s（先跑一次 -- --write-baseline）" % PCM_JSON)
+			return 1
+		var old_ids: Dictionary = base.get("ids", {})
+		var changed: Array = []
+		for id in ids:
+			var sid := String(id)
+			if String(old_ids.get(sid, "")) != String(per[sid]):
+				changed.append(sid)
+		var extra: Array = []
+		for k in old_ids.keys():
+			if not per.has(String(k)):
+				extra.append(String(k))
+		if changed.is_empty() and extra.is_empty() and String(base.get("total", "")) == total:
+			print("[音色指纹] PASS：%d 个音色 PCM 与基线逐字节一致（%d 采样 / 合计 %s）" % [
+				ids.size(), samples, total.substr(0, 16)])
+			return 0
+		var head := changed.slice(0, 6)
+		print("[音色指纹] FAIL：音色 PCM 与基线不同 —— 变了 %d 个%s%s；基线多出 %d 个%s；合计 %s ≠ 基线 %s" % [
+			changed.size(),
+			("：" + ", ".join(head) + ("…" if changed.size() > head.size() else "")) if changed.size() > 0 else "",
+			"",
+			extra.size(),
+			("：" + ", ".join(extra.slice(0, 6))) if extra.size() > 0 else "",
+			total.substr(0, 16), String(base.get("total", "?")).substr(0, 16)])
+		print("        > 有意改音色就重跑：--script res://tools/sfx_tool.gd -- --write-baseline")
+		return 1
+	for id in ids:
+		var sid := String(id)
+		print("  %-14s %s" % [sid, String(per[sid]).substr(0, 16)])
+	print("[音色指纹] 合计 %s（%d 个音色 / %d 采样 / 合成 %d ms）" % [
+		total, ids.size(), samples, ms])
+	return 0
+
+func _load_baseline() -> Dictionary:
+	if not FileAccess.file_exists(PCM_JSON):
+		return {}
+	var f := FileAccess.open(PCM_JSON, FileAccess.READ)
+	if f == null:
+		return {}
+	var txt := f.get_as_text()
+	f.close()
+	# 用实例版 parse：JSON.parse_string 失败时会 ERR_PRINT，而门禁对 ERROR 零容忍
+	var j := JSON.new()
+	if j.parse(txt) != OK:
+		return {}
+	return j.data if j.data is Dictionary else {}
+
+func _sha256_bytes(data: PackedByteArray) -> String:
+	var c := HashingContext.new()
+	c.start(HashingContext.HASH_SHA256)
+	c.update(data)
+	return c.finish().hex_encode()
+
+# =============================================================== 合成热点报表
+func _print_profile() -> void:
+	SfxSynth.prof_off()
+	print("--- 合成热点：外层算子（按耗时降序；µs/采样 = 该算子单位成本）---")
+	for r in SfxSynth.prof_report():
+		print("  %-22s %5d 次 / %7d 采样 / %7.1f ms / %6.3f µs/采样" % [
+			String(r[0]), int(r[1]), int(r[2]), float(r[3]), float(r[4])])
+	print("--- 逐采样算子次数（由外层推导，不进计时器以免盖过被测代码）---")
+	for r in SfxSynth.prof_op_report():
+		print("  %-28s %8d 次" % [String(r[0]), int(r[1])])
 
 func _decode(st: AudioStreamWAV) -> PackedFloat32Array:
 	var n := st.data.size() / 2

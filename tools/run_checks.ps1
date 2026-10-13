@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行 14 步；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行 15 步；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -36,6 +36,9 @@
 #    9b) BGM 联调（tools/bgm_check.gd）—— 两首 Ogg 的加载 / 循环开关、大地图曲淡入、
 #        遭遇 → Boss 战 → 结算的切曲、M 键静音与恢复、stop()。它要真跑一遍主场景，
 #        所以是门禁里最贵的一步（≈7 s），但「音乐切错曲子 / 静音没淡下去」只有它能抓到
+#    9c) 音色 PCM 指纹（tools/sfx_tool.gd --check）—— 28 个音色的 16bit PCM 逐字节
+#        比对 tools/sfx_pcm.json。第五轮的合成优化（去函数调用 / 去临时分配 / 省 pow）
+#        全是「输出必须一模一样」的类型，这条就是它的证明；有意改音色必须显式更新基线
 #    10) 主场景跑 900 帧 —— 无 ERROR，且生成统计与 tools/gen_fingerprint.json 基线一致
 #
 #  为什么是这些：本工程「一切由种子生成 + 运行时合成音效 + 纯代码 UI」，
@@ -267,6 +270,15 @@ $bgmPass = @($rBgm.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 $bgmSkip = @($rBgm.Lines | Where-Object { $_ -match 'SKIP' }).Count -gt 0
 if ($bgmSkip -and -not $bgmPass) {
 	$fail.Add('BGM 联调  FAIL  出现 SKIP（AudioConfig.enabled=false 时不算通过）')
+}
+
+# ---- 9c) 音色 PCM 指纹（28 个音色逐字节比对 tools/sfx_pcm.json）----
+# 合成优化的正确性证明：算法一字未改、只去掉函数调用与临时 Array，所以 PCM 必须逐字节相同。
+# 指纹变了 = 音色真的被改了 —— 有意改就重跑 `sfx_tool.gd -- --write-baseline` 更新基线。
+$rPcm = Invoke-GodotStep -Name 'sfx_pcm_check' -Extra @('--script', 'res://tools/sfx_tool.gd', '--', '--check')
+$pcmPass = @($rPcm.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rPcm.Ok -and -not $pcmPass) {
+	$fail.Add('音色指纹  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 10) 主场景 900 帧 + 生成统计比对基线 ----

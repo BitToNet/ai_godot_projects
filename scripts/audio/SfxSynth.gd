@@ -82,6 +82,55 @@ static func _sin(p: float) -> float:
 	var b := _tab[(i + 1) & (TAB_N - 1)]
 	return a + (b - a) * fr
 
+# =============================================================== 合成热点体检
+## 打开后按「外层算子」累计调用次数 / 采样数 / 耗时；关闭时只剩一次 `static bool` 判断。
+##
+## 为什么只统计外层：`_sin()` / `_env()` 是**逐采样**调的（全库几十万次），
+## 在它们内部插计时器的话，光 `Time.get_ticks_usec()` 的开销就会盖过被测代码本身。
+## 所以它们的次数由外层算子**推导**出来记在 prof_ops 里（例如 `_brass(n, harmonics=6)`
+## 就是 n×6 次 `_sin` + n 次 `_env`），用「次数 × 外层单位成本」来定位热点。
+static var prof_on := false
+static var prof := {}
+static var prof_ops := {}
+
+static func prof_reset() -> void:
+	prof = {}
+	prof_ops = {}
+	prof_on = true
+
+static func prof_off() -> void:
+	prof_on = false
+
+static func prof_add(key: String, samples: int, usec: int) -> void:
+	var e: Dictionary = prof.get(key, {"calls": 0, "samples": 0, "usec": 0})
+	e["calls"] = int(e["calls"]) + 1
+	e["samples"] = int(e["samples"]) + samples
+	e["usec"] = int(e["usec"]) + usec
+	prof[key] = e
+
+static func prof_op(key: String, count: int) -> void:
+	prof_ops[key] = int(prof_ops.get(key, 0)) + count
+
+## 耗时表：[[名称, 次数, 采样数, 毫秒, 每采样 µs], ...]，按耗时降序
+static func prof_report() -> Array:
+	var rows: Array = []
+	for k in prof.keys():
+		var e: Dictionary = prof[k]
+		var us := int(e["usec"])
+		var n := int(e["samples"])
+		rows.append([String(k), int(e["calls"]), n, float(us) / 1000.0,
+			0.0 if n <= 0 else float(us) / float(n)])
+	rows.sort_custom(func(a, b): return float(a[3]) > float(b[3]))
+	return rows
+
+## 推导算子次数表（逐采样算子只记次数、不进计时器）：[[名称, 次数], ...]，按次数降序
+static func prof_op_report() -> Array:
+	var rows: Array = []
+	for k in prof_ops.keys():
+		rows.append([String(k), int(prof_ops[k])])
+	rows.sort_custom(func(a, b): return int(a[1]) > int(b[1]))
+	return rows
+
 # =============================================================== 通用工具
 static func ids() -> Array:
 	var a: Array = SPECS.keys()
@@ -95,9 +144,12 @@ static func _samples(sec: float) -> int:
 	return maxi(2, int(round(sec * float(RATE))))
 
 static func _blank(sec: float) -> PackedFloat32Array:
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	var a := PackedFloat32Array()
 	a.resize(_samples(sec))
 	a.fill(0.0)
+	if prof_on:
+		prof_add("_blank(分配+清零)", a.size(), Time.get_ticks_usec() - t_prof)
 	return a
 
 ## 起音/衰减包络：attack 秒线性起音，之后按 exp(-(t/tau)^curve) 衰减
@@ -106,14 +158,25 @@ static func _env(t: float, attack: float, tau: float, curve := 1.0) -> float:
 	if attack > 0.0 and t < attack:
 		a = t / attack
 	var x := maxf(0.0, t) / maxf(0.0005, tau)
+	# curve == 1.0 时 IEEE 规定 pow(x, 1.0) 就是 x 本身，这次 pow 纯属白花
+	# （热点体检实测：全库 67 万次 _env 里有 47.2 万次 curve == 1.0）
+	if curve == 1.0:
+		return a * exp(-x)
 	return a * exp(-pow(x, curve))
 
 static func _noise_env(rng: RandomNumberGenerator, sec: float, attack: float, tau: float, curve := 1.0) -> PackedFloat32Array:
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	var n := _samples(sec)
 	var out := PackedFloat32Array()
 	out.resize(n)
 	for i in n:
 		out[i] = rng.randf_range(-1.0, 1.0) * _env(float(i) / float(RATE), attack, tau, curve)
+	if prof_on:
+		prof_add("_noise_env", n, Time.get_ticks_usec() - t_prof)
+		prof_op("_env(逐采样)", n)
+		prof_op("randf_range", n)
+		if curve == 1.0:
+			prof_op("_env curve=1.0（可省 pow）", n)
 	return out
 
 ## 扫频正弦：f0 → f1（指数插值，听感更接近真实的音高下滑）
@@ -121,6 +184,7 @@ static func _tone(sec: float, f0: float, f1: float, attack: float, tau: float, c
 	var n := _samples(sec)
 	var out := PackedFloat32Array()
 	out.resize(n)
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	var p := 0.0
 	var gliss := absf(f1 - f0) > 0.01
 	# 增量式扫频：每采样乘一个固定比值，避免每采样一次 pow()
@@ -136,12 +200,20 @@ static func _tone(sec: float, f0: float, f1: float, attack: float, tau: float, c
 		out[i] = v * _env(float(i) / float(RATE), attack, tau, curve)
 		if gliss:
 			f *= r
+	if prof_on:
+		prof_add("_tone", n, Time.get_ticks_usec() - t_prof)
+		prof_op("_sin(逐采样)", n * (2 if harm > 0.0 else 1))
+		prof_op("_env(逐采样)", n)
+		if curve == 1.0:
+			prof_op("_env curve=1.0（可省 pow）", n)
 	return out
 
 ## 非谐金属泛音：每个分音由一对轻微失谐的正弦叠加 → 产生"打铁"特有的拍频嗡鸣
 static func _metal(sec: float, base: float, ratios: Array, amps: Array, taus: Array, detune := 0.0035) -> PackedFloat32Array:
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	var out := _blank(sec)
 	var n := out.size()
+	var used := 0
 	for k in ratios.size():
 		var f: float = base * float(ratios[k])
 		if f >= NYQ * 0.97:
@@ -149,23 +221,42 @@ static func _metal(sec: float, base: float, ratios: Array, amps: Array, taus: Ar
 		var amp := float(amps[k])
 		var tau := maxf(0.004, float(taus[k]))
 		var dec := exp(-1.0 / (tau * float(RATE)))
+		# 内联 _sin() 查表：热点体检实测全库 _sin 逐采样 280 万次，光这个内层循环就占大头。
+		# 算式与 _sin() 一字不差，只是省掉函数调用 —— 输出逐字节不变（--check 的 PCM 指纹验过）。
+		# ⚠ 改动查表逻辑时，_sin() 与本处两处必须同步。
+		var tab := _tab
+		var tab_f := float(TAB_N)
 		for pair in [-1.0, 1.0]:
 			var step: float = f * (1.0 + detune * float(pair)) / float(RATE)
 			var p := 0.0
 			var env := amp
 			for i in n:
-				out[i] += _sin(p) * env
+				var sx: float = p - floor(p)
+				var sf: float = sx * tab_f
+				var si := int(sf)
+				var sfr: float = sf - float(si)
+				var sa := tab[si & (TAB_N - 1)]
+				var sb := tab[(si + 1) & (TAB_N - 1)]
+				out[i] += (sa + (sb - sa) * sfr) * env
 				p += step
 				env *= dec
+			used += 1
+	if prof_on:
+		prof_add("_metal", n, Time.get_ticks_usec() - t_prof)
+		prof_op("_sin(逐采样)", n * used)
 	return out
 
 ## 铜管/号角音色：整数谐波叠加（幅度 1/n），可带轻微颤音
 static func _brass(sec: float, base: float, attack: float, tau: float, harmonics := 6, vib := 0.0) -> PackedFloat32Array:
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	var n := _samples(sec)
 	var out := PackedFloat32Array()
 	out.resize(n)
 	var ph := PackedFloat32Array()
 	ph.resize(harmonics)
+	# 同上：内联 _sin() 查表（每次合成 6 个谐波，逐采样 6 次查表）
+	var tab := _tab
+	var tab_f := float(TAB_N)
 	for i in n:
 		var t := float(i) / float(RATE)
 		var e := _env(t, attack, tau, 1.0)
@@ -176,12 +267,27 @@ static func _brass(sec: float, base: float, attack: float, tau: float, harmonics
 		for h in harmonics:
 			var f := base * float(h + 1) * k
 			ph[h] += f / float(RATE)
-			v += _sin(ph[h]) / float(h + 1)
+			var sp: float = ph[h]
+			var sx: float = sp - floor(sp)
+			var sf: float = sx * tab_f
+			var si := int(sf)
+			var sfr: float = sf - float(si)
+			var sa := tab[si & (TAB_N - 1)]
+			var sb := tab[(si + 1) & (TAB_N - 1)]
+			v += (sa + (sb - sa) * sfr) / float(h + 1)
 		out[i] = v * e
+	if prof_on:
+		prof_add("_brass", n, Time.get_ticks_usec() - t_prof)
+		prof_op("_sin(逐采样)", n * harmonics)
+		prof_op("_env(逐采样)", n)
+		prof_op("_env curve=1.0（可省 pow）", n)
+		if vib > 0.0:
+			prof_op("_sin(颤音，逐采样)", n)
 	return out
 
 ## 二阶 RBJ 双二阶滤波器（中心频率可从 f0 扫到 f1），比 SVF 稳、带真共振
 static func _biquad(src: PackedFloat32Array, f0: float, f1: float, q: float, mode: int) -> PackedFloat32Array:
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	var n := src.size()
 	var out := PackedFloat32Array()
 	out.resize(n)
@@ -206,21 +312,52 @@ static func _biquad(src: PackedFloat32Array, f0: float, f1: float, q: float, mod
 			y2 = y1
 			y1 = y
 			out[i] = y
+		if prof_on:
+			prof_add("_biquad(定频)", n, Time.get_ticks_usec() - t_prof)
+			prof_op("cos/sin(每次系数)", 2)
 		return out
 	# 扫频：系数逐采样更新
+	# 这里刻意把 _coef() 的算式**内联**下来 —— 热点体检实测扫频 26 次 / 26.7 万采样 / 222 ms，
+	# 而 _coef() 每采样都要 new 一个 5 元素 Array 再做 5 次 Variant 取元素。
+	# 内联版算式一字未改（同样的量、同样的结合顺序、同样的 pow/除法位置），
+	# 所以输出与内联前**逐字节相同**（用 tools/sfx_tool.gd -- --check 的 PCM 指纹验的）。
 	var denom := float(maxi(1, n - 1))
 	for i in n:
-		var c2 := _coef(clampf(lerpf(f0, f1, float(i) / denom), 20.0, NYQ * 0.97), qq, mode)
-		var b0b := float(c2[0])
-		var b1b := float(c2[1])
-		var b2b := float(c2[2])
+		var fc := clampf(lerpf(f0, f1, float(i) / denom), 20.0, NYQ * 0.97)
+		var w0 := TAU * fc / float(RATE)
+		var cw := cos(w0)
+		var sw := sin(w0)
+		var alpha := sw / (2.0 * qq)
+		var a0 := 1.0 + alpha
+		var cb0 := 0.0
+		var cb1 := 0.0
+		var cb2 := 0.0
+		match mode:
+			F_HP:
+				cb0 = (1.0 + cw) * 0.5
+				cb1 = -(1.0 + cw)
+				cb2 = (1.0 + cw) * 0.5
+			F_BP:
+				cb0 = alpha
+				cb1 = 0.0
+				cb2 = -alpha
+			_:
+				cb0 = (1.0 - cw) * 0.5
+				cb1 = 1.0 - cw
+				cb2 = (1.0 - cw) * 0.5
+		var b0b := cb0 / a0
+		var b1b := cb1 / a0
+		var b2b := cb2 / a0
 		var x := src[i]
-		var y := b0b * x + b1b * x1 + b2b * x2 + float(c2[3]) * y1 - float(c2[4]) * y2
+		var y := b0b * x + b1b * x1 + b2b * x2 + ((2.0 * cw) / a0) * y1 - ((1.0 - alpha) / a0) * y2
 		x2 = x1
 		x1 = x
 		y2 = y1
 		y1 = y
 		out[i] = y
+	if prof_on:
+		prof_add("_biquad(扫频)", n, Time.get_ticks_usec() - t_prof)
+		prof_op("cos/sin(每次系数)", 2 * n)
 	return out
 
 ## 返回已归一化的 [b0, b1, b2, a1, a2]
@@ -250,26 +387,38 @@ static func _coef(fc: float, q: float, mode: int) -> Array:
 	return [b0 / a0, b1 / a0, b2 / a0, (2.0 * cw) / a0, (1.0 - alpha) / a0]
 
 static func _mix(dst: PackedFloat32Array, src: PackedFloat32Array, gain: float) -> void:
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	var n := mini(dst.size(), src.size())
 	for i in n:
 		dst[i] += src[i] * gain
+	if prof_on:
+		prof_add("_mix(叠加)", n, Time.get_ticks_usec() - t_prof)
 
 static func _mix_at(dst: PackedFloat32Array, src: PackedFloat32Array, gain: float, delay_sec: float) -> void:
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	var d := int(round(delay_sec * float(RATE)))
+	var done := 0
 	for i in src.size():
 		var j := i + d
 		if j >= dst.size():
 			break
 		dst[j] += src[i] * gain
+		done += 1
+	if prof_on:
+		prof_add("_mix_at(延迟叠加)", done, Time.get_ticks_usec() - t_prof)
 
 ## 软削波：给怒吼之类的音色加一点"过载"的脏感（不会真的削平）
 static func _soft_clip(buf: PackedFloat32Array, drive: float) -> void:
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	for i in buf.size():
 		var v := buf[i] * drive
 		buf[i] = v / (1.0 + absf(v))
+	if prof_on:
+		prof_add("_soft_clip(软削波)", buf.size(), Time.get_ticks_usec() - t_prof)
 
 ## 归一化 + 首尾淡入淡出 + 转成 16bit PCM 的 AudioStreamWAV
 static func _wav(s: PackedFloat32Array, norm := 0.92) -> AudioStreamWAV:
+	var t_prof := Time.get_ticks_usec() if prof_on else 0
 	var n := s.size()
 	var peak := 0.0
 	for i in n:
@@ -291,6 +440,9 @@ static func _wav(s: PackedFloat32Array, norm := 0.92) -> AudioStreamWAV:
 	st.mix_rate = RATE
 	st.stereo = false
 	st.data = bytes
+	if prof_on:
+		prof_add("_wav(归一化+编码)", n, Time.get_ticks_usec() - t_prof)
+		prof_op("encode_s16", n)
 	return st
 
 # =============================================================== 各音效配方
