@@ -1,0 +1,294 @@
+## =============================================================================
+##  WorldGenPipeline —— 从空场景到可玩世界的整条装配流水线
+##
+##  搬出前这一整段就是 Main._ready() 的前 190 行：程序化生成 7 步 + 表现层装配 +
+##  系统接线。逐步用时都要 await 一帧（Loading 界面才刷得动），所以这是一个协程：
+##    ctx = await pipeline.run()
+##
+##  host 契约（Main 是唯一的 host）——run() 结束时这些字段一定已经就位：
+##    hud / data / day_night / camera_rig / router / vegetation / player /
+##    ai_parties（同一个数组实例）/ fog / view / hover / time / rules /
+##    ctx / encounters / battler
+##
+##  只在本文件里活得下去的东西（生成完就没人再看）**不再挂到 host 上**：
+##    四份 ShaderMaterial、TerrainManager、WaterBuilder、NightLights 容器、
+##    PartySpawner。它们之间最后的关系（day_night.register_shader、
+##    fog 的 shader 参数、view.nodes）都在这里一次性接完。
+##
+##  ⚠ 生成顺序即指纹：这里的 RNG 抽取顺序、await 次数、append 次序一个都不能动，
+##    动了 tools/gen_fingerprint.json 的基线就会变红（那正是门禁要拦的事）。
+## =============================================================================
+class_name WorldGenPipeline
+extends RefCounted
+
+var host: Node
+var cfg: MapConfig
+var audio: AudioConfig
+
+## 生成产物（装配完成后交给 Main / WorldContext）
+var hud: HUD
+var data: MapData
+var day_night: DayNightCycle
+var camera_rig: CameraRig
+var router: InputRouter
+var vegetation: VegetationScatter
+var player: PlayerParty
+var parties: Array[AIParty] = []      ## 就是 host.ai_parties 那个实例
+var fog: FogOfWar
+var view: OverworldView
+var hover: HoverInspector
+var time: TimeFlowController
+var rules: EncounterRules
+var ctx: WorldContext
+var encounters: EncounterSystem
+var battler: BattleLauncher
+
+## 只在生成期存在的对象
+var terrain: TerrainManager
+var water: WaterBuilder
+var lights_root: Node3D
+var spawner: PartySpawner
+var terrain_mat: ShaderMaterial
+var settlement_mat: ShaderMaterial
+var vegetation_mat: ShaderMaterial
+var party_mat: ShaderMaterial
+
+## 整条流水线。返回装配好的 WorldContext（同时已写回 host 的公开字段）。
+func run() -> WorldContext:
+	parties = host.ai_parties
+	_build_loading_ui()
+	# 与原版一致：先空等两帧让 Loading 界面出来，再进第 0 步
+	await host.get_tree().process_frame
+	await host.get_tree().process_frame
+
+	# ---------------- 0. 音效（程序化合成，零外部音频文件）----------------
+	# 28 个音色共约 16 秒音频，合成耗时约 2 秒；setup 内部按时切片让出帧，
+	# Loading 界面不会卡死。不想听可以在 Inspector 里把 AudioConfig.enabled 关掉。
+	await _loading("合成音效（程序化 PCM：打击 / 打铁 / 脚步 / 号角）…")
+	await Sfx.setup(host, audio)
+
+	data = MapData.new()
+	data.cfg = cfg
+	data.factions = Faction.build_all()
+
+	# ---------------- 1. 高度场 ----------------
+	await _loading("生成地形高度场（多层噪声叠加）…")
+	data.gen = HeightmapGenerator.new(cfg)
+	data.hm = data.gen.generate()
+	await _loading("雕刻河流与湖泊（河道下切 / 渡口）…")
+
+	# ---------------- 2. 定居点选址 ----------------
+	await _loading("选择定居点位置并平整地基…")
+	var sb := SettlementBuilder.new(cfg, data)
+	sb.place_all()
+
+	# ---------------- 3. 寻路栅格 ----------------
+	await _loading("构建寻路栅格（海/湖/河不可通行）…")
+	data.nav_fine = NavGrid.new(257, cfg.map_size)
+	data.nav_fine.build_from(cfg, data.hm, data.gen)
+	data.nav_coarse = NavGrid.new(129, cfg.map_size)
+	data.nav_coarse.build_from(cfg, data.hm, data.gen)
+	data.nav_road = NavGrid.new(129, cfg.map_size)
+	data.nav_road.build_from(cfg, data.hm, data.gen, true)
+	data.path_fine = Pathfinder.new(data.nav_fine)
+	data.path_fine.heuristic_weight = 1.3
+	data.path_coarse = Pathfinder.new(data.nav_coarse)
+	data.path_coarse.heuristic_weight = 1.6
+
+	# ---------------- 4. 道路 ----------------
+	await _loading("铺设道路网（A* 修路 + 架桥）…")
+	var rn := RoadNetwork.new(cfg, data)
+	rn.build()
+
+	# ---------------- 5. 烘焙贴图 ----------------
+	await _loading("烘焙地表混合图 / 小地图 / 高度图…")
+	var baker := MapTextureBaker.new(cfg, data)
+	baker.bake_all()
+
+	# ---------------- 6. 材质与网格 ----------------
+	await _loading("生成着色器与地形分块网格…")
+	_make_materials()
+	# 部队生成器在这里就位：地形要拿玩家出生点（王都旁），部队也在同一步之后落地
+	spawner = PartySpawner.new()
+	spawner.cfg = cfg
+	spawner.data = data
+	spawner.host = host
+	spawner.mat = party_mat
+	spawner.parties = parties
+	terrain = TerrainManager.new()
+	terrain.name = "Terrain"
+	host.add_child(terrain)
+	terrain.setup(cfg, data, terrain_mat, spawner.player_start())
+
+	await _loading("注入海洋 / 湖泊 / 河流水面…")
+	water = WaterBuilder.new()
+	water.name = "Water"
+	host.add_child(water)
+	water.setup(cfg, data)
+
+	await _loading("建造城堡 / 城镇 / 村庄…")
+	lights_root = Node3D.new()
+	lights_root.name = "NightLights"
+	host.add_child(lights_root)
+	sb.build_all(host, settlement_mat, null)
+	rn.build_bridges(host, settlement_mat)
+	_build_settlement_lights()
+
+	await _loading("播种植被（MultiMesh 批处理）…")
+	vegetation = VegetationScatter.new()
+	vegetation.cfg = cfg
+	vegetation.data = data
+	vegetation.build(host, vegetation_mat)
+
+	# ---------------- 7. 部队 / 相机 / 迷雾 / UI ----------------
+	await _loading("集结部队…")
+	player = spawner.spawn_player()
+	spawner.player_target = player    # 强盗追击的目标（typed 注入，替掉 data.set_meta("player_ref")）
+	spawner.spawn_ai_parties()
+
+	await _loading("设置相机与环境…")
+	day_night = DayNightCycle.new()
+	day_night.name = "DayNight"
+	host.add_child(day_night)
+	day_night.setup(cfg, data)
+	day_night.paused = true   # 开局世界时间是冻结的：行军或长按空格才开始流动
+	day_night.register_shader(terrain_mat, "night_amount")
+	for wm in water.mats:
+		day_night.register_shader(wm, "night_amount")
+	day_night.register_shader(vegetation_mat, "night_amount")
+	day_night.register_shader(settlement_mat, "night_glow")
+	day_night.register_shader(party_mat, "night_glow")
+	for l in lights_root.get_children():
+		if l is OmniLight3D:
+			day_night.register_night_light(l)
+
+	camera_rig = CameraRig.new()
+	camera_rig.name = "CameraRig"
+	host.add_child(camera_rig)
+	camera_rig.setup(cfg, data, player)
+
+	fog = FogOfWar.new()
+	fog.enabled = cfg.fog_of_war
+	fog.setup(cfg)
+	if fog.enabled:
+		terrain_mat.set_shader_parameter("fog_map", fog.texture)
+		terrain_mat.set_shader_parameter("fog_enabled", 1.0)
+		vegetation_mat.set_shader_parameter("fog_map", fog.texture)
+		vegetation_mat.set_shader_parameter("fog_enabled", 1.0)
+		settlement_mat.set_shader_parameter("fog_map", fog.texture)
+		settlement_mat.set_shader_parameter("fog_enabled", 1.0)
+		party_mat.set_shader_parameter("fog_map", fog.texture)
+		party_mat.set_shader_parameter("fog_enabled", 1.0)
+		fog.reveal(Vector2(player.position.x, player.position.z), cfg.fog_reveal_radius * 1.4)
+
+	# 时间流动状态机与遭遇数值表：必须早于 _setup_ui()，
+	# 因为输入路由会把「点地行军 / 切换流速」直接接到这两个对象上。
+	time = TimeFlowController.new()
+	time.player = player
+	time.day_night = day_night
+	rules = EncounterRules.create()
+	_setup_ui()
+
+	# 表现层助手：标签缩放 / 大地图整体显隐 / 悬停提示。
+	# 放在这里是因为它们都要等相机、植被、部队、HUD 全部就位。
+	view = OverworldView.new()
+	view.camera_rig = camera_rig
+	view.data = data
+	view.parties = parties
+	view.player = player
+	view.vegetation = vegetation
+	# view.nodes 持有这几样：战斗结束 view.set_visible(true) 还得靠它们把大地图放回来
+	view.nodes = [terrain, water, lights_root, camera_rig, player, hud]
+	camera_rig.strategic_changed.connect(view.on_strategic_changed)
+
+	hover = HoverInspector.new()
+	hover.host = host
+	hover.camera_rig = camera_rig
+	hover.hud = hud
+	hover.data = data
+	hover.cfg = cfg
+	hover.parties = parties
+
+	# 共享上下文 + 两个系统（遭遇 / Boss 战）。它们互相回调，用信号断开环：
+	#   玩家选「攻击」→ encounters.attack_requested → battler.start
+	#   战斗结束        → battler.finished         → encounters.on_battle_finished（结算）
+	# 必须放在 view 组装之后：Boss 战进场要 view.set_visible(false)。
+	var ctx := WorldContext.new()
+	ctx.host = host as Node3D
+	ctx.cfg = cfg
+	ctx.audio = audio
+	ctx.data = data
+	ctx.hud = hud
+	ctx.camera = camera_rig
+	ctx.router = router
+	ctx.time = time
+	ctx.rules = rules
+	ctx.view = view
+	ctx.day_night = day_night
+	ctx.player = player
+	ctx.parties = parties
+	encounters = EncounterSystem.new()
+	encounters.ctx = ctx
+	battler = BattleLauncher.new()
+	battler.ctx = ctx
+	hud.encounter_choice.connect(encounters.resolve)
+	encounters.attack_requested.connect(battler.start)
+	battler.finished.connect(encounters.on_battle_finished)
+	return ctx
+
+# =============================================================== 内部
+## 推进一步并让 Loading 界面刷新两帧（顺序 / 次数即指纹，别合并）
+func _loading(text: String) -> void:
+	if hud != null:
+		hud.set_loading(text)
+	await host.get_tree().process_frame
+	await host.get_tree().process_frame
+
+func _build_loading_ui() -> void:
+	hud = HUD.new()
+	hud.name = "HUD"
+	host.add_child(hud)
+	hud.setup(cfg)
+
+func _make_materials() -> void:
+	var mf := MaterialFactory.new()
+	mf.build(cfg, data)
+	terrain_mat = mf.terrain
+	settlement_mat = mf.settlement
+	party_mat = mf.party
+	vegetation_mat = mf.vegetation
+
+## 夜里给城堡 / 城镇点灯（村庄不点）
+func _build_settlement_lights() -> void:
+	for s in data.settlements:
+		if s.kind == Settlement.Kind.VILLAGE:
+			continue
+		var l := OmniLight3D.new()
+		l.name = "Light_%d" % s.id
+		l.position = Vector3(s.pos.x, s.ground_h + 9.0, s.pos.y)
+		l.omni_range = 46.0 if s.kind == Settlement.Kind.CASTLE else 34.0
+		l.light_color = Color(1.0, 0.72, 0.36)
+		l.light_energy = 0.0
+		l.visible = false
+		l.shadow_enabled = false
+		lights_root.add_child(l)
+
+func _setup_ui() -> void:
+	hud.bind(data, day_night)
+	hud.minimap.setup(data, player, parties, fog)
+	hud.set_terrain_text("草原 (1.0x)")
+
+	# 输入路由：键码 → 语义信号。键位表在 project.godot 的 [input] 段，
+	# 这里不再出现任何 KEY_* 常量，加手柄 / 改键位都不用动代码。
+	router = InputRouter.new()
+	router.name = "InputRouter"
+	host.add_child(router)
+	router.camera_rig = camera_rig
+	router.hud = hud
+	router.cfg = cfg
+	router.order_move.connect(time.order_move)
+	router.cycle_speed_requested.connect(time.cycle_speed)
+	# 这三个回调仍然住在 Main（它们只改 Main 自己的字段），跨脚本用 Callable 取
+	router.toggle_vegetation_requested.connect(Callable(host, "_on_toggle_vegetation"))
+	router.toggle_mute_requested.connect(Callable(host, "_on_toggle_mute"))
+	router.faction_labels_requested.connect(Callable(host, "_toggle_faction_labels"))

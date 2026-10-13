@@ -31,6 +31,8 @@
 
 > 计数注意：统计行数请用 `(Get-Content $f).Count`，**不要**用 `Measure-Object -Line` —— 后者把空行算作 0 行，会少算约 10%。
 
+> 第三轮改完（2026-10-13）复测：**77 个 `.gd` / 12872 行 + 4 个 shader / 369 行**；`project.godot` 211 行（多了 `[input]` 段：28 个动作）；`Main.gd` **854 → 191 行**，当前最大的脚本依次是 `BattleScene.gd` 760 / `HeightmapGenerator.gd` 555 / `PlayerFighter.gd` 541 / `SettlementBuilder.gd` 531 / `SfxSynth.gd` 514。
+
 > 工具链注意：本工作区位于 **exFAT** 卷（`F:`，卷标 T7），**不支持硬链接**，因此依赖硬链接式原子写的写文件工具会报 `EISDIR`。新建文件请用 `Set-Content -Encoding utf8`，改已有文件用逐处替换式编辑（rename 在 exFAT 上正常）。
 >
 > 编码注意（踩过一次）：PowerShell 5.1 的 `Set-Content -Encoding utf8` / `Out-File -Encoding UTF8` 写出的文件**带 UTF-8 BOM**。用它写 `git commit -F <文件>` 的信息文件，会让 commit subject 首字节变成 `EF BB BF`（`git log --oneline` 看着像多了个不可见字符，按 `^(feat|fix|…)` 解析的工具会失配）。**信息文件必须无 BOM 写入**：
@@ -43,6 +45,11 @@
 ## 二、已确认缺陷清单
 
 每条都经回读代码验证。`轮次` 列指出在第五节哪一轮处理。
+
+> ⚠ **行号是历史坐标**：本节（以及第三 / 四节）里的 `Main.gd:NNN` 都是**拆分前**的位置 ——
+> 第三轮把 `Main.gd` 从 854 行拆到 191 行（见 9.5），那些代码现在住在
+> `WorldGenPipeline.gd` / `TimeFlowController.gd` / `EncounterSystem.gd` / `BattleLauncher.gd` /
+> `InputRouter.gd` / `OverworldView.gd` 等文件里。要改的时候按**符号名**搜，别按行号跳。
 
 ### 2.1 缺陷（Bug / 无效防护）
 
@@ -93,12 +100,12 @@
 ### 阶段 1：闭合核心循环（优先级最高）
 
 1. **`CampaignState` 战役状态层**（新文件，Resource，可序列化）：钱 / 粮 / 士气 / 声望 / 天数 / 势力关系。
-   落点：`Main.gd:769-773` 的 `spoils` 真正入账。**这是所有玩法扩展的地基。**
+   落点：`EncounterSystem.on_battle_finished` 里那笔 `spoils` 真正入账（拆分前在 `Main.gd:769-773`）。**这是所有玩法扩展的地基。**
 2. **城镇 / 村庄交互面板**：进城 → 招募（扣钱 + 消耗村庄人口）/ 补给 / 交易 / 打听情报（揭示附近部队）。
    可复用：`Settlement.gd` 已有 `garrison` / `parent_town` / `neighbors`；`HUD.gd` 的 Panel 构建代码与 `NameForge.gd` 可直接用。
 3. **遭遇选项 2 → 5~6 个**：攻击 / 撤退 / 要求通行费 / 劝降（按兵力差与士气判定）/ 贿赂 / 追击。
-   落点：`Main.gd:535-537` + `_on_encounter_choice`，做成选项表数据驱动。**单点改动即可显著提升策略密度。**
-4. **战斗结果真正影响战略层**：现在只有兵力增减（`Main.gd:770`）。加声望（打强盗 +、打商队 −）、领主关系、势力通缉度。
+   落点：`EncounterSystem.resolve`（选项处理）+ `ui/EncounterDialog.gd`（按钮表），做成数据驱动。**单点改动即可显著提升策略密度。**
+4. **战斗结果真正影响战略层**：现在只有兵力增减（`EncounterSystem.on_battle_finished`）。加声望（打强盗 +、打商队 −）、领主关系、势力通缉度。
 5. **存档 / 读档**：`user://save_0.cfg` 存 `map_seed` + `CampaignState` + 玩家位置 / 兵力 + AI 部队状态 + `cooldowns`。
    本工程「一切由种子生成」，**存种子 + 增量状态**即可，成本很低。**没有它，上面 4 条的进度都留不住。**
 
@@ -147,7 +154,7 @@
 
 ### B 节 · 结构重构（1~2 周）→ 第三轮
 
-- **B-1 拆 `Main.gd`（818 行 / 21 段职责）** → `WorldGenPipeline`（只碰 RefCounted，天然可无头单测）/ `MaterialFactory` / `PartySpawner` / `TimeFlowController` / `EncounterSystem`（只发信号）/ `BattleLauncher` + `EncounterRules`（数值进 Resource）/ `OverworldView` / `HoverInspector` / `InputRouter` / `GameState`。目标 Main ≈ 200 行。
+- **B-1 拆 `Main.gd`（818 行 / 21 段职责）** ✅ **已完成（第三轮，见 9.5）** → `WorldGenPipeline`（只碰 RefCounted，天然可无头单测）/ `MaterialFactory` / `PartySpawner` / `TimeFlowController` / `EncounterSystem`（只发信号）/ `BattleLauncher` + `EncounterRules`（数值进 Resource）/ `OverworldView` / `HoverInspector` / `InputRouter` / `GameState`。目标 Main ≈ 200 行 —— **实际 191 行**。
   顺带消除：玩家初始兵力 **37 硬编码两处**（`Main.gd:278,280`）、部队类型中文名表**重复三份**（531 / 640 / 642）、`set_meta("player_ref")` 弱类型侧信道（`Main.gd:281` → `AIParty.gd:58`）。
 - **B-2 拆 `HUD.gd`（323 行 / 9 件事）** → LoadingOverlay / TopBar / EncounterDialog / TransientMessages / DebugStatsPanel + `Theme.tres`。**性价比最高的重构**，也是引入 `.tscn` 的最佳落点（3D 与特效继续代码构建）。
 - **B-3 类型化**：`TerrainManager._chunks` 的 Dictionary → 内部类 `Chunk`；`MapData` 拆 `WorldGenResult` / `WorldQueries` / `RuntimeRefs`（typed，替掉 `set_meta`）；统一 RNG 派生入口（现在 `MapConfig.make_rng`、`AIParty` 的 seed+state、`Main.randi_range_seed` 三套并存）。
@@ -158,7 +165,7 @@
 - **植被**：单遍筛选（**注意会改变现有种子的布局语义**，需显式决定是否接受）→ 估算生成 −60%~70%；实例发射改 `RenderingServer.multimesh_set_buffer` 批量写 → 估算 5~15×；桶尺寸 128 m → 256 m。
 - **地形**：`_apply_lod` 把「缓存命中」提到预算判断之前（缓存切换本该免费）；按距离排序建块；法线用本地高度差分替代每顶点 4 次 `height_at`（**每顶点 5 次采样 → 1 次**）；LOD2/3 关阴影。现状每 0.25 s 允许建 2 块、单块 3~6 ms → 尖峰 5~10 ms。
 - **A\***：把 `blocked` / `speed` / `res` 提到局部变量并内联邻居判定（省每邻居 1~3 次脚本方法调用，**本体 2~4×**）；全局寻路请求队列 + 每帧预算；长距离用「道路骨架拓扑 + 首尾各一段栅格 A*」（HPA* 思路）。
-- **4096 地图前置条件**：所有写死分辨率必须与 `map_size` 绑定 —— `nav_fine = 257`（`Main.gd:100`，4096 图下变 15.9 m/格，比道路还宽）、`SPLAT_RES = 512`、`MINIMAP_RES = 256`、`MapData.TERR_RES = 128`、`FogOfWar.RES = 128`，以及 `MapTextureBaker.gd:55` 硬编码的 460 m 领地半径。**不绑定的后果是功能静默失真（道路消失、迷雾糊化），比崩溃更难查。**
+- **4096 地图前置条件**：所有写死分辨率必须与 `map_size` 绑定 —— `nav_fine = 257`（`WorldGenPipeline.gd`，4096 图下变 15.9 m/格，比道路还宽）、`SPLAT_RES = 512`、`MINIMAP_RES = 256`、`MapData.TERR_RES = 128`、`FogOfWar.RES = 128`，以及 `MapTextureBaker.gd:55` 硬编码的 460 m 领地半径。**不绑定的后果是功能静默失真（道路消失、迷雾糊化），比崩溃更难查。**
 - **100 部队前置条件**：标签量化早退（第一轮已完成）+ 寻路队列 + 部队渲染 MultiMesh 化（现在每支部队一个新建 ArrayMesh）。
 
 ### D 节 · 工程质量（持续，让上面所有改动「敢做」）→ 第二 / 五 / 六轮
@@ -179,7 +186,7 @@
 |---|---|---|
 | **第一轮** | A 节全部修复项 + 死代码清理 + 本路线图落档 | **已完成**（2026-10-12；改动与实测见第七节） |
 | **第二轮** | 安全网：`tools/gen_fingerprint.gd`（原计划名 `gen_determinism_check.gd`）+ `tools/perf_probe.gd` 性能基准 + 一键门禁 `tools/run_checks.ps1` | **已完成**（2026-10-12；改动与实测见第八节） |
-| 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | **进行中**：`HUD.gd` 拆分（`eddd8c2`）、`InputMap` / `InputRouter`（`8063a9e`，见第九节）与 `Main.gd` 拆分第一批（`a54d9d5` / `f9a09a8`，854 → 636 行）已完成；`TimeFlowController` / `EncounterSystem` / `BattleLauncher` / `WorldGenPipeline` 待办 |
+| 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | ✅ **已完成**：`HUD.gd` 拆分（`eddd8c2`）、`InputMap` / `InputRouter`（`8063a9e`）、`Main.gd` 拆分四批（`a54d9d5` / `f9a09a8` / `951d3b2` / 本批，**854 → 191 行**，见 9.5）；另修掉门禁挂死隐患（工具脚本调用已改名方法 + 每步 180 s 硬超时） |
 | 第四轮 | 玩法闭环：`CampaignState` 经济 + 城镇交互 + 遭遇多选项 + 存档 | 待办 |
 | 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | 待办 |
 | 第六轮 | 规模扩展（植被 / 地形 / 寻路）+ i18n + 导出预设与 CI | 待办 |
@@ -194,7 +201,7 @@
 $GODOT = "G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe"
 $PROJ  = "F:\aigc_code\ai_godot_projects"
 
-# 0) 【推荐】一键跑完全部门禁（8 步，约 47 秒）—— 本工程唯一需要的命令
+# 0) 【推荐】一键跑完全部门禁（8 步 / 12 项断言，约 36~47 秒）—— 本工程唯一需要的命令
 powershell -File tools\run_checks.ps1
 #    ⚠ 必须用 powershell 而不是 pwsh：本机只有 Windows PowerShell 5.1，没有 pwsh 7
 
@@ -334,9 +341,9 @@ Get-ChildItem -Recurse -File -Include *.gd,*.gdshader |
 
 ---
 
-## 九、第三轮变更记录（HUD 拆分 + `InputMap`）
+## 九、第三轮变更记录（HUD 拆分 + `InputMap` + 拆 `Main.gd`）
 
-第三轮拆成两半推进，本记录覆盖前半程（B-2 已提交 `eddd8c2`，B-4 见本次提交）；B-1 拆 `Main.gd` 仍待办。
+第三轮三件事全部完成：B-2 拆 `HUD.gd`（`eddd8c2`）、B-4 `InputMap` + 输入路由（`8063a9e`）、B-1 拆 `Main.gd`（四批：`a54d9d5` / `f9a09a8` / `951d3b2` / 本批，见 9.5）。
 
 ### 9.1 HUD 拆分：`HUD.gd` 323 行 → 115 行外观层 + 7 个组件
 
@@ -387,11 +394,12 @@ Get-ChildItem -Recurse -File -Include *.gd,*.gdshader |
 | 生成统计 | 定居点 18 / 桥梁 7 / 植被 5163（与基线一致） |
 | 截图 | `hud_loading` / `hud_normal` / `hud_dialog` 三张（1600×900）：遮罩铺满、遭遇框居中 + 变暗背景 + 焦点描边 + 键位提示行 |
 
-### 9.5 B-1 拆 `Main.gd`：已完成两批，`854 → 636` 行
+### 9.5 B-1 拆 `Main.gd`：全部做完，`854 → 191` 行
 
-`Main.gd` 仍然是最后一块大石头。记下已落地的部分与后续计划，免得下一轮重新摸索。
+`Main.gd` 从 854 行降到 **191 行**，剩下的只有三件事：装配、每帧循环（`_process`）、
+以及三个只改自身字段的 UI 回调。字段即对外接口（`tools/` 下的自检脚本、各系统都按这些名字取用）。
 
-**已搬出（`a54d9d5` / `f9a09a8` 两个提交，每批都跑满门禁、指纹不变）**：
+**已搬出（四批，`a54d9d5` → `f9a09a8` → `bd44382` → `951d3b2` → 本批，每批都跑满门禁、指纹不变）**：
 
 | 新文件 | 行数 | 搬走了什么 |
 |---|---|---|
@@ -401,14 +409,43 @@ Get-ChildItem -Recurse -File -Include *.gd,*.gdshader |
 | `core/OverworldView.gd` | 58 | 标签缩放量化早退、战略视图剔除植被、进 Boss 战整体隐藏大地图 |
 | `core/HoverInspector.gd` | 64 | 悬停提示（部队 → 定居点 → 空地）+ 0.1 s 节流 |
 | `core/InputRouter.gd` | 173 | 键位翻译成语义信号（见 9.2） |
+| `core/TimeFlowController.gd` | 73 | 时间流动状态机（`enum State` / `game_paused` / 流速档位 / 长按空格 / 强制锁 + `evaluate` / `order_move` / `cycle_speed` / `lock` / `unlock`） |
+| `core/EncounterRules.gd` | 74 | 遭遇与 Boss 战的全部数值（触发余量、三种冷却、推开距离、Boss HP / 破防公式、战利品与损失率、缴获物称呼） |
+| `core/WorldContext.gd` | 30 | 各系统共享的世界句柄 + `set_camera_active()`（遭遇框与 Boss 战都要的相机输入开关） |
+| `core/EncounterSystem.gd` | 138 | 遭遇检测、对话框、冷却、退避、战后结算（战利品 / 兵力损失 / 战败回城） |
+| `core/BattleLauncher.gd` | 78 | 进出 2D Boss 战（payload 拼装、隐藏大地图、冻结时间与输入、打完复位） |
+| `core/WorldGenPipeline.gd` | 294 | `_ready` 里那串 `await` 生成编排（7 步）+ 表现层装配 + 系统接线 |
 
 顺手拆掉一处弱类型侧信道：`data.set_meta("player_ref", player)` + `AIParty` 每帧 `get_meta` → `AIParty.player_target`（typed，由 `PartySpawner` 注入）。
 
-**确定下来的拆分纪律**（`PartySpawner` 文件头也写了）：
+**确定下来的拆分纪律**（`PartySpawner` / `WorldGenPipeline` 文件头也写了）：
 
 1. **不碰生成侧的调用顺序**。指纹由「谁先抽随机数」决定，所以 `_ready` 里的 `await _step(...)` 序列与各级生成器的先后顺序一律不动；`PartySpawner` 之所以能安全搬走，是因为它内部的随机数全部来自「自己新建的 `RandomNumberGenerator`」（`randi_range_seed` / `_random_wilderness`），不抽全局流，而部队种子取自 `ai_parties.size()` —— 只要「谁先被造出来」不变就行。
 2. **每批都跑一遍完整门禁再看指纹**，不看 A=B（那是假安全网，见第八节的反向验证）。
 3. **新的 `class_name` 要跑一次 `--import`** 才进类缓存（见 9.3 第 3 条）。
 
-**下一批（未做）**：`TimeFlowController`（时间流动状态机 + `_space_latched` / `_time_lock`）、`EncounterSystem` + `EncounterRules`（遭遇检测 / 对话 / 冷却，数值进 Resource）、`BattleLauncher`（`_start_battle` / `_on_battle_finished` / `_terrain_kind_at` / `_nearest_town`）、`WorldGenPipeline`（`_ready` 里那串 `await _step` 的生成编排）。
-这四块的耦合点在于它们都要回调 `_order_move` / `_eval_time_flow` / `_push_player_away`，所以正解是先立一个共享上下文（`GameState` 或 `WorldContext`：`cfg` / `data` / `player` / `ai_parties` / `hud` / `camera_rig` / `day_night`），再把这几块改成**只读上下文 + 发信号**，而不是像第一批那样直接搬属性。目标是 `Main.gd` ≈ 200 行。
+**互相回调的四块怎么断环**（这是第三轮最费思量的一处）：
+
+- 遭遇 / Boss 战是**互相**调用的：开战要停时间、战败要把玩家推开、推开又要重新下达行军令。
+  正解不是互相持有引用，而是 **信号 + 一个只读上下文**：
+  `encounters.attack_requested → battler.start`、`battler.finished → encounters.on_battle_finished`，
+  两根线在 `WorldGenPipeline` 末尾接一次。
+- 共享的那份东西（`cfg` / `data` / `hud` / `camera` / `router` / `time` / `rules` / `view` /
+  `player` / `parties`）放进 `WorldContext`，只放**引用**、不放状态机。
+- 结算的归属按「谁的数据谁管」分：战利品 / 损失 / 回城归 `EncounterSystem`（它管冷却），
+  场景的进出场归 `BattleLauncher`（它管 `BattleScene` 生命周期）。
+- 生成期的临时产物（4 份材质、`TerrainManager`、`WaterBuilder`、`NightLights` 容器、`PartySpawner`）
+  **不再挂到 `Main` 上**：生成完就没人再看它们，只把最后的关系（`day_night.register_shader`、
+  fog 的 shader 参数、`view.nodes`）在流水线里一次接完。
+
+**⚠ 工具脚本与 `Main` 字段是一份隐形契约**：`tools/` 下的自检脚本直接读 `main.data` / `main.player` /
+`main.hud` / `main.ai_parties` / `main.vegetation` / `main.camera_rig` / `main.audio` / `main.config` /
+`main.time` / `main.encounters` / `main.battler` / `main._gen_ms` / `main.gen_done`，
+所以**搬字段必须同一次提交改工具**（本轮 `main.cooldowns` → `main.encounters.cooldowns`、
+`main.encounters_enabled` → `main.encounters.enabled`、`main.battle` → `main.battler.battle`、
+`main._on_encounter_choice(...)` → `main.encounters.resolve(...)`）。
+
+**验收（2026-10-13）**：门禁 12 项全绿（36.3 s）；指纹基线 `19d42d358f8d5495…` 不变；
+生成统计 定居点 18 / 桥梁 7 / 植被 5163 不变；额外手工跑 `tools/bgm_check.gd`（遭遇 → 攻击 →
+Boss 战 → 结算整条链，257 兵领主：HP 583 / 破防 147 / 缴获 154 / 损失 30，与 `EncounterRules` 完全一致）
+与 `tools/hud_shot.gd`（三张截图正常，Loading 遮罩仍满屏）。

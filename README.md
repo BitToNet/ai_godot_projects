@@ -5,7 +5,7 @@
 马匹与骑手，全部由 `ArrayMesh` + `SurfaceTool 风格的手写几何` + `ShaderMaterial` 在运行时生成。
 
 - 引擎：**Godot 4.3+**（实测运行于 Godot **4.7.stable**，Forward+ / Metal）
-- 语言：GDScript（45 个脚本，约 9200 行）+ 4 个手写 Shader（约 370 行）
+- 语言：GDScript（77 个脚本，约 12900 行）+ 4 个手写 Shader（约 370 行）
 - 地图：1024 × 1024 世界单位，最大高度 ≈ 170 m，海平面 = 0
 - 随机性：**单一 `map_seed` 控制全局**，换一个种子就能得到一张完全不同的、但同样合理的地图
 
@@ -129,7 +129,18 @@ godot_opus5.5/
 │   └── vegetation.gdshader           # 植被：顶点色 + 每实例随机色调 + 风摆 + 战略视图淡出
 └── scripts/
     ├── core/
-    │   ├── Main.gd                   # 总装配：生成流水线 / 输入 / 遭遇 / 悬停 / 循环
+    │   ├── Main.gd                   # 总装配与游戏循环（191 行：装配 / _process / UI 回调）
+    │   ├── WorldGenPipeline.gd       # 生成流水线：高度场 → 定居点 → 栅格 → 道路 → 贴图 →
+    │   │                             #   材质网格 → 部队/相机/迷雾/UI + 系统接线（协程）
+    │   ├── WorldContext.gd           # 各系统共享的世界句柄（只放引用，不放状态机）
+    │   ├── TimeFlowController.gd     # 骑砍式时间流动：行军即流动 / 空格中断 / 长按推进 / 遭遇锁定
+    │   ├── EncounterSystem.gd        # 遭遇检测、对话框、冷却、退避、战后结算
+    │   ├── EncounterRules.gd         # 遭遇与 Boss 战全部数值（触发余量/冷却/Boss HP/缴获率）
+    │   ├── BattleLauncher.gd         # 进出 2D Boss 战（payload / 隐藏大地图 / 冻结时间与输入）
+    │   ├── InputRouter.gd            # 键位 → 语义信号（键位表在 project.godot 的 [input] 段）
+    │   ├── GameState.gd              # 玩家初始兵力、势力名兜底文案
+    │   ├── OverworldView.gd          # 标签缩放量化早退 / 战略视图剔除植被 / 大地图整体显隐
+    │   ├── HoverInspector.gd         # 悬停提示（部队 → 定居点 → 空地）+ 0.1 s 节流
     │   ├── MapConfig.gd              # 全部可调参数（@export），单一种子 make_rng(tag)
     │   ├── MapData.gd                # 数据总线：高度场/栅格/定居点/道路/贴图/部队引用
     │   ├── Heightmap.gd              # 高度场容器：双线性采样、法线、坡度、模糊、平整
@@ -147,11 +158,13 @@ godot_opus5.5/
     │   ├── SettlementBuilder.gd      # 选址打分 → 地基平整 → 程序化建造 + Label3D 名牌
     │   ├── RoadNetwork.gd            # 道路 A*（允许过河以便选桥位）+ 桥梁几何生成
     │   ├── MapTextureBaker.gd        # 烘焙 splat 图 / 高度图 / 小地图 / 势力领地
+    │   ├── MaterialFactory.gd        # 4 个世界着色器材质的唯一构造点（shader 路径/参数名）
     │   └── VegetationScatter.gd      # 植被撒点 + 分块 MultiMesh 批处理 + 可见距离剔除
     ├── parties/
     │   ├── PartyBase.gd              # 部队基类：路径行走 / 贴地 / 朝向 / 起伏 / 名牌
     │   ├── PlayerParty.gd            # 玩家部队 + 目标点标记 + 路径预览线
     │   ├── AIParty.gd                # 领主巡逻 / 商队往返 / 强盗游荡与追击
+    │   ├── PartySpawner.gd           # 开局摆部队：玩家 + 领主 / 商队 / 强盗（自带 RNG）
     │   └── PartyModelBuilder.gd      # 程序化马匹 + 骑手 + 旗帜 + 货车
     ├── camera/
     │   └── CameraRig.gd              # 骑砍式相机：跟随 / 缩放联动俯角 / 平移 / 旋转 / 射线拾取
@@ -159,9 +172,16 @@ godot_opus5.5/
     │   ├── DayNightCycle.gd          # 昼夜循环 + 天空渐变 + 距离雾 + 定居点夜间灯火
     │   └── FogOfWar.gd               # 战争迷雾（128² 探索度贴图，Shader 与小地图共用）
     ├── ui/
-    │   ├── HUD.gd                    # 日期/流速/地形状态、遭遇对话框、提示框、Loading
+    │   ├── HUD.gd                    # 外观层：把组件拼起来 + 对外门面（bind/show_*）
+    │   ├── TopBar.gd                 # 日期/流速/时间状态/当前地形
+    │   ├── EncounterDialog.gd        # 遭遇对话框（选项按钮 + 键盘/手柄焦点）
+    │   ├── HelpPanel.gd              # 左下角操作说明（键位文字从 InputMap 现读）
+    │   ├── DebugStatsPanel.gd        # 右下角 FPS / 绘制调用 / 三角形
+    │   ├── LoadingOverlay.gd         # 开场加载遮罩（全屏，带进度文字）
+    │   ├── ToastLabel.gd             # 居中提示条
+    │   ├── HoverTooltip.gd           # 鼠标悬停信息板
     │   ├── MinimapView.gd            # 右上角小地图：领地/定居点/部队/玩家/迷雾
-    │   └── UiTheme.gd                # 用 SystemFont 加载系统中文黑体，保证中文正常显示
+    │   └── UiTheme.gd                # 用 SystemFont 加载系统中文黑体 + 装饰面板样式
     ├── battle/                       # ★ Boss 战斗场景（2D 横版，仿《神之天平》ASTLIBRA）
     │   ├── BattleScene.gd            # 竞技场 / 相机 / 主循环 / 判定结算 / 顿帧震屏 / F3 调试
     │   ├── BattleConfig.gd           # 战斗全部数值（@export）：玩家、Boss、六种招式、手感
@@ -192,6 +212,12 @@ godot_opus5.5/
 │       ├── map_theme.ogg             # 大地图主题「山河行旅」（D 羽五声 / 76 BPM / 32 小节）
 │       └── battle_theme.ogg          # Boss 战主题「金戈铁马」（A 羽五声 / 150 BPM / 32 小节）
 ├── tools/                            # 命令行自检工具（不参与游戏运行）
+│   ├── run_checks.ps1                # ★ 一键跑完全部门禁（8 步 / 12 项断言，约 36~47 s，唯一需要的命令）
+│   ├── gen_fingerprint.gd            # 生成物指纹（确定性自检，与 gen_fingerprint.json 比对）
+│   ├── perf_probe.gd                 # 性能基准（生成耗时 / 每帧开销，与 perf_baseline.json 比对）
+│   ├── hud_check.gd                  # HUD 接口与布局断言
+│   ├── hud_shot.gd                   # 真实渲染截图（开窗口跑，出 Loading / 大地图 / 遭遇框三张图）
+│   ├── input_check.gd                # 输入层回归：动作表是否真进 InputMap / 分发与让路 / 遭遇框作答
 │   ├── sfx_tool.gd                   # 音色体检：时长/峰值/RMS/三频段能量/过零率/衰减 + 导出试听 WAV
 │   ├── sfx_battle_check.gd           # 战斗音效联调：模拟一场 Boss 战，统计每个音效触发次数
 │   ├── sfx_map_check.gd              # 大地图音效联调：行军号角 / 马蹄 / 遭遇提示音
