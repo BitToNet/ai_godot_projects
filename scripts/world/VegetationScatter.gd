@@ -61,23 +61,57 @@ func _scatter(kind: String, mesh: Mesh, target: int, mat: ShaderMaterial, range_
 	var list: Array[Transform3D] = []
 	var nav := data.nav_fine
 	var hm := data.hm
+	# ---- 第六轮 6b：把判定里的脚本层开销摊平（**不改判定结果，也不动 rng 调用序列**）----
+	# 这段筛选每次生成要跑 5 遍（5 个植被类型各扫一遍 7 m 网格 = 5 × 85800 格）。原来每格都要付：
+	# nav.ci() ×2 + nav.at()（3 次方法调用 + 各自的 clampi/round）、4 个 PackedByteArray 的属性取用、
+	# 以及「把 18 个定居点全算一遍 p.distance_to()（含 sqrt）」。全部换成局部变量与平方比较。
+	# 注意：两个 rng 抽点必须留在原位、原顺序、原次数 —— 只要 rng 序列不变，植被布局就逐位不变，
+	# 探针的 veg_instances / veg_kinds / veg_xform_hash 是这条承诺的硬断言（见 ROADMAP §12.4）。
+	var nav_res := nav.res
+	var nav_cell := nav.cell
+	var water := nav.water
+	var road := nav.road
+	var ford := nav.ford
+	var bridge := nav.bridge
+	var sea_lim := cfg.sea_level + 1.6
+	var max_slope := cfg.max_slope_veg
+	var edge_hi := cfg.map_size - 2.0
+	# 定居点摊平成三个并行数组，半径先 +7 再平方：原来是 p.distance_to(s.pos) < s.radius + 7.0
+	# （sqrt 与平方比较在数学上等价；用 float64 存，避免 float32 截断在边界上翻转判定）
+	var sn := data.settlements.size()
+	var sx := PackedFloat64Array()
+	var sz := PackedFloat64Array()
+	var sr2 := PackedFloat64Array()
+	sx.resize(sn); sz.resize(sn); sr2.resize(sn)
+	for i in sn:
+		var s = data.settlements[i]
+		var pos: Vector2 = s.pos
+		var rr: float = s.radius + 7.0
+		sx[i] = pos.x
+		sz[i] = pos.y
+		sr2[i] = rr * rr
 	for iz in n:
 		for ix in n:
 			var p := Vector2(float(ix) * CELL + rng.randf_range(0.0, CELL), float(iz) * CELL + rng.randf_range(0.0, CELL))
-			if p.x < 2.0 or p.y < 2.0 or p.x > cfg.map_size - 2.0 or p.y > cfg.map_size - 2.0:
+			if p.x < 2.0 or p.y < 2.0 or p.x > edge_hi or p.y > edge_hi:
 				continue
-			var ci := nav.at(nav.ci(p.x), nav.ci(p.y))
-			if nav.water[ci] == 1 or nav.road[ci] == 1 or nav.ford[ci] == 1 or nav.bridge[ci] == 1:
+			# nav.ci() = clampi(int(round(w / cell)), 0, res - 1)；nav.at() = z * res + x
+			var cix := clampi(int(round(p.x / nav_cell)), 0, nav_res - 1)
+			var ciz := clampi(int(round(p.y / nav_cell)), 0, nav_res - 1)
+			var ci := ciz * nav_res + cix
+			if water[ci] == 1 or road[ci] == 1 or ford[ci] == 1 or bridge[ci] == 1:
 				continue
 			var h := hm.height_at(p.x, p.y)
-			if h < cfg.sea_level + 1.6:
+			if h < sea_lim:
 				continue
 			var slope := hm.slope_at(p.x, p.y)
-			if slope > cfg.max_slope_veg:
+			if slope > max_slope:
 				continue
 			var blocked := false
-			for s in data.settlements:
-				if p.distance_to(s.pos) < s.radius + 7.0:
+			for k in sn:
+				var dx := p.x - sx[k]
+				var dz := p.y - sz[k]
+				if dx * dx + dz * dz < sr2[k]:
 					blocked = true
 					break
 			if blocked:
@@ -104,6 +138,10 @@ func _density(kind: String, p: Vector2, h: float, slope: float) -> float:
 	var desert: float = data.gen.biome_desert[i]
 	var rock: float = data.gen.biome_rock[i]
 	var v := p.y / cfg.map_size   # 0 = 北
+	# pow() 是这里唯一的"贵函数"，而 forest == 0（地图上大片无林区）时 pow(0, 1.4) 恒为 0：
+	# 先判掉，结果逐位不变（0 * 系数 = 0，后面照样走 dens <= 0 分支）
+	if forest <= 0.0 and (kind == "conifer" or kind == "broadleaf"):
+		return 0.0
 	match kind:
 		"conifer":
 			# 北部山麓针叶林
