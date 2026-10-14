@@ -79,7 +79,11 @@ godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://too
 godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://tools/scale_probe.gd -- --write-baseline
 ```
 结构量（实例数 / 区块数 / 变换指纹 / 地形位置与索引指纹 / 每对路径的点数与展开节点数）必须与
-`tools/scale_baseline.json` **精确一致**；耗时只做上界比对（× 1.6 记 WARN，× 2.5 判失败）——
+`tools/scale_baseline.json` **精确一致**；耗时是**上界**比对：原始倍数超 1.6 记 WARN，
+**原始倍数与「除以同机标尺后」的倍数同时超 2.5 才判失败** —— 这台机器的耗时会在两小时内整体漂移 2.5×
+（同一份代码、26 项耗时等比变慢、结构量一字不变），只看绝对值会把整机变慢误报成代码回归。
+标尺是同一次运行里的纯算术循环（`_calibrate()`）；它只反映 CPU 频率、反映不了内存/IO 漂移，
+所以才要两个信号一起看（`perf_probe` 更保守：默认只 WARN，`--strict` 才判失败）。
 这样它既能当「优化有没有真的变快」的量尺，也能当「重构有没有偷偷改变世界」的看守。
 注意 headless 下没有渲染：draw call / 视锥剔除 / MultiMesh 上传的收益它测不到。
 

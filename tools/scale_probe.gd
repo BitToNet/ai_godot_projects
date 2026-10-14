@@ -19,6 +19,11 @@
 ##    · 结构量（实例数 / 区块数 / 逐类计数 / 顶点数 / 指纹 / 每对路径点数与展开节点数）
 ##      逐项与基线**精确比对** —— 这些是确定性量，差一个就是错，没有容差
 ##    · 耗时只做**上界**比对（基线 × 1.6 记 WARN，× 2.5 判 FAIL），与 perf_probe 同一思路：
+##    · 但这台机器的耗时会在两小时内整体漂移 2.5×（同一份代码、所有耗时项等比变慢、结构量一字不变），
+##      所以判 FAIL 要两个信号一致：**原始倍数**与**除以同机标尺后的倍数**同时超硬容差；
+##      只有原始倍数超 1.6× 时记 WARN（整机变慢也是事实，但不该让门禁变红）。
+##      标尺是 _calibrate() 的纯算术循环（不碰本工程函数），能反映 CPU 频率，但反映不了内存/IO 漂移 ——
+##      实测生成时间 3.5 → 6.2 s 时标尺反而更快，这也是判据必须双信号的原因。
 ##      机器抖动不该误报，但"悄悄变慢 60%"必须留痕
 ##    · 【未解】headless 下没有渲染：GPU 绘制 / draw call / 视锥剔除 / MultiMesh 上传
 ##      的收益**测不到**；这里量到的全是 CPU 侧脚本开销（探针建的节点不进场景树）
@@ -35,13 +40,15 @@ const TOL_HARD := 2.5           ## 耗时硬上界：超了判 FAIL
 const PAIRS := 12               ## 固定 12 对起终点
 const PRIM_N := 20000           ## 采样原语的调用次数
 const TERRAIN_SAMPLE := 16
-const REPS := 3                        ## LOD1~3 单块太短，每块建 3 次取中位（否则基线会飘 2~3 倍）      ## 非 LOD0 的抽样块数（LOD0 全量 64 块）
+const REPS := 3                       ## 单块/单段太短时每项跑 3 次取中位（否则基线会飘 2~3 倍）
+const CALIB_N := 200000               ## 整机标尺的循环次数（纯算术，见 _calibrate）
 
 var main: Node
 var cfg: MapConfig
 var cur: Dictionary = {}
 var warn: Array = []
 var fail: Array = []
+var calib_ratio: float = 1.0      ## 本次运行相对基线的整机快慢（>1 = 整机偏慢），耗时项都先除它
 
 func _initialize() -> void:
 	_run()
@@ -81,6 +88,7 @@ func _run() -> void:
 	cur["seed"] = cfg.map_seed
 	cur["map_size"] = int(cfg.map_size)
 
+	_calibrate()
 	_p_veg()
 	_p_terrain()
 	_p_path()
@@ -104,6 +112,18 @@ func _run() -> void:
 		quit(2)
 		return
 
+	# ---- 整机标尺 ----
+	# 用它当分母，把「整机降频 / 后台占用」从「代码真的变慢了」里除掉；标尺是纯算术循环，
+	# 不调用本工程任何函数，所以 height_at 这类真实回归不会被它掩盖。
+	var cal := float(cur.get("calib_ms", 0.0))
+	var cal0 := float(want.get("calib_ms", 0.0))
+	if cal <= 0.0 or cal0 <= 0.0:      # 兼容没有 calib_ms 的旧基线：退回原语微基准
+		cal = float(cur.get("prim_height_at_us", 0.0))
+		cal0 = float(want.get("prim_height_at_us", 0.0))
+	if cal > 0.0 and cal0 > 0.0:
+		calib_ratio = cal / cal0
+	print("[规模] 校准：整机相对基线 %.2f×（标尺 %.2f → %.2f ms）—— 耗时项按此归一化后比对" % [
+		calib_ratio, cal0, cal])
 	for k in ["seed", "map_size", "veg_instances", "veg_chunks", "veg_xform_hash",
 			"terrain_chunks", "terrain_lod0_verts", "terrain_pos_hash", "terrain_idx_hash", "terrain_norm_hash",
 			"path_pairs", "path_fine_expanded", "path_coarse_expanded"]:
@@ -135,6 +155,24 @@ func _run() -> void:
 	quit(1)
 
 # ---------------------------------------------------------------- 1) 植被
+# ---------------------------------------------------------------- 整机标尺
+## 纯算术循环（不碰本工程的任何函数与数组）：只随 CPU 频率与 GDScript VM 快慢变化。
+func _calibrate() -> float:
+	var runs := PackedFloat32Array()
+	var sink := 0.0
+	for r in REPS:
+		var x := 1.0
+		var acc := 0.0
+		var t0 := Time.get_ticks_usec()
+		for i in CALIB_N:
+			x = x * 1.000001 + 0.5
+			acc += sqrt(x + float(i & 255))
+		sink += acc
+		runs.append(_ms(t0))
+	cur["calib_ms"] = _r3(_median(runs))
+	cur["calib_sink"] = _r3(sink)      # 防止循环被优化掉（与 prim_acc 同理）
+	return float(cur["calib_ms"])
+
 func _p_veg() -> void:
 	var live: VegetationScatter = main.vegetation
 	if live == null or live.root == null:
@@ -299,15 +337,21 @@ func _p_terrain() -> void:
 
 	# 采样原语：建块目前每顶点 1 次 height_at + 1 次 normal_at(= 4 次 height_at)
 	var hm: Heightmap = main.data.hm
+	# 每项跑 REPS 次取中位：单次 20k 循环在亚微秒量级上会被分配器状态带偏
 	var acc := 0.0
-	var t1 := Time.get_ticks_usec()
-	for i in PRIM_N:
-		acc += hm.height_at(float(i % 512) * 2.0, float((i * 7) % 512) * 2.0)
-	cur["prim_height_at_us"] = _r3(_ms(t1) * 1000.0 / float(PRIM_N))
-	t1 = Time.get_ticks_usec()
-	for i in PRIM_N:
-		acc += hm.normal_at(float(i % 512) * 2.0, float((i * 7) % 512) * 2.0).y
-	cur["prim_normal_at_us"] = _r3(_ms(t1) * 1000.0 / float(PRIM_N))
+	var hruns := PackedFloat32Array()
+	var nruns := PackedFloat32Array()
+	for r in REPS:
+		var t1 := Time.get_ticks_usec()
+		for i in PRIM_N:
+			acc += hm.height_at(float(i % 512) * 2.0, float((i * 7) % 512) * 2.0)
+		hruns.append(_ms(t1) * 1000.0 / float(PRIM_N))
+		t1 = Time.get_ticks_usec()
+		for i in PRIM_N:
+			acc += hm.normal_at(float(i % 512) * 2.0, float((i * 7) % 512) * 2.0).y
+		nruns.append(_ms(t1) * 1000.0 / float(PRIM_N))
+	cur["prim_height_at_us"] = _r3(_median(hruns))
+	cur["prim_normal_at_us"] = _r3(_median(nruns))
 	cur["prim_acc"] = _r3(acc)      # 防止上面的循环被优化掉
 	tm.free()
 
@@ -419,11 +463,17 @@ func _bound(k: String, want: Dictionary) -> void:
 	var g := float(cur[k])
 	if w <= 0.0:
 		return
-	var r := g / w
-	if r > TOL_HARD:
-		fail.append("%s 超硬容差：基线 %.3f → 本次 %.3f（%.2f×）" % [k, w, g, r])
-	elif r > TOL:
-		warn.append("%s 变慢：基线 %.3f → 本次 %.3f（%.2f×）" % [k, w, g, r])
+	var raw := g / w
+	var nrm := raw / calib_ratio if calib_ratio > 0.0 else raw
+	# 判据用两个信号：
+	#   · WARN 看**原始**倍数 —— 这一跑确实比基线慢了多少（不管什么原因，都值得记一条）
+	#   · FAIL 要求**两个信号都超硬容差** —— 只有「整机没变慢（标尺正常）却慢了一大截」才算真回归
+	# 为什么不用归一化后的倍数单独判 WARN：实测这台机器的漂移主要来自内存/IO 子系统（世界生成 3.5 → 6.2 s），
+	# 而纯算术标尺只反映 CPU 频率 —— 标尺偏快时归一化会把 1.4× 的正常波动放大成 1.85× 的假警报。
+	if raw > TOL_HARD and nrm > TOL_HARD:
+		fail.append("%s 超硬容差：原始 %.2f× / 归一化 %.2f×（基线 %.3f → 本次 %.3f）" % [k, raw, nrm, w, g])
+	elif raw > TOL:
+		warn.append("%s 变慢：原始 %.2f×（归一化 %.2f×；基线 %.3f → 本次 %.3f）" % [k, raw, nrm, w, g])
 
 func _short(v) -> String:
 	var s := str(v)
@@ -436,7 +486,7 @@ func _write_baseline() -> void:
 		"seed": cfg.map_seed,
 	}
 	for k in cur.keys():
-		if String(k).begins_with("prim_acc"):
+		if String(k).begins_with("prim_acc") or String(k).begins_with("calib_sink"):
 			continue
 		obj[k] = cur[k]
 	var f := FileAccess.open(BASELINE, FileAccess.WRITE)
