@@ -8,7 +8,8 @@
 ##  host 契约（Main 是唯一的 host）——run() 结束时这些字段一定已经就位：
 ##    hud / data / day_night / camera_rig / router / vegetation / player /
 ##    ai_parties（同一个数组实例）/ fog / view / hover / time / rules /
-##    economy / campaign / settlements / ctx / encounters / battler
+##    economy / campaign / settlements / ctx / encounters / battler /
+##    picker / selection（第七轮：点单位交互）
 ##
 ##  只在本文件里活得下去的东西（生成完就没人再看）**不再挂到 host 上**：
 ##    四份 ShaderMaterial、TerrainManager、WaterBuilder、NightLights 容器、
@@ -45,6 +46,9 @@ var settlements: SettlementSystem
 var ctx: WorldContext
 var encounters: EncounterSystem
 var battler: BattleLauncher
+## 第七轮：点地图上的定居点 / 部队 → 选中 → 面板上执行「前往 / 进入 / 追踪」
+var picker: MapPicker
+var selection: SelectionSystem
 
 ## 只在生成期存在的对象
 var terrain: TerrainManager
@@ -293,6 +297,23 @@ func run() -> WorldContext:
 	# 4d：快速存档 / 快速读档（数据格式与校验在 SaveGame.gd，这里只接线）
 	router.save_requested.connect(Callable(host, "_on_quicksave_requested"))
 	router.load_requested.connect(Callable(host, "_on_quickload_requested"))
+
+	# 第七轮：点单位交互（点击拾取 → 选中面板 → 点一次进城 / 追踪）。
+	# 位置要求：必须在 ctx 建好之后（SelectionSystem 要 ctx 算距离 / 列领地归属），
+	# 也必须在 router 接完键位之后（pick_requested 与 order_move 是同一个左键的两条出口）。
+	# ⚠ 这一段既**不抽随机数**也**不 await**：它只 new 两个纯数据对象并接信号，
+	#    所以生成指纹与既有基线一位不变。
+	picker = MapPicker.new()
+	picker.camera_rig = camera_rig
+	picker.data = data
+	picker.parties = parties
+	router.picker = picker
+	selection = SelectionSystem.new()
+	selection.ctx = ctx
+	router.pick_requested.connect(Callable(host, "_on_pick_requested"))
+	hud.selection_action.connect(Callable(host, "_on_selection_action"))
+	selection.changed.connect(Callable(host, "_on_selection_changed"))
+	player.arrived.connect(Callable(host, "_on_player_arrived"))
 	_stage_flush()   # 把最后一阶段的耗时也交出来（打开阶段计时时才有输出）
 	return ctx
 
@@ -376,7 +397,9 @@ func _setup_ui() -> void:
 	router.camera_rig = camera_rig
 	router.hud = hud
 	router.cfg = cfg
-	router.order_move.connect(time.order_move)
+	# 点地行军改走 Main：Main 要顺手解除「追踪 / 先过去后进城」并清空选中
+	# （见 Main._on_order_move），所以这里不能再直接接到 time.order_move。
+	router.order_move.connect(Callable(host, "_on_order_move"))
 	router.cycle_speed_requested.connect(time.cycle_speed)
 	# 这三个回调仍然住在 Main（它们只改 Main 自己的字段），跨脚本用 Callable 取
 	router.toggle_vegetation_requested.connect(Callable(host, "_on_toggle_vegetation"))

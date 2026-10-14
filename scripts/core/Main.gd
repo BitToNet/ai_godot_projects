@@ -8,6 +8,7 @@
 ##    · TimeFlowController : 骑砍式「时间流动 / 暂停」状态机
 ##    · EncounterSystem    : 遭遇检测、对话框、冷却、退避、战后结算
 ##    · SettlementSystem   : 进城办事（补给 / 招募 / 贸易 / 驻军）
+##    · SelectionSystem    : 点地图上的单位 → 选中（前往 / 进入 / 追踪）
 ##    · BattleLauncher     : 进出 2D Boss 战
 ##    · EncounterRules     : 遭遇与 Boss 战的全部数值
 ##    · WorldContext       : 上面几块共享的世界句柄
@@ -50,6 +51,20 @@ var encounters: EncounterSystem      ## 遭遇检测 / 对话 / 冷却（见 Enc
 var settlements: SettlementSystem    ## 进城办事：补给 / 招募 / 贸易 / 驻军（见 SettlementSystem.gd）
 var battler: BattleLauncher          ## 进出 Boss 战（见 BattleLauncher.gd）
 var pipeline: WorldGenPipeline       ## 生成流水线（生成完仍然留着，方便回头查产物）
+var picker: MapPicker                ## 屏幕空间拾取（见 MapPicker.gd）
+var selection: SelectionSystem       ## 当前选中了谁（见 SelectionSystem.gd）
+
+## 「先过去，抵达后自动进城」的目标。存的是**意图**而不是坐标：
+## 抵达那一帧要按 id 重新拿定居点（这中间它可能已经被战乱换手 / 被读档重建）。
+var _travel_target: Settlement = null
+## 「追踪」的目标部队与最近一次已下达的目标点（见 _tick_tracking）
+var _track_target: AIParty = null
+var _track_goal: Vector2 = Vector2.ZERO
+var _track_timer: float = 0.0
+## 追踪的重寻路节流：目标每移动这么多米才重新寻路一次，且两次之间至少隔这么久。
+## 玩家寻路走的是同步 A*（path_fine），不节流等于每帧一次全图搜索。
+const TRACK_REPATH_S := 2.0
+const TRACK_REPATH_M := 30.0
 
 var _gen_ms: int = 0
 ## 程序化生成**彻底**结束（含收尾的两帧与 0.35 s 遮罩收场）后置 true。
@@ -95,6 +110,8 @@ func _ready() -> void:
 	encounters = pipeline.encounters
 	settlements = pipeline.settlements
 	battler = pipeline.battler
+	picker = pipeline.picker
+	selection = pipeline.selection
 
 	_gen_ms = Time.get_ticks_msec() - t0
 	print("[Warband] 地图生成完成：%d ms   定居点 %d   桥梁 %d   植被实例 %d" % [
@@ -154,6 +171,12 @@ func _process(delta: float) -> void:
 	# 放在 AI step 之后 = 同一帧内完成，低负载下与旧的同步寻路几乎没有差别。
 	if data.path_queue != null:
 		data.path_queue.pump(PATH_BUDGET_US)
+	# 追踪（第七轮）：目标部队走远了就重新下达目标点。放在 AI step 之后 ——
+	# 用的是本帧刚更新过的位置，不会追着一帧前的位置跑。
+	_tick_tracking(delta)
+	# 选中目标的失效检查（被选中的部队可能刚被打没）
+	if selection != null:
+		selection.tick()
 	# 行军音效（马蹄）：只在世界时间流动的那几帧发声，暂停时自动静音
 	_tick_party_audio(dt)
 	# 迷雾（纯视觉，不受时间暂停影响）
@@ -280,6 +303,13 @@ func _on_quickload_requested() -> void:
 			hud.show_toast("读档被拒绝：%s" % str(a.get("error", "")), 5.0)
 		return
 	var info: Dictionary = a.get("info", {})
+	# 读档把整份世界状态换了一遍：位置 / 兵力 / 生死都可能与存档前不同，
+	# 于是「先过去后进城」与「追踪」这两个挂着的意图一并作废（它们记的是旧位置），
+	# 而选中面板原地刷新一次 —— 面板上的距离是 select 那一刻算的，不刷新就是旧值。
+	_travel_target = null
+	_track_target = null
+	if selection != null:
+		selection.refresh()
 	# 迷雾要在这里揭（WorldContext 里没有 fog 这一项，也没必要为读档加一条引用）
 	if fog != null and player != null:
 		fog.reveal(Vector2(player.position.x, player.position.z), config.fog_reveal_radius_m() * 1.4)
@@ -316,6 +346,187 @@ func _toggle_faction_labels(fid: int) -> void:
 			any_visible = any_visible or s.label.visible
 	Log.debug("[UI] 势力 %s 的定居点标签：%s" % [data.faction(fid).name, "显示" if any_visible else "隐藏"])
 
+# =============================================================== 点单位交互
+## 左键点到了地图上的实体（InputRouter.pick_requested）。
+## 两条规则，都是骑砍的手感：
+##   · 定居点：**第一次点 = 选中**（看名字 / 类型 / 繁荣度 / 驻军 / 距离），
+##     **再点一次同一座 = 进城**。这样「想看详情」与「想进去」不会互相误触。
+##   · 部队：点一下即选中（面板上有「追踪」）。
+## 点空地不会走到这里 —— 那是 order_move 那条路（见 _on_order_move）。
+func _on_pick_requested(screen_pos: Vector2) -> void:
+	if picker == null or selection == null:
+		return
+	var hit := picker.pick(screen_pos)
+	if hit.is_empty():
+		return
+	var kind := String(hit.get("kind", ""))
+	if kind == MapPicker.KIND_SETTLEMENT:
+		var s: Settlement = hit.get("settlement")
+		if s == null:
+			return
+		if selection.is_settlement(s):
+			_enter_settlement(s)
+			return
+		_track_target = null
+		selection.select_settlement(s)
+	elif kind == MapPicker.KIND_PARTY:
+		var a: AIParty = hit.get("party")
+		if a == null:
+			return
+		selection.select_party(a)
+
+## 左键点空地 → 行军。三件事一起做：
+##   1. 玩家自己指了方向，就不该再有东西替他改目标 ⇒ 解除「追踪 / 先过去后进城」；
+##   2. 清空选中（面板收起）—— 这也是「关掉选中面板」的自然手势；
+##   3. 下发行军命令（时间流动的裁决仍在 TimeFlowController）。
+func _on_order_move(goal: Vector2) -> void:
+	_travel_target = null
+	_track_target = null
+	if selection != null:
+		selection.clear()
+	time.order_move(goal)
+
+## 选中状态变了（HUD 重画面板 / 清空时收起）。面板数据由 SelectionSystem 组好。
+func _on_selection_changed() -> void:
+	if hud == null or selection == null:
+		return
+	if selection.is_empty():
+		hud.hide_selection()
+		return
+	hud.show_selection(selection.title(), selection.body(), selection.entries())
+
+## 选中面板上点了一条（含 Esc = "close"）。这里只解释动作，不改面板状态 ——
+## 面板状态由 SelectionSystem 自己发 changed 回来，改两处迟早会不同步。
+func _on_selection_action(action: String) -> void:
+	if selection == null:
+		return
+	if action == Strings.SELECT_CLOSE:
+		selection.clear()
+		return
+	if selection.is_empty():
+		return
+	var s := selection.settlement
+	var a := selection.party
+	if action == "enter" and s != null:
+		_enter_settlement(s)
+	elif action == "travel" and s != null:
+		_travel_to(s)
+	elif action == "track" and a != null:
+		_track_party(a)
+
+# ---------------------------------------------------------------- 进城 / 前往 / 追踪
+## 进城。太远就先过去（抵达那一帧由 _on_player_arrived 接手自动进城）——
+## 这比灰掉按钮 / 让玩家自己「先点前往再点进入」少两步操作。
+func _enter_settlement(s: Settlement) -> void:
+	if s == null or settlements == null or not settlements.enabled:
+		return
+	if _within_interact_range(s):
+		_travel_target = null
+		_track_target = null
+		if not settlements.open(s):
+			_report_settlement_refused()
+		return
+	_travel_target = s
+	_track_target = null
+	time.order_move(s.pos)
+	if not player.moving:
+		_travel_target = null
+		if hud != null:
+			hud.show_toast(Strings.SELECT_TRAVEL_UNREACHABLE % s.name, 3.0)
+		return
+	if hud != null:
+		hud.show_toast(Strings.SELECT_TRAVEL_FIRST % [s.name, _distance_to(s.pos)], 3.0)
+
+## 「前往」：只过去，不自动进城（抵达后想进再点一次城 —— 那时已在城门范围内）
+func _travel_to(s: Settlement) -> void:
+	if s == null or player == null:
+		return
+	_travel_target = null
+	_track_target = null
+	time.order_move(s.pos)
+	if not player.moving and hud != null:
+		hud.show_toast(Strings.SELECT_TRAVEL_UNREACHABLE % s.name, 3.0)
+
+## 「追踪」：跟上这支部队。只在这里下一道命令，之后的重寻路在 _tick_tracking 里节流下发。
+func _track_party(a: AIParty) -> void:
+	if a == null or not is_instance_valid(a) or player == null:
+		return
+	_travel_target = null
+	_track_target = a
+	_track_goal = Vector2(a.position.x, a.position.z)
+	_track_timer = TRACK_REPATH_S
+	time.order_move(_track_goal)
+	if hud == null:
+		return
+	if player.moving:
+		hud.show_toast(Strings.SELECT_TRACK_ON % a.party_name, 2.0)
+	else:
+		_track_target = null
+		hud.show_toast(Strings.SELECT_TRAVEL_UNREACHABLE % a.party_name, 3.0)
+
+## 每帧（见 _process）推进追踪。解除追踪的两种情形都写在这里：
+##   · 目标没了（被别处结算掉 / 打赢后被 erase）→ 清空选中并说一句；
+##   · 我军自己停下了（抵达 / 被空格打断 / 被遭遇打断）→ 静默解除。
+##     这一条不能省：否则「按空格停止行军」会在 2 秒后被追踪逻辑重新启动，
+##     玩家会以为按键坏了。
+func _tick_tracking(delta: float) -> void:
+	if _track_target == null:
+		return
+	if not is_instance_valid(_track_target) or not ai_parties.has(_track_target):
+		_track_target = null
+		if selection != null and selection.kind == MapPicker.KIND_PARTY:
+			selection.clear()
+		if hud != null:
+			hud.show_toast(Strings.SELECT_TRACK_LOST, 2.5)
+		return
+	if time.state == TimeFlowController.State.FROZEN:
+		_track_target = null
+		return
+	_track_timer -= delta
+	if _track_timer > 0.0:
+		return
+	var goal := Vector2(_track_target.position.x, _track_target.position.z)
+	if goal.distance_to(_track_goal) < TRACK_REPATH_M:
+		return
+	_track_goal = goal
+	_track_timer = TRACK_REPATH_S
+	# 刻意直接调 set_destination 而不再走 time.order_move()：追踪的重寻路不是新命令，
+	# 不该每 2 秒在日志里打一行「前往 (x, y)」，也不该重新触发空格消费标记。
+	player.set_destination(goal)
+
+## 抵达（只在正常走完路径时发，见 PlayerParty.arrived）——
+## 「先过去，抵达后自动进城」在这里收尾。
+func _on_player_arrived() -> void:
+	if _travel_target == null:
+		return
+	var s := _travel_target
+	_travel_target = null
+	if settlements == null:
+		return
+	if not settlements.open(s):
+		if hud != null and not hud.is_any_dialog_open():
+			hud.show_toast(Strings.SELECT_ENTER_FAILED, 3.0)
+		return
+	# 进城 = 菜单接管，选中面板收起（菜单是模态的，两面板不该同时在场）
+	if selection != null:
+		selection.clear()
+
+func _within_interact_range(s: Settlement) -> bool:
+	if s == null or player == null:
+		return false
+	return _distance_to(s.pos) <= s.interact_radius()
+
+func _distance_to(world: Vector2) -> int:
+	if player == null:
+		return 0
+	var p := Vector2(player.position.x, player.position.z)
+	return int(round(p.distance_to(world)))
+
+## 开不了菜单时给一句为什么（与 _on_interact_requested 的兜底同一口径）
+func _report_settlement_refused() -> void:
+	if hud != null and not hud.is_any_dialog_open():
+		hud.show_toast(Strings.SELECT_ENTER_FAILED, 3.0)
+
 # =============================================================== 进城菜单
 ## 交互键（见 InputRouter.interact_requested）→ 进最近的那个定居点。
 ## 附近没有 / 世界时间被别人锁着（遭遇对话、Boss 战）时不硬开，给一句提示：
@@ -329,6 +540,12 @@ func _on_interact_requested() -> void:
 		hud.show_toast("附近没有可以进入的定居点（走到村庄 / 城镇 / 城堡旁再按）", 2.5)
 
 func _on_settlement_opened(_s: Settlement) -> void:
+	# 进城菜单是模态的（会锁世界时间），选中面板必须先收起来 ——
+	# 否则两块面板同时在场，玩家会以为还能继续点地图。
+	_travel_target = null
+	_track_target = null
+	if selection != null:
+		selection.clear()
 	_refresh_settlement_menu()
 
 func _on_settlement_menu_changed() -> void:

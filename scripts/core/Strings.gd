@@ -28,6 +28,8 @@ const TERRAIN := "当前地形："
 # ---- 操作说明（HelpPanel.gd）----
 const HELP_TITLE := "【操作】"
 const HELP_CLICK_MOVE := "左键点击地面：部队寻路移动（行军途中时间流动，抵达后立刻暂停）"
+const HELP_SELECT := "左键点击地图上的定居点 / 部队：选中并看详情（面板上可前往 / 进入 / 追踪）"
+const HELP_SELECT_AGAIN := "再点一次同一座城 = 进城；点空地 = 取消选中"
 const HELP_INTERACT := "进城办事：走到村庄 / 城镇 / 城堡旁按（补给 / 招募 / 贸易 / 驻军）"
 const HELP_TIME_FLOW := "长按 = 原地推进世界时间；行军途中按下 = 立刻停止前进并暂停"
 const HELP_PAN := "平移视角（也可靠屏幕边缘移动鼠标）"
@@ -58,6 +60,29 @@ const ENCOUNTER_HINT_LINE := "%s 确认      %s 撤退      ↑↓ 选择条目"
 
 # ---- 进城菜单（SettlementDialog.gd）----
 const SETTLEMENT_HINT_LINE := "%s 确认      %s 离开      ↑↓ 选择条目"
+
+# ---- 选中面板（SelectionPanel.gd / SelectionSystem.gd）----
+## 标题 / 正文都吃系统给的数据（SelectionSystem 组好字符串），面板只照着画。
+const SELECT_TITLE_SETTLEMENT := "%s　%s"
+const SELECT_TITLE_PARTY := "[%s] %s"
+const SELECT_BODY_SETTLEMENT := "类型：%s\n势力：%s\n繁荣度：%d（%s）　驻军：%d 人\n领地归属：%s\n距离：%d 米"
+const SELECT_BODY_PARTY := "阵营：%s\n兵力：%d 人　状态：%s%s\n距离：%d 米"
+const SELECT_BODY_PARTY_LEAD := "\n首领：%s"
+const SELECT_ACT_TRAVEL := "前往"
+const SELECT_ACT_TRAVEL_HINT := "部队自动寻路过去，抵达后停下"
+const SELECT_ACT_ENTER := "进入"
+const SELECT_ACT_ENTER_HINT := "进城办事：补给 / 招募 / 贸易 / 驻军"
+const SELECT_ACT_ENTER_FAR := "距离 %d 米 —— 先过去，抵达后自动进城"
+const SELECT_ACT_TRACK := "追踪"
+const SELECT_ACT_TRACK_HINT := "跟着它走（它改向就重新寻路；我军一停下就解除）"
+const SELECT_HINT_LINE := "%s 执行      %s 关闭选中      ↑↓ 切换条目"
+const SELECT_CLOSE := "close"
+## 动作执行结果的口头反馈（Main 用；「按了没反应」是最难查的一类问题）
+const SELECT_TRAVEL_FIRST := "先前往 %s（还有 %d 米），抵达后自动进城"
+const SELECT_TRAVEL_UNREACHABLE := "到不了 %s：那里无法通行"
+const SELECT_ENTER_FAILED := "现在无法进城（世界时间被别人锁着）"
+const SELECT_TRACK_ON := "追踪 %s"
+const SELECT_TRACK_LOST := "追踪目标已不在地图上"
 
 # ---- 性能面板（DebugStatsPanel.gd）----
 const STATS_LINE := "FPS %d   绘制调用 %d   三角形 %.1f 万"

@@ -14,12 +14,18 @@
 ##
 ##  遭遇 / 进城对话框打开时本路由整体让路：键盘要先留给对话框作答（确认 / 取消 / 焦点）。
 ##  战斗中由 Main 关掉本路由（enabled = false），输入归 BattleScene。
+##
+##  第七轮加了「点单位」：左键先经 MapPicker 判一次命中，点到定居点 / 部队就发
+##  pick_requested（选中），点空地才发 order_move（行军）。拾取器为空时行为与之前一致。
 ## =============================================================================
 class_name InputRouter
 extends Node
 
 ## 点击地图下达行军命令（世界坐标）
 signal order_move(goal: Vector2)
+## 点到了地图上的实体（定居点 / 部队）：只把屏幕坐标抛出去，命中了谁由 MapPicker 判。
+## 与 order_move 是互斥的两条路：点到实体就**不**再下发行军命令（见下面的左键分支）。
+signal pick_requested(screen_pos: Vector2)
 signal cycle_speed_requested
 signal toggle_vegetation_requested
 signal toggle_mute_requested
@@ -36,6 +42,10 @@ signal load_requested
 var camera_rig: CameraRig
 var hud: HUD
 var cfg: MapConfig
+## 屏幕空间拾取器（第七轮：点单位交互）。**可以为 null**：没有它时左键就是纯
+## 「点地行军」，与本轮之前的行为逐位一致 —— tools/input_check.gd 那条不建世界的
+## 自检走的就是这条路，所以不能改成必填。
+var picker: MapPicker = null
 var enabled: bool = true
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -55,7 +65,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if hud != null and hud.is_any_dialog_open():
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		# 点到 UI 的点击不会走到 _unhandled_input；能到这里的左键都是「点地图」
+		# 点到 UI 的点击不会走到 _unhandled_input；能到这里的左键都是「点地图」。
+		# 先问拾取器：点到定居点 / 部队时这一下是「选中」，不是「行军」——
+		# 否则每次点城看详情都会顺手把部队派出去（最烦人的一类误操作）。
+		if picker != null and not picker.pick(event.position).is_empty():
+			pick_requested.emit(event.position)
+			return
 		var hit := camera_rig.ray_to_terrain(event.position)
 		if hit.y > cfg.sea_level + 0.2:
 			order_move.emit(Vector2(hit.x, hit.z))

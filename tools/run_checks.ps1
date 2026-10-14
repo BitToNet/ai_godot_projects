@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（25 项，约 58~72 秒）；性能若超软容差会**额外**追加一行「性能基准 注意…」，
+#  依次执行下列步骤（26 项，约 60~75 秒）；性能若超软容差会**额外**追加一行「性能基准 注意…」，
 #  所以汇总里的项数偶尔是 26 —— 别把某一跑的行数当成脚本的固有常量。
 #  任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
@@ -28,6 +28,10 @@
 #        级别解析输出），ERROR 必须仍以 "ERROR: " 开头走 stderr（门禁靠它兜底抓失败）
 #    5d) i18n 棘轮（tools/i18n_check.gd）—— 第六轮 ⑥：scripts/ui 里含中文的字符串字面量条数
 #        与 tools/i18n_baseline.json 比，只许变小（新文案请放进 scripts/core/Strings.gd）
+#    5e) 点单位交互定式（tools/selection_check.gd）—— 第七轮 ①：屏幕空间拾取的命中圈
+#        （半径→像素、钳位 14~90、小目标让先 6 px）与「点城 = 选中 / 再点 = 进城」这条链。
+#        它同样是 900 帧里一步都走不到的路径（玩家不动、不点任何东西），而失败方式恰好是
+#        「点了没反应」—— 只有对拾取几何与路由分流直接下断言才抓得到
 #    6) 城镇交互定式（tools/settlement_check.gd）—— 补给 / 招募 / 贸易 / 驻军的价格、
 #       边界（钱不够 / 编制满 / 池子空 / 城里没兵）与「低买高卖」是否真的有利可图。
 #       菜单的分支同样在 900 帧里一个都走不到，而它是整个经济闭环的入口
@@ -264,6 +268,14 @@ $rI18n = Invoke-GodotStep -Name 'i18n_check' -Extra @('--script', 'res://tools/i
 $i18nPass = @($rI18n.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rI18n.Ok -and -not $i18nPass) {
 	$fail.Add('i18n 棘轮  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 5e) 点单位交互定式（点击拾取 / 选中面板 / 点一次进城）----
+# 断言在 tools/selection_check.gd 里；同样只确认「退出码 0 且打印了 PASS」。
+$rSel = Invoke-GodotStep -Name 'selection_check' -Extra @('--script', 'res://tools/selection_check.gd')
+$selPass = @($rSel.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rSel.Ok -and -not $selPass) {
+	$fail.Add('点单位交互  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 6) 城镇交互定式（补给 / 招募 / 贸易 / 驻军）----

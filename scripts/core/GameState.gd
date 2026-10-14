@@ -46,3 +46,13 @@ static func faction_name(data: MapData, fid: int, none_text: String = "无阵营
 	if fid < 0 or fid >= data.factions.size():
 		return none_text
 	return data.faction(fid).name
+
+## 部队类型的显示名（AIParty.ai_kind() → 中文）。
+## 悬停提示与选中面板都要它：以前这张映射表只写在 HoverInspector 里，
+## 加第二个使用点时就必须搬出来，否则两处各写一份、改一处忘一处。
+static func party_kind_name(ai_kind: String) -> String:
+	return {
+		"lord": "领主部队",
+		"caravan": "商队",
+		"bandit": "强盗团伙",
+	}.get(ai_kind, "部队")

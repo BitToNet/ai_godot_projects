@@ -47,7 +47,7 @@ func update() -> void:
 			continue
 		if Vector2(a.position.x, a.position.z).distance_to(p) < 7.0:
 			var fname := GameState.faction_name(data, a.faction_id, "无阵营（流寇）")
-			var kindname: String = {"lord": "领主部队", "caravan": "商队", "bandit": "强盗团伙"}.get(a.ai_kind(), "部队")
+			var kindname := GameState.party_kind_name(a.ai_kind())
 			var lead: String = ("\n首领：%s" % a.boss_title) if a.boss_title != "" else ""
 			var hint: String = {"lord": "\n（可发起 Boss 战 · 最强）", "bandit": "\n（可发起 Boss 战）",
 				"caravan": "\n（可发起 Boss 战 · 最弱）"}.get(a.ai_kind(), "")

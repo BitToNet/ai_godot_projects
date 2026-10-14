@@ -11,6 +11,8 @@ extends PanelContainer
 ## 「左键点地」与「中键/右键拖拽」是鼠标手势（按坐标处理，不做成动作），故写在说明里。
 const LINES: Array = [
 	["", Strings.HELP_CLICK_MOVE],
+	["", Strings.HELP_SELECT],
+	["", Strings.HELP_SELECT_AGAIN],
 	["interact", Strings.HELP_INTERACT],
 	["time_flow", Strings.HELP_TIME_FLOW],
 	["move_left", Strings.HELP_PAN],

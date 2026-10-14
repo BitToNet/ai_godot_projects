@@ -9,11 +9,17 @@
 class_name PlayerParty
 extends PartyBase
 
+## 正常走完一条路径（**抵达**目标点）。中途被打断不算抵达，所以不发。
+## Main 用它做「先过去，抵达后自动进城」（见 Main._on_player_arrived）。
+signal arrived
+
 var marker_root: Node3D
 var marker_ring: MeshInstance3D
 var preview: MeshInstance3D
 var preview_mat: StandardMaterial3D
 var _spin: float = 0.0
+## halt() 期间置位：让 on_path_finished() 分得清「走完」与「被打断」。
+var _halting: bool = false
 
 func setup_player(p_data: MapData, p_cfg: MapConfig, p_name: String, p_faction: int, p_count: int, mat: Material, model_mesh: Mesh) -> void:
 	is_player = true
@@ -110,11 +116,16 @@ func step(delta: float) -> void:
 func on_path_finished() -> void:
 	if preview != null:
 		preview.mesh = null
+	# 只有「正常走完」才是抵达；halt() 打断进来的不算（见 halt）
+	if not _halting:
+		arrived.emit()
 
 ## 立即停止行军（Main 的「移动中按空格」/ 遭遇打断会调用）：
 ## 清空路径、收起目标点光环与路径预览，部队就地停下。
 func halt() -> void:
+	_halting = true
 	super.halt()
+	_halting = false
 	if marker_root != null:
 		marker_root.visible = false
 	if preview != null:

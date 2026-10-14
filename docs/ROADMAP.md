@@ -2438,3 +2438,125 @@ Variant 噪声调用与 Packed 成员写入，这些在 VM / 分配器 / 内存�
 3. 拾取射线最远距离（清单 #16）已在 §16.1 推导，但**没在 4096 m 上实测过**「站在一角能不能点到对角」。
 4. **100 支部队的实机帧率未测**：headless 只能证明生成与生成物不报错（本轮做到），每帧 AI 感知是 O(n²) 量级，需要实机或帧级探针。
 5. 绘制距离按 `size_scale()` 放大（植被 380 → 1520 m 等）后，**渲染开销未测**，`perf_probe` 的节点数是唯一线索。
+
+---
+
+## 十七、参考项目补齐记录（`godot_ai_test` → 本项目，逐批记账）
+
+> 用户点名对照 `F:\aigc_code\godot_ai_test`（**只读参考，从未改动、也不提交**），要求「先罗列差异，
+> 再慢慢补进来」。本节按实际发生的批次记账，**每批都以"跑满门禁 + 提交推送"收尾**，
+> 批次之间的顺序与风险在 §17.3 写清（那是下一次开工的入口）。
+
+### 17.1 清点结论（先纠正一个直觉误判）
+
+最容易误判的一条：那边**不是**靠外部模型资产赢的观感。它的地形同样是**全程序化**的
+（`src/world/terrain_map.gd`：4 个 `FastNoiseLite` + 箱式模糊 + 13 类生物群系），
+"更好看"来自**颜色 / 贴图 / 光照工程**：
+
+| 观感来源 | 那边的做法 | 位置 |
+|---|---|---|
+| 地表颜色过渡 | 每格 4 个独立顶点（≈66k 顶点）+ 每角 `_shaded()` + `COLOR_BLUR_RADIUS 2` | `world_map.gd build_ground()` |
+| 路面硬边 | 路缘**共用**同一个 `road_col`（不是插值） | 同上 |
+| 无缝细节 | 两张**程序生成**的无缝法线 / 细节图（UV1 / UV2，`BLEND_MODE_MUL`，均值 ≈1.0），瓦片数刻意互质（9.0 / 13.0） | `_ground_material()` |
+| 水面 | 24×24 `PlaneMesh` + 每帧滚动 `uv1_offset`（`WATER_SCROLL_SPEED 0.055`）+ 低粗糙度 / 半透 | `build_water()` / `_process()` |
+| 天空 / 光照 | `BG_SKY` + 自写 `sky_clouds.gdshader`；环境光取自天空（`sky_contribution 0.6`，昼 1.2 / 夜 0.22）；`TONE_MAPPER_FILMIC` 曝光 1.06；SSAO / glow / 雾全套 | `world_map.tscn` + `game_clock.gd` |
+| 火把点光 | 已有实现但**被配置关掉了**（`lighting.enabled = false`） | `map_lighting.gd` |
+
+**结论**：这些全部可以**零外部资产**搬过来（第 ② 批），不需要 GLB。
+
+其余四项差异的关键位置（供后续批次直接翻）：
+
+- **模型绑定动作**：那边全程用 `AnimationPlayer`（**零 `AnimationTree`**），靠 `ModelLibrary` 按
+  「精确名 → 骨架名前缀 / 后缀模糊 → 第一个」找动画（`find_anim()`），再由 `set_motion_state(root, moving, key)`
+  + `set_anim_rate(ap, units_per_sec, ref_speed, 0.30, 2.50)` 把位移速度绑到播放倍速上。
+  **坑**：`current_speed()` 的单位是「世界米 / 游戏小时」，直接喂进去会快 2.5 倍。
+- **点击拾取**：那边**不是射线**，是**屏幕空间投影**（`map_scene.gd:_pick_at()`：把实体中心
+  `unproject_position` 后比像素距离，半径 = `clampf(px + 10, 14, 90)`，定居点优先、部队 ×0.85）。
+  另有独立的 `world_map.gd:raycast_terrain()` 做高度场解析射线（自适应步长 + 24 次二分）——
+  与拾取**不是一回事**，本项目两者都已有（`CameraRig.ray_to_terrain` / 本批的 `MapPicker`）。
+- **进城 / 交互**：`_enter_settlement()` 先查距离（`INTERACT_RANGE 10.0`），太远则**先下旅行命令**，
+  到位后再开菜单；菜单按 `kind` 分叉（村庄 / 城镇 / 城堡各不同，含商店入口）。
+- **玩家面板 / 装备**：`Hero`（9 装备槽、24 技能、5 档品质 `rusty/fine/master/lordly`）；面板只发信号，
+  `MapScene` 是金币 / 背包 / 兵力的唯一修改者。
+- **存档**：`version: 2` 只加 `hero` / `shops` 两张表，v1 存档仍可读（本项目的 `SaveGame` 同样有版本门）。
+
+### 17.2 第 ① 批交付：点单位交互（点击拾取 / 选中面板 / 再点进城）
+
+**目标**：把「点地图上的单位 → 看详情 → 再点进城 / 追它」这条链做出来，
+**纯 GDScript、零资产、且不动生成指纹**。
+
+新增三个类（都是"状态 / 判定"层，不碰 UI 节点）：
+
+| 文件 | 职责 |
+|---|---|
+| `scripts/core/MapPicker.gd` | 屏幕坐标 → 命中谁（纯只读、可反复调用；投影抽成 3 个可覆写方法） |
+| `scripts/core/SelectionSystem.gd` | 「当前选中了谁」+ 面板数据（标题 / 正文 / 条目）+ 每帧失效检查 |
+| `scripts/ui/SelectionPanel.gd` | 非模态面板（**零中文字面量**，文案全走 `Strings`） |
+
+接线：`InputRouter` 新增 `pick_requested` 与可选字段 `picker`；`HUD` 新增 `selection_action`；
+`Main` 解释动作（前往 / 进入 / 追踪）；`PlayerParty` 新增 `arrived`；`WorldGenPipeline` 装配三者。
+
+**拾取口径（本批的可见决策）**
+
+| 目标 | 命中阈值（像素） | 说明 |
+|---|---|---|
+| 定居点 | `clampf(span(radius) + 6, 14, 90)` | 世界半径经同一投影换算成像素 ⇒ 近大远小 |
+| 部队 | 同上 × `0.85` | 小目标要瞄得更准；下限先钳位再乘，否则收紧会被 14 px 吃掉 |
+| 两者都命中 | 比**绝对像素距离**，部队让先 `6.0` px | 见下 |
+
+**为什么部队要让先 6 px**：本项目的领主 AI 以 `s.pos`（城中心）为巡逻终点，会**站在城里** ——
+若按"定居点一律优先"，这些部队**永远点不动**；若完全按最近者取胜，则"瞄准城、旁边正好有商队路过"
+会变成选中商队。6 px ≈「光标明显朝部队挪了一下」。两条都有断言（`selection_check`）。
+
+**交互链（与那边的差异，都是有意为之）**
+
+- 第一次点定居点 = **选中**，再点同一座 = **进城**（避免"想看详情"与"想进去"互相误触）。
+- 「进入」按钮**不灰**：距离不够时 `Main` 自动先下旅行命令，`PlayerParty.arrived` 到了自动进城，
+  途中用提示条说明「还有 N 米」。
+- 「追踪」只在目标移动超过 `TRACK_REPATH_M 30 m` 且距上次下达 ≥ `TRACK_REPATH_S 2 s` 时重新下目标
+  （用 `player.set_destination()` 而非 `time.order_move()`，免得刷日志）；世界时间 `FROZEN` 时静默不动，
+  目标消失时才出声。
+- 点空地 = 照旧行军，并**清空选中 + 取消旅行 / 追踪意图**（玩家自己指了方向，就不该再有东西替他改目标）。
+- 选中面板**非模态**：刻意**不进** `is_any_dialog_open()`，键盘 / 热键照常可用；Esc 关选中，
+  但真有模态面板（遭遇 / 进城菜单）在场时 Esc 归它 —— 交给 HUD 的派发顺序处理，面板自己不抢。
+- 读档时清掉旅行 / 追踪意图并 `selection.refresh()`（位置变了，面板上的距离是旧值）。
+
+**自检抓到的两个真 bug（都记在代码注释里）**
+
+1. `SelectionPanel._rebuild()` 里给"空提示"的行也造了 `Label` 却**不入树** ⇒ 每次重建漏一个孤儿节点。
+   平时完全无声，只在退出时以 `ObjectDB instances leaked at exit` 现形 —— 而这行 `ERROR:` 会被门禁判失败。
+   修法：提示为空就不造。
+2. 自检里 `sel.changed.connect(func(): ... sel ...)` 闭包**捕获被观察者自己** ⇒
+   `sel → 连接 → 闭包 → sel` 引用环，RefCounted 永不释放（`MapData` / `Heightmap` / `WorldContext` /
+   `SelectionSystem` 一串 "resources still in use"）。修法：计数闭包只捕获计数器（`Recorder`）。
+   这条坑写进了 `tools/selection_check.gd` 的类注释 —— 写自检时最容易顺手踩它。
+
+**新增门禁第 5e 步 `tools/selection_check.gd`（66 项断言，0.7 s）**：不建世界、不渲染。
+投影被换成「世界 XZ 直接当像素」的等价映射，于是阈值可以手算着断言；覆盖
+命中圈内外 / 阈值钳位（上限 90、下限 14）/ 小目标让先 / 相机背后 / 缺相机 / 缺高度场 /
+面板数据形状（两种选中）/ 部队被打没后自动清空 / `refresh()` / Esc 让路 / `InputRouter` 的左键分流
+（含「拾取器为空时行为逐位不变」这条回归保护，`tools/input_check.gd` 走的就是那条）。
+
+**验收（2026-10-14，`powershell -File tools\run_checks.ps1`）**
+
+| 项 | 结果 |
+|---|---|
+| 一键门禁 | **exit 0，26 项全绿，用时 55.6 s**（新增 5e 步） |
+| 生成指纹 | `958433c2f04c0e39…` **与基线一字不差**（本批零 RNG 抽取、不改世界内容） |
+| 生成统计 | 定居点 18 / 桥梁 7 / 植被 5150（未变） |
+| `selection_check` | 66 项断言全过，零 `ERROR:` / 零泄漏 |
+| `map_size_check` / `scale_probe` / `perf_probe` | 全绿（未触碰尺寸推导与结构量） |
+
+### 17.3 批次 ②–⑥（下一步的入口，按风险从低到高）
+
+| 批次 | 内容 | 关键位点 | 风险 |
+|---|---|---|---|
+| ② | **纯视觉提亮（零外部资产）**：天空环境光 / `TONE_MAPPER_FILMIC` / 雾 / SSAO / glow；`terrain.gdshader` 加细节图与色调混合；新 `sky_clouds.gdshader`；`MapTextureBaker` 按屏幕像素定尺度 | `MapTextureBaker.gd`、`terrain.gdshader`、`DayNightCycle.gd` | 低（不动生成）；但 `perf_probe` 会动，需重基线 |
+| ③ | **资产管线 + 定居点用真模型**：CC0 GLB 入库 + `AssetManifest` / `ModelLibrary` + `SettlementBuilder` 改用 `settlement_layout` | 新 `assets/`、`SettlementBuilder.gd` | **中高**：会改植被 / 定居点结构量基线，必须显式重基线 |
+| ④ | **动作绑定位移 + 骑手插槽 + 分帧装配 + 染色 / LOD**：`PartyModelBuilder` 加 `AnimationPlayer`、`anim_speed_reference`、`AssembleQueue`、`WeaponSocket` / `TintMaterial` | `PartyModelBuilder.gd` | **高**：100 支部队 × 骨骼动画，无 LOD 则性能基线崩 |
+| ⑤ | **玩家面板 + 装备 / 物品**：`Hero` / `ItemCatalog` / `CharacterScreen` + `CampaignState` 扩展 + 6 处接线（遭遇 / 速度 / 侦察） | `CampaignState.gd`、新 `Hero.gd` | 中：会碰到已校准的 AI 平衡基线 |
+| ⑥ | **商店 + 按 `kind` 分叉的城镇菜单 + 存档 v2**：`Shop` / `ShopPanel`、`SettlementSystem.menu_entries()`、`SaveGame` 加 `hero` / `shops` | `SettlementSystem.gd`、`SaveGame.gd` | 中：存档格式要带版本门，v1 旧档必须仍可读 |
+
+**开工前必须先回答的一个问题**（③ / ④ 的分岔）：GLB 模型是**替换**还是**并存**于现有的程序化
+`SettlementBuilder` / `PartyModelBuilder` 几何。这决定 ③ 要不要保留「零外部资产」这条隐性承诺，
+以及性能基线怎么重设。**没有这个决定之前不要动 `SettlementBuilder`。**

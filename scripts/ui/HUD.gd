@@ -7,6 +7,7 @@
 ##    HelpPanel        左下：操作说明            DebugStatsPanel   右下：FPS / draw call
 ##    ToastLabel       上方：临时提示            EncounterDialog   中央：遭遇对话框
 ##    SettlementDialog 中央：进城菜单（补给 / 招募 / 贸易 / 驻军）
+##    SelectionPanel  左侧：选中目标面板（点地图上的定居点 / 部队，非模态）
 ##
 ##  Main 只跟本文件的公开方法打交道（接口与拆分前完全一致，改动对外无感）。
 ##  每块控件自己 _process，HUD 不再需要每帧回调。
@@ -17,6 +18,8 @@ extends CanvasLayer
 signal encounter_choice(action: String)
 ## 进城菜单里点了一条（含 Esc = "leave"）。HUD 不解释动作含义，直接转给 SettlementSystem。
 signal settlement_action(action: String)
+## 选中面板上点了一条（含 Esc = "close"）。同上，含义由 Main 解释（前往 / 进入 / 追踪）。
+signal selection_action(action: String)
 
 var cfg: MapConfig
 var data: MapData
@@ -26,6 +29,7 @@ var minimap: MinimapView
 var topbar: TopBar
 var dialog: EncounterDialog
 var settlement_dialog: SettlementDialog
+var selection_panel: SelectionPanel
 
 var _loading: LoadingOverlay
 var _tooltip: HoverTooltip
@@ -56,6 +60,13 @@ func setup(p_cfg: MapConfig) -> void:
 	var stats := DebugStatsPanel.new()
 	stats.name = "DebugStatsPanel"
 	add_child(stats)
+
+	# 选中面板（非模态）：**必须早于两个对话框加入** —— _unhandled_input 按「后加入者先收到」
+	# 派发，排在后面才能保证 Esc 优先落进遭遇框 / 进城菜单，而不是被这里抢走。
+	selection_panel = SelectionPanel.new()
+	selection_panel.name = "SelectionPanel"
+	add_child(selection_panel)
+	selection_panel.action_pressed.connect(_on_selection_action)
 
 	dialog = EncounterDialog.new()
 	dialog.name = "EncounterDialog"
@@ -148,6 +159,20 @@ func hide_settlement() -> void:
 func is_settlement_open() -> bool:
 	return settlement_dialog.is_open()
 
+# ---------------------------------------------------------------- 选中面板
+## 选中了地图上的某个目标（定居点 / 部队）。title / body / entries 都是
+## SelectionSystem 组好的原样数据（与进城菜单同一套「传数据不传系统」的约定）。
+## ⚠ 本面板**不算** is_any_dialog_open()：看一眼详情不该让键盘路由整体让路，
+##    世界时间也不该因此锁上（它没有模态遮罩，地图照常能点）。
+func show_selection(title: String, body: String, entries: Array[Dictionary]) -> void:
+	selection_panel.open(title, body, entries)
+
+func hide_selection() -> void:
+	selection_panel.close()
+
+func is_selection_open() -> bool:
+	return selection_panel.is_open()
+
 ## 有任一面板在场（遭遇 / 进城）。输入路由与悬停提示都按这个让路：
 ## 两个面板都不会同时开（各自都会锁世界时间），但路由只想知道「现在键盘是不是别人的」。
 func is_any_dialog_open() -> bool:
@@ -158,3 +183,6 @@ func _on_dialog_choice(action: String) -> void:
 
 func _on_settlement_choice(action: String) -> void:
 	settlement_action.emit(action)
+
+func _on_selection_action(action: String) -> void:
+	selection_action.emit(action)
