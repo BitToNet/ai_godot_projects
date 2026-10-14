@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（25 项，约 58~70 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行下列步骤（26 项，约 58~72 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -38,6 +38,10 @@
 #        精确比对，耗时只做上界比对（1.6x 记 WARN / 2.5x 判失败）。它一上来就证伪了路线图
 #        的一条预估：植被的实例发射只占 2.2 ms / 917 ms，「改 multimesh_set_buffer」
 #        几乎省不下时间（详见 ROADMAP §12.1）
+#    7c) 地图尺寸适配定式（tools/map_size_check.gd）—— 第六轮 §15 第 ① 批：把「相机远裁剪面 /
+#        拾取最远距离 / heightmap_res 导出上限」这类**纯数值**假设钉住。它们的失败方式不是报错，
+#        而是在 4096 m 图上「地形被裁掉 / 编辑器里根本调不上去」，而 1024 m 图上门禁全绿 ——
+#        只有「按尺寸推导」这层关系本身的断言抓得到。它不建世界、不渲染，跑得很快
 #    6c) 存档定式（tools/save_check.gd）—— 存档格式 / 三道门（版本 / 种子 / 实体 id）/
 #        坏数据钳制 / 读档后的引用修复 / 文件读写（不建世界，纯定式）
 #    6d) 音频总线定式（tools/audio_check.gd）—— default_bus_layout.tres（Master → Music / Sfx）
@@ -303,6 +307,15 @@ $r3b = Invoke-GodotStep -Name 'scale_probe' -Extra @('--script', 'res://tools/sc
 $warn3b = @($r3b.Lines | Where-Object { $_ -match 'WARN' })
 if ($r3b.Ok -and $warn3b.Count -gt 0) {
 	$pass.Add("规模热点  注意  有 $($warn3b.Count) 条 WARN（未超硬容差，不判失败）")
+}
+
+# ---- 7c) 地图尺寸适配定式（tools/map_size_check.gd）----
+# 「换更大的地图」踩中的第一类坑是纯数值假设：相机远裁剪面裁掉地形、heightmap_res 的导出
+# 上限挡住 2049。它们不报错、只在 4096 m 图上显形，所以断言的是推导关系本身（不建世界）。
+$rSize = Invoke-GodotStep -Name 'map_size_check' -Extra @('--script', 'res://tools/map_size_check.gd')
+$sizePass = @($rSize.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rSize.Ok -and -not $sizePass) {
+	$fail.Add('地图尺寸  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 8) / 9) 音效联调 ----

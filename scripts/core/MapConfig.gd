@@ -11,7 +11,9 @@ extends Resource
 ## 地图尺寸（世界单位，米）；地图范围 = [0, map_size] x [0, map_size]
 @export var map_size: float = 1024.0
 ## 高度图分辨率（采样点数，必须为奇数）；间距 = map_size / (res-1)
-@export_range(129, 1025, 2) var heightmap_res: int = 513
+## 上限 2049 是为 4096 m 图留的：4096 m 想保持 2 m 间距就需要 2049 个采样点
+## （内存 2049² × 4 B ≈ 16.8 MB）。1024 m 图仍用 513（2 m 间距），换尺寸之前行为不变。
+@export_range(129, 2049, 2) var heightmap_res: int = 513
 
 @export_group("地形 · 地貌")
 @export var sea_level: float = 0.0

@@ -13,6 +13,11 @@ extends Node3D
 
 signal strategic_changed(is_strategic: bool)
 
+## 拾取射线的步进上限（米/步）与迭代上限（防死循环）。两者必须自洽：
+## 迭代上限要够走完 ray_max_distance() 推导出的距离 —— tools/map_size_check.gd 会算给你看。
+const RAY_STEP_MAX := 22.0
+const RAY_GUARD := 4000
+
 var cam: Camera3D
 var data: MapData
 var cfg: MapConfig
@@ -36,7 +41,7 @@ func setup(p_cfg: MapConfig, p_data: MapData, p_player: Node3D) -> void:
 	cam.name = "StrategicCamera"
 	cam.fov = 52.0
 	cam.near = 0.5
-	cam.far = 5000.0
+	cam.far = far_for(cfg.map_size)
 	add_child(cam)
 	zoom_height = cfg.cam_default_height
 	_update_pitch_from_zoom()
@@ -146,6 +151,15 @@ func _apply() -> void:
 func is_strategic() -> bool:
 	return _strategic
 
+## 远裁剪面：按地图尺寸推导 —— 4096 m 图的对角线是 5792 m，站在一角看对角必须是
+## 「看得见」而不是被裁掉；下限 5000 是 1024 m 图时代的既有取值，所以换尺寸之前行为一位不变。
+static func far_for(map_size: float) -> float:
+	return maxf(5000.0, map_size * 1.5)
+
+## 屏幕拾取射线的最远推进距离：同样按尺寸推导，1024 m 图下**仍是**原来的 4000 m。
+static func ray_max_distance(map_size: float) -> float:
+	return maxf(4000.0, map_size * 1.5)
+
 ## 屏幕坐标 → 地形世界坐标（对高度场做步进求交 + 二分细化）
 func ray_to_terrain(screen_pos: Vector2) -> Vector3:
 	if cam == null:
@@ -156,10 +170,11 @@ func ray_to_terrain(screen_pos: Vector2) -> Vector3:
 	var step := 2.0
 	var prev := origin
 	var guard := 0
-	while t < 4000.0 and guard < 4000:
+	var max_t := ray_max_distance(cfg.map_size)
+	while t < max_t and guard < RAY_GUARD:
 		guard += 1
 		t += step
-		step = minf(step * 1.06, 22.0)
+		step = minf(step * 1.06, RAY_STEP_MAX)
 		var p := origin + dir * t
 		# 打到地图外太远就停
 		if p.x < -700.0 or p.z < -700.0 or p.x > cfg.map_size + 700.0 or p.z > cfg.map_size + 700.0:
