@@ -264,28 +264,27 @@ func _veg_emit_ms(v: VegetationScatter, mat: ShaderMaterial) -> float:
 		root2.free()
 	return _median(runs)
 
-## 实例变换指纹：按「类名排序 → 区块名排序 → 实例序号」喂进 SHA-256。
-## 第六轮要动筛选遍数（会改布局）与发射方式（不该改数据），这个哈希会当场说话：
-## 发射方式改了而哈希不变 = 只换了写法；筛选改了而哈希变了 = 布局真的变了。
+## 实例变换指纹：每个实例单独算一个 12 float（3 行 × 4 列）的摘要，**排序后**再合成总指纹。
+## 第六轮要动分桶大小与发射方式，这个哈希会当场说话：
+##   分桶从 128 m 提到 256 m（节点 212 → 67）而哈希不变 = 实例落点一字未动；
+##   发射方式换了而哈希不变 = 只改了写法；筛选改了而哈希变了 = 布局真的变了。
+## 之所以要排序：旧版按「类名 → 区块名 → 实例序号」喂进去，分桶一变节点名就变、哈希跟着变，
+## 于是它测不出「换个分桶、布局没动」这件事（6b 就被这一点绊过一次）。
 func _veg_hash(root: Node3D) -> String:
-	var nodes := []
+	var per := PackedStringArray()
 	for c in root.get_children():
-		if c is MultiMeshInstance3D:
-			nodes.append(c)
-	nodes.sort_custom(func(a, b): return String(a.name) < String(b.name))
-	var h := HashingContext.new()
-	h.start(HashingContext.HASH_SHA256)
-	for c in nodes:
 		var mmi := c as MultiMeshInstance3D
+		if mmi == null:
+			continue
 		var mm := mmi.multimesh
-		var f := PackedFloat32Array()
-		f.append(float(mm.instance_count))
 		for i in mm.instance_count:
 			var t := mm.get_instance_transform(i)
-			f.append_array(PackedFloat32Array([t.origin.x, t.origin.y, t.origin.z]))
-			f.append_array(PackedFloat32Array([t.basis.x.x, t.basis.y.y, t.basis.z.z]))
-		f.append(float(String(mmi.name).hash()))
-		_h_feed(h, f)
+			per.append(_pack_hash(PackedVector3Array([t.basis.x, t.basis.y, t.basis.z, t.origin])))
+	per.sort()
+	var h := HashingContext.new()
+	h.start(HashingContext.HASH_SHA256)
+	for s in per:
+		h.update(s.to_utf8_buffer())
 	return _h_done(h)
 
 # ---------------------------------------------------------------- 2) 地形

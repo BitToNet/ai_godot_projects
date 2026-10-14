@@ -4,7 +4,7 @@
 		"settlements": 18,
 		"vegetation": 5163
 	},
-	"fingerprint": "19d42d358f8d5495adeb1946ad91a9a034fb878e510e309561f247bfd0d7f826",
+	"fingerprint": "d68cb1d2c0c2acae93df68f721c397f2f0eb9dd5300fb63c746c4a40680182fb",
 	"map_size": 1024.0,
 	"note": "由 tools/gen_fingerprint.gd --write-baseline 生成；指纹变化 = 生成结果变化（多半是 RNG 抽取顺序被动了）",
 	"parts": {
@@ -46,7 +46,7 @@
 		},
 		"vegetation": {
 			"detail": "5163 实例 / broadleaf=2132 cactus=257 conifer=1952 deadtree=211 rock=611",
-			"hash": "53c61521a6de1348c7f121ef88aca8d2fa68178e88ff6493bb4375981c506846"
+			"hash": "6ea6a9c9873a119ee828cfd8af57baf83510d866879e52c422153e3d1b297ca5"
 		}
 	},
 	"seed": 20250929

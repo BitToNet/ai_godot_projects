@@ -1,137 +1,137 @@
 {
-	"calib_ms": 15.47,
+	"calib_ms": 15.333,
 	"map_size": 1024,
 	"note": "由 tools/scale_probe.gd --write-baseline 生成；结构量必须精确一致，耗时只做上界比对",
 	"path_coarse_detail": [
 		{
 			"expanded": 15,
-			"ms": 0.458,
+			"ms": 0.497,
 			"pts": 2
 		},
 		{
 			"expanded": 21,
-			"ms": 0.557,
+			"ms": 0.651,
 			"pts": 2
 		},
 		{
 			"expanded": 13,
-			"ms": 0.272,
+			"ms": 0.32,
 			"pts": 2
 		},
 		{
 			"expanded": 13,
-			"ms": 0.356,
+			"ms": 0.435,
 			"pts": 2
 		},
 		{
 			"expanded": 25,
-			"ms": 0.762,
+			"ms": 0.86,
 			"pts": 2
 		},
 		{
 			"expanded": 24,
-			"ms": 0.756,
+			"ms": 0.852,
 			"pts": 2
 		},
 		{
 			"expanded": 626,
-			"ms": 8.578,
+			"ms": 9.608,
 			"pts": 5
 		},
 		{
 			"expanded": 62,
-			"ms": 1.505,
+			"ms": 1.59,
 			"pts": 3
 		},
 		{
 			"expanded": 430,
-			"ms": 6.562,
+			"ms": 8.254,
 			"pts": 4
 		},
 		{
 			"expanded": 24,
-			"ms": 0.639,
+			"ms": 0.925,
 			"pts": 4
 		},
 		{
 			"expanded": 18,
-			"ms": 0.585,
+			"ms": 0.876,
 			"pts": 2
 		},
 		{
 			"expanded": 3913,
-			"ms": 60.863,
+			"ms": 77.667,
 			"pts": 10
 		}
 	],
 	"path_coarse_expanded": 5184,
-	"path_coarse_max_ms": 60.863,
-	"path_coarse_total_ms": 81.893,
+	"path_coarse_max_ms": 77.667,
+	"path_coarse_total_ms": 102.535,
 	"path_fine_detail": [
 		{
 			"expanded": 31,
-			"ms": 1.693,
+			"ms": 1.341,
 			"pts": 2
 		},
 		{
 			"expanded": 41,
-			"ms": 2.022,
+			"ms": 2.11,
 			"pts": 2
 		},
 		{
 			"expanded": 21,
-			"ms": 0.772,
+			"ms": 0.848,
 			"pts": 2
 		},
 		{
 			"expanded": 49,
-			"ms": 1.425,
+			"ms": 1.56,
 			"pts": 2
 		},
 		{
 			"expanded": 133,
-			"ms": 3.924,
+			"ms": 4.576,
 			"pts": 2
 		},
 		{
 			"expanded": 49,
-			"ms": 2.254,
+			"ms": 2.705,
 			"pts": 2
 		},
 		{
 			"expanded": 30,
-			"ms": 1.479,
+			"ms": 1.084,
 			"pts": 2
 		},
 		{
 			"expanded": 52,
-			"ms": 2.315,
+			"ms": 2.388,
 			"pts": 3
 		},
 		{
 			"expanded": 296,
-			"ms": 6.654,
+			"ms": 7.58,
 			"pts": 5
 		},
 		{
 			"expanded": 53,
-			"ms": 1.322,
+			"ms": 1.978,
 			"pts": 5
 		},
 		{
 			"expanded": 37,
-			"ms": 1.578,
+			"ms": 1.517,
 			"pts": 2
 		},
 		{
 			"expanded": 351,
-			"ms": 16.271,
+			"ms": 18.287,
 			"pts": 5
 		}
 	],
 	"path_fine_expanded": 1143,
-	"path_fine_max_ms": 16.271,
-	"path_fine_total_ms": 41.709,
+	"path_fine_max_ms": 18.287,
+	"path_fine_total_ms": 45.974,
 	"path_n": 12,
 	"path_pairs": [
 		[
@@ -207,32 +207,32 @@
 			527.889
 		]
 	],
-	"prim_height_at_us": 1.233,
-	"prim_normal_at_us": 4.693,
+	"prim_height_at_us": 1.239,
+	"prim_normal_at_us": 5.281,
 	"seed": 20250929,
 	"terrain_chunks": 64,
 	"terrain_idx_hash": "ed3c6f4ec427b094",
-	"terrain_lod0_max_ms": 2.684,
-	"terrain_lod0_median_ms": 2.393,
+	"terrain_lod0_max_ms": 2.931,
+	"terrain_lod0_median_ms": 2.546,
 	"terrain_lod0_n": 64,
-	"terrain_lod0_sum_ms": 142.627,
+	"terrain_lod0_sum_ms": 160.735,
 	"terrain_lod0_verts": 1601,
-	"terrain_lod1_max_ms": 0.76,
-	"terrain_lod1_median_ms": 0.744,
+	"terrain_lod1_max_ms": 0.834,
+	"terrain_lod1_median_ms": 0.774,
 	"terrain_lod1_n": 16,
-	"terrain_lod1_sum_ms": 10.938,
-	"terrain_lod2_max_ms": 0.285,
-	"terrain_lod2_median_ms": 0.269,
+	"terrain_lod1_sum_ms": 11.978,
+	"terrain_lod2_max_ms": 0.304,
+	"terrain_lod2_median_ms": 0.273,
 	"terrain_lod2_n": 16,
-	"terrain_lod2_sum_ms": 3.825,
-	"terrain_lod3_max_ms": 0.122,
-	"terrain_lod3_median_ms": 0.088,
+	"terrain_lod2_sum_ms": 4.455,
+	"terrain_lod3_max_ms": 0.146,
+	"terrain_lod3_median_ms": 0.135,
 	"terrain_lod3_n": 16,
-	"terrain_lod3_sum_ms": 1.496,
+	"terrain_lod3_sum_ms": 2.137,
 	"terrain_norm_hash": "a712dd9038c7b2ef",
 	"terrain_pos_hash": "5a2e59665239f171",
-	"veg_chunks": 212,
-	"veg_emit_ms": 2.599,
+	"veg_chunks": 67,
+	"veg_emit_ms": 3.488,
 	"veg_instances": 5163,
 	"veg_kinds": {
 		"broadleaf": 2132,
@@ -241,6 +241,6 @@
 		"deadtree": 211,
 		"rock": 611
 	},
-	"veg_total_ms": 1011.11,
-	"veg_xform_hash": "df5b0d581cff76f2"
+	"veg_total_ms": 973.728,
+	"veg_xform_hash": "6df28ca8fc5f8fc7"
 }

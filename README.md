@@ -87,6 +87,13 @@ godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://too
 这样它既能当「优化有没有真的变快」的量尺，也能当「重构有没有偷偷改变世界」的看守。
 注意 headless 下没有渲染：draw call / 视锥剔除 / MultiMesh 上传的收益它测不到。
 
+变换指纹 `veg_xform_hash` 是**分组无关**的：每个实例各算一个 12 float（三个基向量 + 原点）摘要，
+排序后再合成，所以它只反映「实例落在哪里」。把植被分桶从 128 m 提到 256 m（第六轮 ②：节点
+212 → 67、perf `nodes` 446 → 315）时这个值在两次测量里逐位相同，而 `gen_fingerprint.json` 的
+10 个段里只有 `vegetation` 一段变（其余逐字节相同）—— 这就是「只换了装桶方式、世界内容没动」
+的正式证据。同一批还试过 `RenderingServer.multimesh_set_buffer` 批量写：正确但**更慢**
+（发射段 2.6 → 5.4 ms），已否决并改回逐实例写（见 ROADMAP §12.7）。
+
 ### 6. 换一张地图
 打开 `scripts/core/MapConfig.gd`，修改：
 ```gdscript

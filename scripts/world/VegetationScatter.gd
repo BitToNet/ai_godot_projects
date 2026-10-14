@@ -24,7 +24,10 @@
 class_name VegetationScatter
 extends RefCounted
 
-const CHUNK := 128.0
+## 植被区块边长：第六轮 6b 从 128 m 提到 256 m —— 节点/对象数减到约 1/3（1024 m 地图上 4×4=16 桶/类），
+## 代价是剔除粒度变粗（256 m 的块「只要一角在视锥里」就整块画）。headless 测不到剔除这一项，
+## 所以只能说「节点数一定下降」，剔除效率未测（perf_probe 的 draw_calls/nodes 能看到前者）。
+const CHUNK := 256.0
 const CELL := 7.0
 
 var cfg: MapConfig
@@ -208,9 +211,14 @@ func _emit_chunks(kind: String, mesh: Mesh, list: Array[Transform3D], mat: Shade
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.mesh = mesh
+		# 6b 试过 RenderingServer.multimesh_set_buffer 批量写（每实例 12 个 float，3 行 × 4 列行主序）：
+		# 正确性没问题（探针能从场景读回同一批 Transform3D），但**反而更慢** —— 发射段 2.6 → 5.4 ms；
+		# 在 GDScript 里逐实例填 12 个 float 的开销，大于 5163 次 set_instance_transform 的调用开销。
+		# 每桶只有约 80 个实例，这个规模不值得批量写，改回逐实例写（数据见 ROADMAP §12.7）。
 		mm.instance_count = arr.size()
 		for i in arr.size():
 			mm.set_instance_transform(i, arr[i])
+
 		var mmi := MultiMeshInstance3D.new()
 		mmi.name = "%s_%d" % [kind, key]
 		mmi.multimesh = mm
