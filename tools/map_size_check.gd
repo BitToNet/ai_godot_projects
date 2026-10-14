@@ -102,11 +102,74 @@ func _run() -> void:
 	_ok(CameraRig.RAY_GUARD >= need,
 		"RAY_GUARD %d 够走完 4096 m 的拾取距离（估算需要 %d 步）" % [CameraRig.RAY_GUARD, need])
 
-	# ---- 6) 内存量级（只报告，不判定）：2049² float32 的高度图 ----
+	# ---- 6) 地形分块：块数受控，且网格顶点间距不随地图尺寸变化 ----
+	# 1024 m 下必须**逐位**等于旧常量（8×8 = 64 块、每级 32/16/8/4 四边形、间距 4 m）
+	_ok(TerrainManager.chunk_size_for(1024.0) == TerrainManager.CHUNK_SIZE,
+		"1024 m 图的分块边长仍是旧常量 %.0f（%.0f）" % [TerrainManager.CHUNK_SIZE, TerrainManager.chunk_size_for(1024.0)])
+	_ok(TerrainManager.lod_quads_for(1024.0) == TerrainManager.LOD_QUADS,
+		"1024 m 图的每级四边形数仍是旧常量（%s）" % str(TerrainManager.lod_quads_for(1024.0)))
+	var n1024 := int(ceil(1024.0 / TerrainManager.chunk_size_for(1024.0)))
+	_ok(n1024 * n1024 == 64, "1024 m 图仍是 8×8 = 64 块（%d）" % (n1024 * n1024))
+
+	# 4096 m：256 m 分块 / 16×16 = 256 块（§12.5 #5 的目标），且块数有预算上限
+	var cs_target := TerrainManager.chunk_size_for(TARGET_SIZE)
+	var n_target := int(ceil(TARGET_SIZE / cs_target))
+	_ok(cs_target == 256.0, "4096 m 图的分块边长是 256 m（%.0f）" % cs_target)
+	_ok(n_target * n_target == 256, "4096 m 图是 16×16 = 256 块（%d）" % (n_target * n_target))
+	_ok(n_target * n_target <= 256, "4096 m 图的块数不超过预算 256（%d）" % (n_target * n_target))
+	_ok(TerrainManager.lod_quads_for(TARGET_SIZE) == [64, 32, 16, 8],
+		"4096 m 图每级四边形数翻倍（%s）" % str(TerrainManager.lod_quads_for(TARGET_SIZE)))
+
+	# 顶点间距恒定 —— 这是「只换装桶方式」的关键：SKIRT 与 LOD_DIST 都是按这个间距调出来的
+	for s in [512.0, 1024.0, 2048.0, TARGET_SIZE, 8192.0]:
+		var q: Array = TerrainManager.lod_quads_for(s)
+		var sp := TerrainManager.chunk_size_for(s) / float(q[0])
+		_ok(is_equal_approx(sp, TerrainManager.MESH_SPACING),
+			"%.0f m 图的 LOD0 顶点间距仍是 %.1f m（%.4f）" % [s, TerrainManager.MESH_SPACING, sp])
+		# 四级各自「分块 / 四边形数」也应等于 4 / 8 / 16 / 32 m —— 相邻级正好差 2 倍
+		var ok_lv := true
+		for i in 4:
+			if not is_equal_approx(TerrainManager.chunk_size_for(s) / float(q[i]), TerrainManager.MESH_SPACING * pow(2.0, i)):
+				ok_lv = false
+		_ok(ok_lv, "%.0f m 图的四级间距依次是 4/8/16/32 m" % s)
+	var mono_q := true
+	var sizes2 := [512.0, 1024.0, 2048.0, TARGET_SIZE, 8192.0]
+	for i in range(1, sizes2.size()):
+		if TerrainManager.chunk_size_for(sizes2[i]) < TerrainManager.chunk_size_for(sizes2[i - 1]):
+			mono_q = false
+	_ok(mono_q, "分块边长对地图尺寸单调不减")
+
+	# LOD 距离阈值本批**不动**：它按「米」算，与地图尺寸无关（改的只是分块的粒度）
+	_ok(TerrainManager.LOD_DIST[0] == 220.0 and TerrainManager.LOD_DIST[1] == 400.0
+		and TerrainManager.LOD_DIST[2] == 660.0 and TerrainManager.LOD_DIST[3] == 1e9,
+		"LOD 距离阈值仍是 220 / 400 / 660 / 无限（%s）" % str(TerrainManager.LOD_DIST))
+	# LOD0 单块顶点数（只报告）：4096 m 下 65² = 4225 = 1024 m 图 33² 的 4 倍，
+	# 但块数是 1/4，所以「全图 LOD0 顶点总数」不变 —— 这正是间距不变的含义
+	var q1024: Array = TerrainManager.lod_quads_for(1024.0)
+	var q4096: Array = TerrainManager.lod_quads_for(TARGET_SIZE)
+	var v4096: int = (int(q4096[0]) + 1) * (int(q4096[0]) + 1)
+	# 单块三角形数翻 4 倍（四边形数翻倍）；而「每平方米的三角形数」不随尺寸变 ——
+	# 后者才是「顶点间距不变」的可检验含义。注意**别拿顶点数当不变量**：
+	# 顶点数是 (q+1)²，33² → 65² 是 3.88 倍而不是 4 倍（第一版就是这么写错的，门禁报了 2 项失败）。
+	var tri1024: int = int(q1024[0]) * int(q1024[0]) * 2
+	var tri4096: int = int(q4096[0]) * int(q4096[0]) * 2
+	_ok(tri4096 == tri1024 * 4, "4096 m 图单块 LOD0 三角形数是 1024 m 图的 4 倍（%d vs %d）" % [tri4096, tri1024])
+	var dens1024 := float(n1024 * n1024 * tri1024) / (1024.0 * 1024.0)
+	var dens4096 := float(n_target * n_target * tri4096) / (TARGET_SIZE * TARGET_SIZE)
+	_ok(is_equal_approx(dens1024, dens4096),
+		"全图 LOD0 三角形密度不随尺寸变（%.4f vs %.4f 个/m²）" % [dens1024, dens4096])
+	# 间距 4 m ⇒ 每个四边形 16 m² ⇒ 每个三角形 8 m² ⇒ 密度 0.125
+	_ok(is_equal_approx(dens1024, 1.0 / (TerrainManager.MESH_SPACING * TerrainManager.MESH_SPACING * 0.5)),
+		"三角形密度与 %.0f m 间距自洽（%.4f 个/m² = 8 m²/个）" % [TerrainManager.MESH_SPACING, dens1024])
+
+	# ---- 7) 内存量级（只报告，不判定）：2049² float32 的高度图 ----
 	# 用十进制 MB，跟 ROADMAP §12.5 #4 写的「≈16.8 MB」同口径（MiB 会显示成 16.0，容易被当成不一致）
 	var bytes := want_res * want_res * 4
 	print("[地图尺寸] 4096 m / %.0f m 间距 ⇒ 高度图 %d² × 4 B = %.1f MB"
 		% [spacing_now, want_res, float(bytes) / 1000000.0])
+	print("[地图尺寸] 4096 m ⇒ 地形 %d×%d = %d 块 × %d 四边（LOD0 顶点 %d/块，间距 %.1f m）"
+		% [n_target, n_target, n_target * n_target, TerrainManager.lod_quads_for(TARGET_SIZE)[0],
+			v4096, TerrainManager.MESH_SPACING])
 
 	if _fails.is_empty():
 		print("PASS：地图尺寸推导定式全部正常（%d 项断言）" % _total)

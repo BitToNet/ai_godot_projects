@@ -292,13 +292,17 @@ func _p_terrain() -> void:
 	var tm := TerrainManager.new()
 	tm.cfg = cfg
 	tm.data = main.data
-	var n := int(ceil(cfg.map_size / TerrainManager.CHUNK_SIZE))
+	# 分块边长 / 每级四边形数都按地图尺寸推导（1024 m 下就是 128 m 与 [32,16,8,4]，与旧常量逐位相同）。
+	# 探针不能再用那两个常量算结构量：换尺寸时它们会算出一个这个工程根本不会建出来的块数。
+	var cs := TerrainManager.chunk_size_for(cfg.map_size)
+	var quads_by_lod := TerrainManager.lod_quads_for(cfg.map_size)
+	var n := int(ceil(cfg.map_size / cs))
 	cur["terrain_chunks"] = n * n
-	var quads0: int = TerrainManager.LOD_QUADS[0]
+	var quads0: int = quads_by_lod[0]
 	cur["terrain_lod0_verts"] = (quads0 + 1) * (quads0 + 1) + quads0 * 4 * 4
 
 	for lod in 4:
-		var quads: int = TerrainManager.LOD_QUADS[lod]
+		var quads: int = quads_by_lod[lod]
 		var nchunks: int = int(cur["terrain_chunks"])
 		var limit: int = nchunks if lod == 0 else mini(TERRAIN_SAMPLE, nchunks)
 		var times := PackedFloat32Array()
@@ -405,9 +409,11 @@ func _table() -> Array:
 		float(cur["veg_total_ms"]) - float(cur["veg_emit_ms"])])
 	lines.append("地形 块数 %d / LOD0 顶点 %d / 位置指纹 %s" % [
 		int(cur["terrain_chunks"]), int(cur["terrain_lod0_verts"]), String(cur["terrain_pos_hash"])])
+	# 报告里的四边形数同样按尺寸推导（这个函数里没有 _p_terrain 的局部量，得自己算一遍）
+	var quads_report := TerrainManager.lod_quads_for(cfg.map_size)
 	for lod in 4:
 		lines.append("地形 LOD%d（%d 块 × %d 四边）中位 %.2f ms / 最大 %.2f ms / 合计 %.1f ms" % [
-			lod, int(cur["terrain_lod%d_n" % lod]), int(TerrainManager.LOD_QUADS[lod]),
+			lod, int(cur["terrain_lod%d_n" % lod]), int(quads_report[lod]),
 			float(cur["terrain_lod%d_median_ms" % lod]), float(cur["terrain_lod%d_max_ms" % lod]),
 			float(cur["terrain_lod%d_sum_ms" % lod])])
 	lines.append("采样原语 单次 height_at %.2f µs / normal_at %.2f µs（法线 = 4 次采样）" % [

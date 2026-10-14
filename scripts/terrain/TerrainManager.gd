@@ -1,23 +1,46 @@
 ## =============================================================================
 ##  TerrainManager —— 地形分块网格 + LOD
 ##
-##  地图 1024x1024 分成 8x8 = 64 个 128 米的 Chunk，每个 Chunk 有 4 级 LOD
-##  （每边 32 / 16 / 8 / 4 个四边形）。等级按「相机到 Chunk 中心的水平距离」选取：
+##  地图按 map_size / CHUNK_SIZE 分成 n×n 个 Chunk。1024 m 图上是 8x8 = 64 个 128 米的 Chunk，
+##  每个 Chunk 有 4 级 LOD（每边 32 / 16 / 8 / 4 个四边形，即顶点间距恒为 MESH_SPACING = 4 m）。
+##  等级按「相机到 Chunk 中心的水平距离」选取：
 ##      LOD0 < 220m   LOD1 < 400m   LOD2 < 660m   其余 LOD3
 ##  网格按需生成并缓存（首次访问才 build），因此远处的高精度网格永远不会被创建。
 ##  每个 Chunk 四周加一圈向下 8 米的「裙边(skirt)」，用来遮盖不同 LOD 之间的接缝。
 ##
-##  性能：LOD0 全图 64*(32*32*2)=131k 三角形；实际同屏通常只有 6~10 个 LOD0 Chunk，
+##  换地图尺寸（ROADMAP §12.5 #5）：分块边长与每级四边形数都由 map_size 推导（见 chunk_size_for /
+##  lod_quads_for）。1024 m 下两者算出来就是本文件里的旧常量，所以既有世界逐位不变；
+##  4096 m 下变成 256 m 分块、16×16 = 256 块、每级四边形数翻倍（顶点间距仍 4 m）。
+##
+##  性能：1024 m 图上 LOD0 全图 64*(32*32*2)=131k 三角形；实际同屏通常只有 6~10 个 LOD0 Chunk，
 ##  远处自动降到 LOD3（每块仅 32 个三角形）。地面始终是 1 个材质、64 个 draw call
 ##  （被视锥剔除后更少）。
 ## =============================================================================
 class_name TerrainManager
 extends Node3D
 
-const CHUNK_SIZE := 128.0
-const LOD_QUADS := [32, 16, 8, 4]
+const CHUNK_SIZE := 128.0        ## 1024 m 图的分块边长；同时也是推导下限
+const LOD_QUADS := [32, 16, 8, 4] ## 1024 m 图的每级四边形数（LOD0 间距 = MESH_SPACING）
 const LOD_DIST := [220.0, 400.0, 660.0, 1e9]
 const SKIRT := 8.0
+## 每级网格的顶点间距（米）。分块变大时四边形数**同步放大**，这条间距保持不变 ——
+## 理由：SKIRT（8 m 裙边）与 LOD_DIST（米）都是按这个间距调出来的（见 §16.2 的说明）。
+const MESH_SPACING := 4.0
+
+## 分块边长按地图尺寸推导：1024 m 及以下仍是 128 m（8×8 = 64 块，与既有世界逐位一致），
+## 4096 m 时 256 m（16×16 = 256 块）。见 ROADMAP §12.5 的 #5。
+static func chunk_size_for(map_size: float) -> float:
+	return maxf(CHUNK_SIZE, map_size / 16.0)
+
+## 每级四边形数：随分块等比放大，让 MESH_SPACING 不随地图尺寸变化。
+## 只放大分块而不放大四边形数，等于同时改掉「网格精度 / 裙边余量 / LOD 距离」三件事 ——
+## 探针里的顶点位置与法线指纹也会跟着变，而那不是本批想改的东西。
+static func lod_quads_for(map_size: float) -> Array:
+	var k := chunk_size_for(map_size) / CHUNK_SIZE      # 1024 m ⇒ 1.0；4096 m ⇒ 2.0
+	var out := []
+	for q in LOD_QUADS:
+		out.append(maxi(1, int(round(float(q) * k))))
+	return out
 
 var cfg: MapConfig
 var data: MapData
@@ -27,11 +50,20 @@ var _chunks: Array = []          ## {node, cx, cz, lod, cache: Dictionary, cente
 var _rebuild_budget: int = 2
 var _timer: float = 0.0
 
+## 本实例的分块边长 / 每级四边形数：都从 cfg 推导，而不是缓存在成员里 ——
+## scale_probe 会绕过 setup() 直接调 _build_chunk_mesh()，缓存在 setup 里的值在那种用法下是空的。
+func chunk_size() -> float:
+	return chunk_size_for(cfg.map_size) if cfg != null else CHUNK_SIZE
+
+func lod_quads() -> Array:
+	return lod_quads_for(cfg.map_size) if cfg != null else LOD_QUADS
+
 func setup(p_cfg: MapConfig, p_data: MapData, p_mat: ShaderMaterial, focus: Vector3) -> void:
 	cfg = p_cfg
 	data = p_data
 	mat = p_mat
-	var n := int(ceil(cfg.map_size / CHUNK_SIZE))
+	var cs := chunk_size()
+	var n := int(ceil(cfg.map_size / cs))
 	for cz in n:
 		for cx in n:
 			var node := MeshInstance3D.new()
@@ -39,7 +71,7 @@ func setup(p_cfg: MapConfig, p_data: MapData, p_mat: ShaderMaterial, focus: Vect
 			node.material_override = mat
 			node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 			add_child(node)
-			var c := Vector3(float(cx) * CHUNK_SIZE + CHUNK_SIZE * 0.5, 0.0, float(cz) * CHUNK_SIZE + CHUNK_SIZE * 0.5)
+			var c := Vector3(float(cx) * cs + cs * 0.5, 0.0, float(cz) * cs + cs * 0.5)
 			_chunks.append({"node": node, "cx": cx, "cz": cz, "lod": -1, "cache": {}, "center": c})
 	# 先全部建 LOD3（最粗，很便宜），保证开场瞬间地面不会缺块
 	_rebuild_budget = 1 << 30
@@ -93,7 +125,7 @@ func _apply_lod(ch: Dictionary, lod: int) -> void:
 	if mesh == null:
 		if _rebuild_budget <= 0:
 			return
-		mesh = _build_chunk_mesh(ch.cx, ch.cz, LOD_QUADS[lod])
+		mesh = _build_chunk_mesh(ch.cx, ch.cz, int(lod_quads()[lod]))
 		cache[lod] = mesh
 		_rebuild_budget -= 1
 	ch.node.mesh = mesh
@@ -103,15 +135,16 @@ func _apply_lod(ch: Dictionary, lod: int) -> void:
 
 func _build_chunk_mesh(cx: int, cz: int, quads: int) -> ArrayMesh:
 	var hm := data.hm
-	var step := CHUNK_SIZE / float(quads)
+	var cs := chunk_size()
+	var step := cs / float(quads)
 	var n := quads + 1
 	var vcount := n * n
 	var verts := PackedVector3Array()
 	var norms := PackedVector3Array()
 	var uvs := PackedVector2Array()
 	verts.resize(vcount); norms.resize(vcount); uvs.resize(vcount)
-	var ox := float(cx) * CHUNK_SIZE
-	var oz := float(cz) * CHUNK_SIZE
+	var ox := float(cx) * cs
+	var oz := float(cz) * cs
 	# ---- 高度格 + 中心差分法线 ----
 	# 原来每顶点调一次 hm.normal_at()，它内部是 4 次 height_at（±cell 有限差分）——
 	# 一块 LOD0 = 1089 顶点 × 5 次采样。改成「先把这一块（含一圈外环）的高度算成格点数组，
