@@ -1,0 +1,18 @@
+{
+	"note": "i18n 棘轮基线：scripts/ui 下含表意文字的字符串字面量条数。只许变小；调高必须写进 ROADMAP。",
+	"project_total": 602,
+	"ui_files": {
+		"DebugStatsPanel.gd": 1,
+		"EncounterDialog.gd": 5,
+		"HUD.gd": 0,
+		"HelpPanel.gd": 16,
+		"HoverTooltip.gd": 0,
+		"LoadingOverlay.gd": 3,
+		"MinimapView.gd": 0,
+		"SettlementDialog.gd": 1,
+		"ToastLabel.gd": 0,
+		"TopBar.gd": 0,
+		"UiTheme.gd": 0
+	},
+	"ui_total": 26
+}

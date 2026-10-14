@@ -74,11 +74,11 @@ func _refresh_purse() -> void:
 			_purse_label.text = ""
 		return
 	var c := campaign
-	var txt := "钱袋 %d 金 · 粮 %d 件 · 士气 %d · 声望 %d · %s %d/%d" % [
+	var txt := Strings.PURSE_LINE % [
 		c.denars, c.supplies, c.morale, c.renown,
 		c.rules.tier_name(c.tier), c.troops(), c.capacity()]
 	if c.debt_weeks > 0:
-		txt += " · 欠薪 %d 周" % c.debt_weeks
+		txt += Strings.ARREARS % c.debt_weeks
 	var col := Color(0.96, 0.88, 0.62)
 	if c.debt_weeks > 0 or c.morale < 20:
 		col = Color(1.0, 0.52, 0.42)        # 欠薪 / 濒临溃散
@@ -99,17 +99,17 @@ func _process(delta: float) -> void:
 	if _purse_timer >= 0.25:
 		_purse_timer = 0.0
 		_refresh_purse()
-	var speed_txt := "暂停" if day_night.paused else ("×%d" % int(day_night.speed))
-	_day_label.text = "第 %d 天   %s" % [day_night.day, day_night.time_string()]
-	_speed_label.text = "时间流速：%s" % speed_txt
+	var speed_txt := Strings.SPEED_PAUSED if day_night.paused else (Strings.SPEED_MULT % int(day_night.speed))
+	_day_label.text = Strings.DAY_LABEL % [day_night.day, day_night.time_string()]
+	_speed_label.text = Strings.SPEED_HINT % speed_txt
 	if day_night.paused:
 		# 键名从 [input] 段读（手柄上就是「长按 手柄X」），不写死空格
-		_pause_badge.text = "⏸ 时间已暂停（长按 %s 流动 / 点击地图行军）" % InputRouter.action_hint_text("time_flow")
+		_pause_badge.text = Strings.PAUSE_BADGE % InputRouter.action_hint_text("time_flow")
 	elif day_night.is_night():
-		_pause_badge.text = "🌙 夜色降临，定居点点亮灯火"
+		_pause_badge.text = Strings.NIGHT_BADGE
 	else:
 		_pause_badge.text = ""
 
 func set_terrain_text(t: String) -> void:
 	if _terrain_label != null:
-		_terrain_label.text = "当前地形：" + t
+		_terrain_label.text = Strings.TERRAIN + t

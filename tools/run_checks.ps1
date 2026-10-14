@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（22 项，约 60~65 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行下列步骤（23 项，约 65~70 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -24,6 +24,8 @@
 #        队列算错的表现是「部队偶尔站着不动」，900 帧主场景里很难稳定复现，只能直接对契约下断言
 #    5c) 分级日志契约（tools/log_check.gd）—— 第六轮 ⑦：默认级别必须仍是 INFO（门禁按默认
 #        级别解析输出），ERROR 必须仍以 "ERROR: " 开头走 stderr（门禁靠它兜底抓失败）
+#    5d) i18n 棘轮（tools/i18n_check.gd）—— 第六轮 ⑥：scripts/ui 里含中文的字符串字面量条数
+#        与 tools/i18n_baseline.json 比，只许变小（新文案请放进 scripts/core/Strings.gd）
 #    6) 城镇交互定式（tools/settlement_check.gd）—— 补给 / 招募 / 贸易 / 驻军的价格、
 #       边界（钱不够 / 编制满 / 池子空 / 城里没兵）与「低买高卖」是否真的有利可图。
 #       菜单的分支同样在 900 帧里一个都走不到，而它是整个经济闭环的入口
@@ -236,6 +238,14 @@ $rLog = Invoke-GodotStep -Name 'log_check' -Extra @('--script', 'res://tools/log
 $logPass = @($rLog.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rLog.Ok -and -not $logPass) {
 	$fail.Add('分级日志  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 5d) i18n 棘轮（scripts/ui 里还剩多少硬编码中文，只许变小）----
+# 断言在 tools/i18n_check.gd 里；它会把当前条数与基线一起打印，趋势肉眼可见。
+$rI18n = Invoke-GodotStep -Name 'i18n_check' -Extra @('--script', 'res://tools/i18n_check.gd')
+$i18nPass = @($rI18n.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rI18n.Ok -and -not $i18nPass) {
+	$fail.Add('i18n 棘轮  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 6) 城镇交互定式（补给 / 招募 / 贸易 / 驻军）----

@@ -108,6 +108,12 @@ godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://too
 `.github/workflows/ci.yml`：先 `--headless --editor --quit` 建导入缓存，再跑 `tools/run_checks.ps1`
 （引擎路径用 `GODOT_BIN` 注入，本机已用它跑通整道门）。
 
+界面文案（第六轮 ⑥）：新增 `scripts/core/Strings.gd` 这张常量表，**值是逐字保真的** ——
+迁完 `hud_check` 68 项断言仍全过，说明屏幕上没有任何一个字被改动。`tools/i18n_check.gd`
+（门禁第 5d 步）数 `scripts/ui/**` 里还剩多少条硬编码中文，与 `tools/i18n_baseline.json`
+比**只许变小**（当前 `ui_total=26`，迁移前是 34；新文案请放进 `Strings.gd`，要调高基线得显式
+`-- --write-baseline` 并写进 ROADMAP）。
+
 ### 6. 换一张地图
 打开 `scripts/core/MapConfig.gd`，修改：
 ```gdscript
