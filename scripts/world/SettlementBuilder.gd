@@ -66,7 +66,7 @@ func place_all() -> void:
 	for fi in data.factions.size():
 		var f := data.factions[fi]
 		var home := homes[fi]
-		var min_d := cfg.min_settlement_distance
+		var min_d := cfg.min_settlement_distance_m()
 		# 王都
 		var castle := _do_pick(cands, f, home, 0.0, 265.0, min_d)
 		if castle == Vector2.INF:

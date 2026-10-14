@@ -14,7 +14,7 @@
 ##    4. 候选过多时用种子随机的洗牌截断到目标数量
 ##
 ##  【性能方案】
-##    每种植被按 8x8 = 64 个 128 米区块拆成多个 MultiMeshInstance3D：
+##    每种植被按 4x4 个区块拆成多个 MultiMeshInstance3D（边长按尺寸推导，见 VEG_CHUNKS_PER_AXIS）：
 ##      · 每个区块有独立 AABB → 视锥剔除真正生效（整张图的植被不会全画）
 ##      · 每块设置 visibility_range_end → 远处整块消失
 ##      · 全部 cast_shadow = OFF（阴影 pass 只留给地形与建筑）
@@ -24,17 +24,31 @@
 class_name VegetationScatter
 extends RefCounted
 
-## 植被区块边长：第六轮 6b 从 128 m 提到 256 m —— 节点/对象数减到约 1/3（1024 m 地图上 4×4=16 桶/类），
-## 代价是剔除粒度变粗（256 m 的块「只要一角在视锥里」就整块画）。headless 测不到剔除这一项，
-## 所以只能说「节点数一定下降」，剔除效率未测（perf_probe 的 draw_calls/nodes 能看到前者）。
-const CHUNK := 256.0
+## 植被区块边长：按尺寸推导 —— 每类分 VEG_CHUNKS_PER_AXIS × VEG_CHUNKS_PER_AXIS 块，节点数不随地图膨胀。
+## 1024 m → 256 m（与 6b 之前一致，1024 m 的节点数不变）；4096 m → 1024 m。
+## 代价是剔除粒度变粗（大块「只要一角在视锥里」就整块画），但战略视图也一起拉远了。
+const VEG_CHUNKS_PER_AXIS := 4
+## 候选格边长（米）：**绝对米数**，不随地图变。它的含义是「每 7 m 抽一个候选点」——
+## 只有保持绝对值，「每平方公里多少棵」这个密度属性才会在 4 倍图上不变（ROADMAP §16.8）。
 const CELL := 7.0
+## 各类（针叶/阔叶/仙人掌/枯木/岩石）的绘制距离，基准 = 1024 m 世界，使用时按 size_scale 放大
+const RANGE_END := [380.0, 340.0, 260.0, 260.0, 340.0]
+const RANGE_STRATEGIC := [260.0, 250.0, 180.0, 200.0, 220.0]
 
 var cfg: MapConfig
 var data: MapData
 var rng: RandomNumberGenerator
 var root: Node3D
 var counts: Dictionary = {}
+
+func chunk_size() -> float:
+	return cfg.map_size / float(VEG_CHUNKS_PER_AXIS)
+
+## 每类植被的预算：基准值是 1024 m 世界的棵数，按**面积**倍率放大。
+## 密度是世界的属性、不是预算：旧世界 4096 m 实测 8420 棵 = 五个上限之和，正好说明
+## 约束已经从「密度」变成了「写死的预算」—— 那才是换世界后植被看起来变稀的原因。
+func budget(base: int) -> int:
+	return int(round(float(base) * cfg.area_scale()))
 
 func build(parent: Node3D, mat: ShaderMaterial) -> void:
 	root = Node3D.new()
@@ -44,11 +58,31 @@ func build(parent: Node3D, mat: ShaderMaterial) -> void:
 	if not cfg.vegetation_enabled:
 		return
 
-	_scatter("conifer", _make_conifer(), cfg.conifer_count, mat, 380.0, 260.0)
-	_scatter("broadleaf", _make_broadleaf(), cfg.broadleaf_count, mat, 340.0, 250.0)
-	_scatter("cactus", _make_cactus(), cfg.cactus_count, mat, 260.0, 180.0)
-	_scatter("deadtree", _make_deadtree(), cfg.deadtree_count, mat, 260.0, 200.0)
-	_scatter("rock", _make_rock(), cfg.rock_count, mat, 340.0, 220.0)
+	# ---- 第六轮 6b：单遍筛选 ----
+	# 以前五类各自扫一遍 7 m 网格（5 × n² 次），每遍都把完全相同的空间排除重算一次
+	# （水面/道路/渡口/桥、height_at、slope_at、18 个定居点距离，后者原本每个点都 distance_to 带 sqrt）。
+	# 现在一遍网格扫过：排除只算一次，五类密度在同一次遍历里判定 → 5×(排除+密度) 降到 1×排除 + 5×密度。
+	# 候选点从「每类各自抖动」改成「五类共用格点」，rng 抽取顺序随之改变：布局与旧世界不同是
+	# **有意**的改动，随第六轮一起重基线（ROADMAP §16.8），不是回归。
+	var kinds: Array = ["conifer", "broadleaf", "cactus", "deadtree", "rock"]
+	var meshes: Array = [_make_conifer(), _make_broadleaf(), _make_cactus(), _make_deadtree(), _make_rock()]
+	var caps: Array = [budget(cfg.conifer_count), budget(cfg.broadleaf_count), budget(cfg.cactus_count), budget(cfg.deadtree_count), budget(cfg.rock_count)]
+	var lists: Array = [[], [], [], [], []]
+	_sweep(kinds, lists)
+	var sc := cfg.size_scale()
+	for ki in kinds.size():
+		var list: Array = lists[ki]
+		var cap: int = caps[ki]
+		if list.size() > cap:
+			_shuffle(list)
+			list.resize(cap)
+		var kind: String = kinds[ki]
+		counts[kind] = list.size()
+		if list.is_empty():
+			continue
+		var re: float = RANGE_END[ki]
+		var rs: float = RANGE_STRATEGIC[ki]
+		_emit_chunks(kind, meshes[ki], list, mat, re * sc, rs * sc)
 
 func total() -> int:
 	var s := 0
@@ -56,31 +90,28 @@ func total() -> int:
 		s += int(counts[k])
 	return s
 
-# =============================================================== 通用投放
-func _scatter(kind: String, mesh: Mesh, target: int, mat: ShaderMaterial, range_end: float, range_end_strategic: float) -> void:
-	if mesh == null or target <= 0:
-		return
-	var n := int(cfg.map_size / CELL)
-	var list: Array[Transform3D] = []
+# =============================================================== 单遍筛选
+func _sweep(kinds: Array, lists: Array) -> void:
 	var nav := data.nav_fine
 	var hm := data.hm
-	# ---- 第六轮 6b：把判定里的脚本层开销摊平（**不改判定结果，也不动 rng 调用序列**）----
-	# 这段筛选每次生成要跑 5 遍（5 个植被类型各扫一遍 7 m 网格 = 5 × 85800 格）。原来每格都要付：
-	# nav.ci() ×2 + nav.at()（3 次方法调用 + 各自的 clampi/round）、4 个 PackedByteArray 的属性取用、
-	# 以及「把 18 个定居点全算一遍 p.distance_to()（含 sqrt）」。全部换成局部变量与平方比较。
-	# 注意：两个 rng 抽点必须留在原位、原顺序、原次数 —— 只要 rng 序列不变，植被布局就逐位不变，
-	# 探针的 veg_instances / veg_kinds / veg_xform_hash 是这条承诺的硬断言（见 ROADMAP §12.4）。
+	var hm_cell := hm.cell
+	var hm_res := hm.res
 	var nav_res := nav.res
 	var nav_cell := nav.cell
 	var water := nav.water
 	var road := nav.road
 	var ford := nav.ford
 	var bridge := nav.bridge
+	var forest_mask := data.gen.forest_mask
+	var biome_desert := data.gen.biome_desert
+	var biome_rock := data.gen.biome_rock
+	var mask_n := forest_mask.size()
 	var sea_lim := cfg.sea_level + 1.6
 	var max_slope := cfg.max_slope_veg
 	var edge_hi := cfg.map_size - 2.0
+	var inv_size := 1.0 / cfg.map_size
 	# 定居点摊平成三个并行数组，半径先 +7 再平方：原来是 p.distance_to(s.pos) < s.radius + 7.0
-	# （sqrt 与平方比较在数学上等价；用 float64 存，避免 float32 截断在边界上翻转判定）
+	# （sqrt 与平方比较数学等价；用 float64 存，避免 float32 截断在边界上翻转判定）
 	var sn := data.settlements.size()
 	var sx := PackedFloat64Array()
 	var sz := PackedFloat64Array()
@@ -93,11 +124,14 @@ func _scatter(kind: String, mesh: Mesh, target: int, mat: ShaderMaterial, range_
 		sx[i] = pos.x
 		sz[i] = pos.y
 		sr2[i] = rr * rr
+	var n := int(cfg.map_size / CELL)
+	var nk := kinds.size()
 	for iz in n:
 		for ix in n:
 			var p := Vector2(float(ix) * CELL + rng.randf_range(0.0, CELL), float(iz) * CELL + rng.randf_range(0.0, CELL))
 			if p.x < 2.0 or p.y < 2.0 or p.x > edge_hi or p.y > edge_hi:
 				continue
+			# ---- 空间排除：与植被类型无关，所以整格只算一次（6b 省下来的就是这四遍）----
 			# nav.ci() = clampi(int(round(w / cell)), 0, res - 1)；nav.at() = z * res + x
 			var cix := clampi(int(round(p.x / nav_cell)), 0, nav_res - 1)
 			var ciz := clampi(int(round(p.y / nav_cell)), 0, nav_res - 1)
@@ -119,30 +153,28 @@ func _scatter(kind: String, mesh: Mesh, target: int, mat: ShaderMaterial, range_
 					break
 			if blocked:
 				continue
-			var dens := _density(kind, p, h, slope)
-			if dens <= 0.0:
+			# 生物群系遮罩索引与纬度权重也是整格一次
+			var mi := clampi(int(p.y / hm_cell), 0, hm_res - 1) * hm_res + clampi(int(p.x / hm_cell), 0, hm_res - 1)
+			if mi >= mask_n:
 				continue
-			if rng.randf() > dens:
-				continue
-			list.append(_make_transform(kind, p, h, slope))
-	if list.size() > target:
-		_shuffle(list)
-		list.resize(target)
-	counts[kind] = list.size()
-	if list.is_empty():
-		return
-	_emit_chunks(kind, mesh, list, mat, range_end, range_end_strategic)
+			var forest: float = forest_mask[mi]
+			var desert: float = biome_desert[mi]
+			var rock: float = biome_rock[mi]
+			var v := p.y * inv_size   # 0 = 北
+			# ---- 五类各自的密度判定 ----
+			for ki in nk:
+				var kind: String = kinds[ki]
+				var dens := _density(kind, forest, desert, rock, v, h, slope)
+				if dens <= 0.0:
+					continue
+				if rng.randf() > dens:
+					continue
+				var list: Array = lists[ki]
+				list.append(_make_transform(kind, p, h, slope))
 
-func _density(kind: String, p: Vector2, h: float, slope: float) -> float:
-	var i := clampi(int(p.y / data.hm.cell), 0, data.hm.res - 1) * data.hm.res + clampi(int(p.x / data.hm.cell), 0, data.hm.res - 1)
-	if i >= data.gen.forest_mask.size():
-		return 0.0
-	var forest: float = data.gen.forest_mask[i]
-	var desert: float = data.gen.biome_desert[i]
-	var rock: float = data.gen.biome_rock[i]
-	var v := p.y / cfg.map_size   # 0 = 北
+func _density(kind: String, forest: float, desert: float, rock: float, v: float, h: float, slope: float) -> float:
 	# pow() 是这里唯一的"贵函数"，而 forest == 0（地图上大片无林区）时 pow(0, 1.4) 恒为 0：
-	# 先判掉，结果逐位不变（0 * 系数 = 0，后面照样走 dens <= 0 分支）
+	# 先判掉，结果不变（0 * 系数 = 0，后面照样走 dens <= 0 分支）
 	if forest <= 0.0 and (kind == "conifer" or kind == "broadleaf"):
 		return 0.0
 	match kind:
@@ -196,12 +228,13 @@ func _shuffle(a: Array) -> void:
 		a[j] = t
 
 ## 把实例按 8x8 区块拆分，每块一个 MultiMeshInstance3D（获得真正的视锥剔除）
-func _emit_chunks(kind: String, mesh: Mesh, list: Array[Transform3D], mat: ShaderMaterial, range_end: float, range_end_strategic: float) -> void:
-	var nchunks := int(ceil(cfg.map_size / CHUNK))
+func _emit_chunks(kind: String, mesh: Mesh, list: Array, mat: ShaderMaterial, range_end: float, range_end_strategic: float) -> void:
+	var chunk := chunk_size()
+	var nchunks := int(ceil(cfg.map_size / chunk))
 	var buckets: Dictionary = {}
 	for t in list:
-		var cx := clampi(int(t.origin.x / CHUNK), 0, nchunks - 1)
-		var cz := clampi(int(t.origin.z / CHUNK), 0, nchunks - 1)
+		var cx := clampi(int(t.origin.x / chunk), 0, nchunks - 1)
+		var cz := clampi(int(t.origin.z / chunk), 0, nchunks - 1)
 		var key := cz * nchunks + cx
 		if not buckets.has(key):
 			buckets[key] = []

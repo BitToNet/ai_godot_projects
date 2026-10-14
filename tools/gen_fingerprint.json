@@ -2,9 +2,9 @@
 	"counts": {
 		"bridges": 7,
 		"settlements": 18,
-		"vegetation": 5163
+		"vegetation": 5150
 	},
-	"fingerprint": "d68cb1d2c0c2acae93df68f721c397f2f0eb9dd5300fb63c746c4a40680182fb",
+	"fingerprint": "958433c2f04c0e3996d90a0552716b85f2a6b1134268c7a71b22bc00691ed869",
 	"map_size": 1024.0,
 	"note": "由 tools/gen_fingerprint.gd --write-baseline 生成；指纹变化 = 生成结果变化（多半是 RNG 抽取顺序被动了）",
 	"parts": {
@@ -45,8 +45,8 @@
 			"hash": "485767f9e2df4d9ead26142b9dc59eb7c8d692342bc3b7be38267f2292e2071b"
 		},
 		"vegetation": {
-			"detail": "5163 实例 / broadleaf=2132 cactus=257 conifer=1952 deadtree=211 rock=611",
-			"hash": "6ea6a9c9873a119ee828cfd8af57baf83510d866879e52c422153e3d1b297ca5"
+			"detail": "5150 实例 / broadleaf=2174 cactus=257 conifer=1925 deadtree=190 rock=604",
+			"hash": "a76789cfb32f004d810eb83e9410972e266827a191989a7720f829db7b04661f"
 		}
 	},
 	"seed": 20250929

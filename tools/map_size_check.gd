@@ -39,23 +39,59 @@ func _ok(cond: bool, what: String) -> void:
 func _diagonal(size: float) -> float:
 	return sqrt(2.0) * size
 
-func _run() -> void:
-	var cfg := MapConfig.new()
+## 拿到「不带 WARBAND_MAP_SIZE 覆盖」的**出货默认**配置：一键门禁带着覆盖跑小图，
+## 但那不是出货值 —— 默认世界刚换成 4096 m，这个区别必须显式测。
+func _cfg_no_env() -> MapConfig:
+	var saved_ms := OS.get_environment("WARBAND_MAP_SIZE")
+	var saved_hr := OS.get_environment("WARBAND_HM_RES")
+	OS.set_environment("WARBAND_MAP_SIZE", "")
+	OS.set_environment("WARBAND_HM_RES", "")
+	var c := MapConfig.new()
+	OS.set_environment("WARBAND_MAP_SIZE", saved_ms)
+	OS.set_environment("WARBAND_HM_RES", saved_hr)
+	return c
 
-	# ---- 1) 当前世界（1024 m）的既有取值：本批改造不许动它 ----
-	_ok(is_equal_approx(cfg.map_size, 1024.0), "默认地图尺寸仍是 1024 m（%.1f）" % cfg.map_size)
-	_ok(cfg.heightmap_res == 513, "默认高度图分辨率仍是 513（%d）" % cfg.heightmap_res)
+func _run() -> void:
+	# 门禁会带 WARBAND_MAP_SIZE=1024 跑小图；这里先拿「不带覆盖」的出货默认值，再单独造 1024 m 实例。
+	var cfg := _cfg_no_env()
+	var cfg_small := MapConfig.new()
+	cfg_small.map_size = 1024.0
+	cfg_small.heightmap_res = 513
+
+	# ---- 1) 出货默认世界：第六轮从 1024 m 换成 4096 m / 1025 点（4 m 间距，与地形网格同分辨率）----
+	_ok(is_equal_approx(cfg.map_size, 4096.0), "默认地图尺寸是 4096 m（%.1f）" % cfg.map_size)
+	_ok(cfg.heightmap_res == 1025, "默认高度图分辨率是 1025（%d）" % cfg.heightmap_res)
 	var spacing_now := cfg.map_size / float(cfg.heightmap_res - 1)
-	_ok(is_equal_approx(spacing_now, 2.0), "当前高度图间距是 2.0 m（%.4f）" % spacing_now)
+	_ok(absf(spacing_now - 4.0) < 0.0001, "默认高度图间距是 4.0 m（%.4f）" % spacing_now)
+	_ok(cfg.scaled_heightmap_res() == 1025, "按尺寸推导在 4096 m 给出 1025（%d）" % cfg.scaled_heightmap_res())
+	_ok(cfg_small.scaled_heightmap_res() == 513, "按尺寸推导在 1024 m 给出 513（%d）" % cfg_small.scaled_heightmap_res())
+	_ok(absf(cfg.size_scale() - 4.0) < 0.0001 and absf(cfg.area_scale() - 16.0) < 0.0001,
+		"尺寸倍率 4× / 面积倍率 16×（%.1f / %.1f）" % [cfg.size_scale(), cfg.area_scale()])
+
+	# ---- 1b) 尺寸推导的量：在 1024 m 上必须回落到旧常量本身（旧世界行为不变的正式证据）----
+	_ok(cfg_small.river_half_width() == 11.0 and cfg.river_half_width() == 44.0,
+		"河道半宽 1024 → 11 m、4096 → 44 m（%.1f / %.1f）" % [cfg_small.river_half_width(), cfg.river_half_width()])
+	_ok(cfg_small.fords_per_river() == 2 and cfg.fords_per_river() == 8,
+		"渡口数 1024 → 2、4096 → 8（%d / %d）" % [cfg_small.fords_per_river(), cfg.fords_per_river()])
+	_ok(cfg_small.lake_radius_m() == 46.0 and cfg.lake_radius_m() == 184.0,
+		"湖泊半径 1024 → 46 m、4096 → 184 m（%.1f / %.1f）" % [cfg_small.lake_radius_m(), cfg.lake_radius_m()])
+	_ok(cfg_small.min_settlement_distance_m() == 96.0 and cfg.min_settlement_distance_m() == 384.0,
+		"定居点最小间距 1024 → 96 m、4096 → 384 m（%.1f / %.1f）" % [cfg_small.min_settlement_distance_m(), cfg.min_settlement_distance_m()])
+	# 植被候选格是**绝对米数**（密度属性），区块边长按尺寸推导（节点数不随地图膨胀）
+	_ok(VegetationScatter.CELL == 7.0, "植被候选格恒为 7 m（%.1f）" % VegetationScatter.CELL)
+	_ok(absf(cfg_small.map_size / float(VegetationScatter.VEG_CHUNKS_PER_AXIS) - 256.0) < 0.0001
+		and absf(cfg.map_size / float(VegetationScatter.VEG_CHUNKS_PER_AXIS) - 1024.0) < 0.0001,
+		"植被区块边长 1024 → 256 m、4096 → 1024 m")
 
 	# 这两条是「行为不变」的正式证据：推导函数在 1024 m 下必须回落到旧常量本身
-	_ok(CameraRig.far_for(cfg.map_size) == LEGACY_FAR,
-		"1024 m 图的远裁剪面仍是旧值 %.1f（%.1f）" % [LEGACY_FAR, CameraRig.far_for(cfg.map_size)])
-	_ok(CameraRig.ray_max_distance(cfg.map_size) == LEGACY_RAY,
-		"1024 m 图的拾取最远距离仍是旧值 %.1f（%.1f）" % [LEGACY_RAY, CameraRig.ray_max_distance(cfg.map_size)])
+	_ok(CameraRig.far_for(cfg_small.map_size) == LEGACY_FAR,
+		"1024 m 图的远裁剪面仍是旧值 %.1f（%.1f）" % [LEGACY_FAR, CameraRig.far_for(cfg_small.map_size)])
+	_ok(CameraRig.ray_max_distance(cfg_small.map_size) == LEGACY_RAY,
+		"1024 m 图的拾取最远距离仍是旧值 %.1f（%.1f）" % [LEGACY_RAY, CameraRig.ray_max_distance(cfg_small.map_size)])
 
 	# ---- 2) heightmap_res 的导出范围必须放得下 4096 m 的 2 m 间距 ----
-	var want_res := int(TARGET_SIZE / spacing_now) + 1      # 4096 m / 2 m + 1 = 2049
+	# 注意：这里问的是「上限够不够」（留给想按 2 m 铺满 4 倍图的选项），与默认间距（4 m）无关
+	var want_res := int(TARGET_SIZE / 2.0) + 1      # 4096 m / 2 m + 1 = 2049
 	_ok(want_res == 2049, "4096 m 保持 2 m 间距需要 2049 个采样点（%d）" % want_res)
 	var rng := _range_of(cfg, "heightmap_res")
 	_ok(not rng.is_empty(), "从 MapConfig 读到了 heightmap_res 的 @export_range")
@@ -191,13 +227,18 @@ func _run() -> void:
 	# 坡度喂给 forest_mask / biome_rock → 植被密度与岩石掩码 → 世界布局。差 1 个 ULP 就要重基线，
 	# 而这一批的全部价值就在「不用重基线」。
 	# 等价性只在**采样正好落在网格点上**时成立（双线性权重 tx = tz = 0，返回的就是该点自身的数据），
-	# 所以先钉前提（cell 精确等于 2.0），再拿一张同 cell 的小图把所有点（含 x/z = 0 与 res-1 的
-	# 夹取边界）逐位比一遍。真实世界那一侧由「生成指纹不变」兜着 —— 那是最强的端到端证据。
-	for s in [cfg.map_size, TARGET_SIZE]:
+	# 所以先钉前提（间距按生产推导，且正好是整数米：1024 m → 2 m、4096 m → 4 m），再拿一张同 cell 的
+	# 小图把所有点（含 x/z = 0 与 res-1 的夹取边界）逐位比一遍。真实世界那一侧由「生成指纹不变」兜着
+	# —— 那是最强的端到端证据。注意 grid_slope 的等价性本身与 cell 取值无关（只要采样落在网格点上）。
+	for s in [cfg_small.map_size, cfg.map_size]:
 		var s_f: float = s
-		var rr := int(s_f / spacing_now) + 1
+		var probe := MapConfig.new()
+		probe.map_size = s_f
+		probe.heightmap_res = probe.scaled_heightmap_res()
+		var rr: int = probe.heightmap_res
 		var c: float = s_f / float(rr - 1)
-		_ok(c == 2.0, "%.0f m 图的采样间距精确等于 2.0（%.17f）—— grid_slope 的前提" % [s_f, c])
+		var want_c := 2.0 if s_f < 2000.0 else 4.0
+		_ok(c == want_c, "%.0f m 图的采样间距按尺寸推导为 %.1f m（%.17f）—— grid_slope 的前提" % [s_f, want_c, c])
 		var h := Heightmap.new(65, c * 64.0)      # 同 cell 的小图：65² 点便宜，且覆盖全部边界
 		var gen := RandomNumberGenerator.new()
 		gen.seed = 20261014
@@ -215,10 +256,11 @@ func _run() -> void:
 			% [s_f, c, bad, h.res * h.res, str(first_bad)])
 
 	# ---- 9) 内存量级（只报告，不判定）：高度图与寻路栅格 ----
-	# 用十进制 MB，跟 ROADMAP §12.5 #4 写的「≈16.8 MB」同口径（MiB 会显示成 16.0，容易被当成不一致）
+	# 用十进制 MB，跟 ROADMAP §12.5 #4 写的「≈16.8 MB」同口径（MiB 会显示成 16.0，容易被当成不一致）。
+	# 注意这里报的是**2 m 间距那个选项**的内存（2049²，出货默认是 4 m/1025²，只有约 4.2 MB）。
 	var bytes := want_res * want_res * 4
-	print("[地图尺寸] 4096 m / %.0f m 间距 ⇒ 高度图 %d² × 4 B = %.1f MB"
-		% [spacing_now, want_res, float(bytes) / 1000000.0])
+	print("[地图尺寸] 4096 m / 2 m 间距（非默认）⇒ 高度图 %d² × 4 B = %.1f MB；默认 1025² 约 %.1f MB"
+		% [want_res, float(bytes) / 1000000.0, 1025.0 * 1025.0 * 4.0 / 1000000.0])
 	print("[地图尺寸] 4096 m ⇒ 地形 %d×%d = %d 块 × %d 四边（LOD0 顶点 %d/块，间距 %.1f m）"
 		% [n_target, n_target, n_target * n_target, TerrainManager.lod_quads_for(TARGET_SIZE)[0],
 			v4096, TerrainManager.MESH_SPACING])

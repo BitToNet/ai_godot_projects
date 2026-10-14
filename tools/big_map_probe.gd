@@ -43,7 +43,6 @@ func _run() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--size="):
 			map_size = float(a.split("=")[1])
-	hm_res = int(map_size / 2.0) + 1
 	var scene: PackedScene = load(SCENE)
 	if scene == null:
 		print("[大图] FAIL：加载不了 %s" % SCENE)
@@ -51,6 +50,9 @@ func _run() -> void:
 		return
 	cfg = MapConfig.new()
 	cfg.map_size = map_size
+	# 高度图分辨率走**生产推导**（4096 m → 1025 = 4 m 间距，与地形网格同分辨率），
+	# 不再写死「一律 2 m」：后者在 4 倍图上是 2× 过采样，高度场阶段要多花约 4 倍时间（ROADMAP §16.6）
+	hm_res = cfg.scaled_heightmap_res()
 	cfg.heightmap_res = hm_res
 	main = scene.instantiate()
 	var ac := AudioConfig.new()

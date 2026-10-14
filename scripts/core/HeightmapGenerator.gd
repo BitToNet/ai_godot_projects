@@ -342,15 +342,16 @@ func _make_lakes() -> void:
 			continue
 		if hm.slope_at(wx, wz) > 0.16:
 			continue
-		# 不要离别的湖太近
+		# 不要离别的湖太近（湖泊半径按尺寸推导，见 MapConfig.lake_radius_m）
 		var ok := true
+		var lake_r := cfg.lake_radius_m()
 		for l in lakes:
-			if Vector2(wx, wz).distance_to(l.center) < cfg.lake_radius * 3.0:
+			if Vector2(wx, wz).distance_to(l.center) < lake_r * 3.0:
 				ok = false
 				break
 		if not ok:
 			continue
-		_carve_lake(Vector2(wx, wz), cfg.lake_radius * rng.randf_range(0.8, 1.25))
+		_carve_lake(Vector2(wx, wz), lake_r * rng.randf_range(0.8, 1.25))
 
 func _carve_lake(c: Vector2, radius: float) -> void:
 	var depth := cfg.lake_depth * rng.randf_range(0.8, 1.4)
@@ -397,7 +398,8 @@ func _make_rivers() -> void:
 		var pts := _trace_river(src)
 		if pts.size() < 10:
 			continue
-		var width := cfg.river_width * rng.randf_range(0.85, 1.25)
+		# 河道半宽按尺寸推导（4 倍图上 22 m 宽的河会退化成细线，道路就不需要桥了：ROADMAP §16.7）
+		var width := cfg.river_half_width() * rng.randf_range(0.85, 1.25)
 		var prof := _carve_river(pts, width)
 		var fords := _make_fords(pts, prof, width)
 		var dirs := PackedVector2Array()
@@ -551,7 +553,8 @@ func _carve_channel(c: Vector2, radius: float, target_h: float, strength: float 
 func _make_fords(raw: Array[Vector2], prof: Dictionary, width: float) -> PackedInt32Array:
 	var fords := PackedInt32Array()
 	var n := raw.size()
-	var count := cfg.ford_count_per_river
+	# 渡口数量按尺寸推导，保持渡口间距不变（见 MapConfig.fords_per_river）
+	var count := cfg.fords_per_river()
 	for k in count:
 		var t := (float(k) + 1.0) / (float(count) + 1.0)
 		var i := int(t * float(n - 1))

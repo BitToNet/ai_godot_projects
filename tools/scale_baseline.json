@@ -1,16 +1,16 @@
 {
-	"calib_ms": 15.333,
+	"calib_ms": 14.059,
 	"map_size": 1024,
 	"note": "由 tools/scale_probe.gd --write-baseline 生成；结构量必须精确一致，耗时只做上界比对",
 	"path_coarse_detail": [
 		{
 			"expanded": 15,
-			"ms": 0.497,
+			"ms": 0.519,
 			"pts": 2
 		},
 		{
 			"expanded": 21,
-			"ms": 0.651,
+			"ms": 0.641,
 			"pts": 2
 		},
 		{
@@ -20,118 +20,118 @@
 		},
 		{
 			"expanded": 13,
-			"ms": 0.435,
+			"ms": 0.402,
 			"pts": 2
 		},
 		{
 			"expanded": 25,
-			"ms": 0.86,
+			"ms": 0.859,
 			"pts": 2
 		},
 		{
 			"expanded": 24,
-			"ms": 0.852,
+			"ms": 0.869,
 			"pts": 2
 		},
 		{
 			"expanded": 626,
-			"ms": 9.608,
+			"ms": 7.924,
 			"pts": 5
 		},
 		{
 			"expanded": 62,
-			"ms": 1.59,
+			"ms": 1.144,
 			"pts": 3
 		},
 		{
 			"expanded": 430,
-			"ms": 8.254,
+			"ms": 6.131,
 			"pts": 4
 		},
 		{
 			"expanded": 24,
-			"ms": 0.925,
+			"ms": 0.735,
 			"pts": 4
 		},
 		{
 			"expanded": 18,
-			"ms": 0.876,
+			"ms": 0.611,
 			"pts": 2
 		},
 		{
 			"expanded": 3913,
-			"ms": 77.667,
+			"ms": 56.132,
 			"pts": 10
 		}
 	],
 	"path_coarse_expanded": 5184,
-	"path_coarse_max_ms": 77.667,
-	"path_coarse_total_ms": 102.535,
+	"path_coarse_max_ms": 56.132,
+	"path_coarse_total_ms": 76.287,
 	"path_fine_detail": [
 		{
 			"expanded": 31,
-			"ms": 1.341,
+			"ms": 1.33,
 			"pts": 2
 		},
 		{
 			"expanded": 41,
-			"ms": 2.11,
+			"ms": 1.539,
 			"pts": 2
 		},
 		{
 			"expanded": 21,
-			"ms": 0.848,
+			"ms": 0.614,
 			"pts": 2
 		},
 		{
 			"expanded": 49,
-			"ms": 1.56,
+			"ms": 1.149,
 			"pts": 2
 		},
 		{
 			"expanded": 133,
-			"ms": 4.576,
+			"ms": 3.334,
 			"pts": 2
 		},
 		{
 			"expanded": 49,
-			"ms": 2.705,
+			"ms": 2.389,
 			"pts": 2
 		},
 		{
 			"expanded": 30,
-			"ms": 1.084,
+			"ms": 1.127,
 			"pts": 2
 		},
 		{
 			"expanded": 52,
-			"ms": 2.388,
+			"ms": 1.798,
 			"pts": 3
 		},
 		{
 			"expanded": 296,
-			"ms": 7.58,
+			"ms": 5.317,
 			"pts": 5
 		},
 		{
 			"expanded": 53,
-			"ms": 1.978,
+			"ms": 1.438,
 			"pts": 5
 		},
 		{
 			"expanded": 37,
-			"ms": 1.517,
+			"ms": 1.563,
 			"pts": 2
 		},
 		{
 			"expanded": 351,
-			"ms": 18.287,
+			"ms": 14.702,
 			"pts": 5
 		}
 	],
 	"path_fine_expanded": 1143,
-	"path_fine_max_ms": 18.287,
-	"path_fine_total_ms": 45.974,
+	"path_fine_max_ms": 14.702,
+	"path_fine_total_ms": 36.3,
 	"path_n": 12,
 	"path_pairs": [
 		[
@@ -207,40 +207,40 @@
 			527.889
 		]
 	],
-	"prim_height_at_us": 1.239,
-	"prim_normal_at_us": 5.281,
+	"prim_height_at_us": 0.922,
+	"prim_normal_at_us": 3.964,
 	"seed": 20250929,
 	"terrain_chunks": 64,
 	"terrain_idx_hash": "ed3c6f4ec427b094",
-	"terrain_lod0_max_ms": 2.931,
-	"terrain_lod0_median_ms": 2.546,
+	"terrain_lod0_max_ms": 2.612,
+	"terrain_lod0_median_ms": 1.925,
 	"terrain_lod0_n": 64,
-	"terrain_lod0_sum_ms": 160.735,
+	"terrain_lod0_sum_ms": 118.828,
 	"terrain_lod0_verts": 1601,
-	"terrain_lod1_max_ms": 0.834,
-	"terrain_lod1_median_ms": 0.774,
+	"terrain_lod1_max_ms": 0.598,
+	"terrain_lod1_median_ms": 0.581,
 	"terrain_lod1_n": 16,
-	"terrain_lod1_sum_ms": 11.978,
-	"terrain_lod2_max_ms": 0.304,
-	"terrain_lod2_median_ms": 0.273,
+	"terrain_lod1_sum_ms": 9.28,
+	"terrain_lod2_max_ms": 0.216,
+	"terrain_lod2_median_ms": 0.209,
 	"terrain_lod2_n": 16,
-	"terrain_lod2_sum_ms": 4.455,
-	"terrain_lod3_max_ms": 0.146,
-	"terrain_lod3_median_ms": 0.135,
+	"terrain_lod2_sum_ms": 3.341,
+	"terrain_lod3_max_ms": 0.098,
+	"terrain_lod3_median_ms": 0.095,
 	"terrain_lod3_n": 16,
-	"terrain_lod3_sum_ms": 2.137,
+	"terrain_lod3_sum_ms": 1.517,
 	"terrain_norm_hash": "a712dd9038c7b2ef",
 	"terrain_pos_hash": "5a2e59665239f171",
 	"veg_chunks": 67,
-	"veg_emit_ms": 3.488,
-	"veg_instances": 5163,
+	"veg_emit_ms": 3.083,
+	"veg_instances": 5150,
 	"veg_kinds": {
-		"broadleaf": 2132,
+		"broadleaf": 2174,
 		"cactus": 257,
-		"conifer": 1952,
-		"deadtree": 211,
-		"rock": 611
+		"conifer": 1925,
+		"deadtree": 190,
+		"rock": 604
 	},
-	"veg_total_ms": 973.728,
-	"veg_xform_hash": "6df28ca8fc5f8fc7"
+	"veg_total_ms": 238.246,
+	"veg_xform_hash": "0b1c0703cc20f77f"
 }

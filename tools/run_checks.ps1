@@ -81,6 +81,11 @@ $ErrorActionPreference = 'Continue'
 
 # 引擎路径：CI 用环境变量 GODOT_BIN 覆盖；本机默认走用户全局规则 2 的固定路径
 $GODOT = if ($env:GODOT_BIN) { $env:GODOT_BIN } else { 'G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe' }
+
+# 第六轮：出货默认世界是 4096 m，但一键门禁**继续跑 1024 m 小图** —— 25 项 60 余秒，
+# 而 4096 m 光生成一次就要 30 秒以上（25 项里有多项各生成一次）。想用门禁跑大图就显式给
+# WARBAND_MAP_SIZE=4096；4096 m 的实测另由 7d（WARBAND_BIG_MAP=1）单独触发。
+if (-not $env:WARBAND_MAP_SIZE) { $env:WARBAND_MAP_SIZE = '1024' }
 $PROJ = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $BASELINE_JSON = Join-Path $PROJ 'tools\gen_fingerprint.json'
 $fail = New-Object System.Collections.Generic.List[string]
