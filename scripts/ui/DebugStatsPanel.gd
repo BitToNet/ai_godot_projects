@@ -29,4 +29,4 @@ func _process(delta: float) -> void:
 	var fps := Performance.get_monitor(Performance.TIME_FPS)
 	var dc := Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
 	var tri := Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)
-	_label.text = "FPS %d   绘制调用 %d   三角形 %.1f 万" % [int(fps), int(dc), tri / 10000.0]
+	_label.text = Strings.STATS_LINE % [int(fps), int(dc), tri / 10000.0]

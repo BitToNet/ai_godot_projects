@@ -70,7 +70,7 @@ func _ready() -> void:
 	vb.add_child(_rows)
 
 	# 键位提示同样从 InputMap 读：改了 [input] 段这里跟着变，不写死「按 G」。
-	hint_label = UiTheme.label("%s 确认      %s 离开      ↑↓ 选择条目" % [
+	hint_label = UiTheme.label(Strings.SETTLEMENT_HINT_LINE % [
 		InputRouter.action_hint_text("dialog_confirm"),
 		InputRouter.action_hint_text("dialog_cancel")], 14, Color(0.68, 0.70, 0.76))
 	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

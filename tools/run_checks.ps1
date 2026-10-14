@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（23 项，约 65~70 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行下列步骤（25 项，约 58~70 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -53,6 +53,11 @@
 #        全是「输出必须一模一样」的类型，这条就是它的证明；有意改音色必须显式更新基线
 #    9d) PCM 缓存自检（tools/audio_cache_check.gd）—— 冷启动合成落盘 → 热启动逐字节一致
 #        → 六种坏缓存各自静默退回冷启动并自愈 → Sfx.setup 真的走缓存 → 关缓存不碰盘
+#    9e) 录音素材自检（tools/sfx_foley_check.gd）—— 移动 / 打击类音效的录音素材层
+#        （audio/sfx/foley/*.wav）：清单与变体齐全、单声道 44.1 kHz、不削波、非静音，
+#        **且响度与它替换掉的那条合成音色对齐**（峰值 ±4 dB / 窗口 RMS −9~+4 dB）。
+#        最后一条是关键：素材换成录音之后，混音平衡只能靠它守 —— 只做统一归一化
+#        会让录音比合成音色低 8~13 dB，听起来就像「音效丢了」（见 ROADMAP §13.3）
 #    10) 主场景跑 900 帧 —— 无 ERROR，且生成统计与 tools/gen_fingerprint.json 基线一致
 #
 #  为什么是这些：本工程「一切由种子生成 + 运行时合成音效 + 纯代码 UI」，
@@ -337,6 +342,15 @@ $rCache = Invoke-GodotStep -Name 'audio_cache_check' -Extra @('--script', 'res:/
 $cachePass = @($rCache.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rCache.Ok -and -not $cachePass) {
 	$fail.Add('音色缓存  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 9e) 录音素材自检（tools/sfx_foley_check.gd）----
+# 素材层的契约：清单/变体齐全、规格统一、不削波，且响度与它替换掉的合成音色对齐。
+# 响度那条是这一步存在的理由 —— 「素材都加载上了」这种检查抓不到"音效听不见了"。
+$rFoley = Invoke-GodotStep -Name 'sfx_foley_check' -Extra @('--script', 'res://tools/sfx_foley_check.gd')
+$foleyPass = @($rFoley.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rFoley.Ok -and -not $foleyPass) {
+	$fail.Add('录音素材  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 10) 主场景 900 帧 + 生成统计比对基线 ----

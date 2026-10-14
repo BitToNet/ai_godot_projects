@@ -2,6 +2,7 @@
 ##  HelpPanel —— 左下角操作说明
 ##  说明文字在运行时按 project.godot 的 [input] 段拼出来：改了键位、插上手柄，
 ##  这里显示的按键跟着变，不再写死「按 M 静音」这类字面按键。
+##  文案本身在 scripts/core/Strings.gd（i18n 表），本文件只负责「哪一行配哪个动作」。
 ## =============================================================================
 class_name HelpPanel
 extends PanelContainer
@@ -9,21 +10,21 @@ extends PanelContainer
 ## 每行：[动作名, 说明]。动作名为空串 = 纯说明行（不含键位）。
 ## 「左键点地」与「中键/右键拖拽」是鼠标手势（按坐标处理，不做成动作），故写在说明里。
 const LINES: Array = [
-	["", "左键点击地面：部队寻路移动（行军途中时间流动，抵达后立刻暂停）"],
-	["interact", "进城办事：走到村庄 / 城镇 / 城堡旁按（补给 / 招募 / 贸易 / 驻军）"],
-	["time_flow", "长按 = 原地推进世界时间；行军途中按下 = 立刻停止前进并暂停"],
-	["move_left", "平移视角（也可靠屏幕边缘移动鼠标）"],
-	["zoom_in", "缩放：近处平视 / 远处俯瞰"],
-	["cam_rotate_left", "旋转视角：左右转向（鼠标中键 / 右键拖拽亦可）"],
-	["focus_party", "回到玩家部队"],
-	["cycle_speed", "切换时间流速 ×1/×2/×4"],
-	["toggle_vegetation", "显示 / 隐藏植被"],
-	["toggle_mute", "音效 + 背景音乐静音 / 恢复"],
-	["faction_labels_1", "只看某势力领地标签（其余势力见下方两行）"],
-	["faction_labels_2", "另看一个势力的领地标签"],
-	["faction_labels_3", "再看最后一个势力的领地标签"],
-	["quicksave", "快速存档（没有面板 / 不在战斗时才允许）"],
-	["quickload", "快速读档（回到上次存档；会重跑一遍地图生成）"],
+	["", Strings.HELP_CLICK_MOVE],
+	["interact", Strings.HELP_INTERACT],
+	["time_flow", Strings.HELP_TIME_FLOW],
+	["move_left", Strings.HELP_PAN],
+	["zoom_in", Strings.HELP_ZOOM],
+	["cam_rotate_left", Strings.HELP_ROTATE],
+	["focus_party", Strings.HELP_FOCUS],
+	["cycle_speed", Strings.HELP_SPEED],
+	["toggle_vegetation", Strings.HELP_VEGETATION],
+	["toggle_mute", Strings.HELP_MUTE],
+	["faction_labels_1", Strings.HELP_FACTION_1],
+	["faction_labels_2", Strings.HELP_FACTION_2],
+	["faction_labels_3", Strings.HELP_FACTION_3],
+	["quicksave", Strings.HELP_SAVE],
+	["quickload", Strings.HELP_LOAD],
 ]
 
 func _ready() -> void:
@@ -37,7 +38,7 @@ func _ready() -> void:
 
 func _build_text() -> String:
 	var out := PackedStringArray()
-	out.append("【操作】")
+	out.append(Strings.HELP_TITLE)
 	for row in LINES:
 		var action: String = row[0]
 		var desc: String = row[1]

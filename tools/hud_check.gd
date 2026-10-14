@@ -42,6 +42,13 @@ func _run() -> void:
 	# ---- 开场遮罩 ----
 	# 视口尺寸作参照：headless 下是 1600×1600，开窗口时是 1600×900，所以断言只跟视口比、不写死像素。
 	var vp: Vector2 = get_root().get_visible_rect().size
+	# 开场遮罩的三行文案（迁进 Strings.gd 之前就在这里，第七轮 §14.2 迁完必须一字不差）。
+	# **必须在 set_loading 之前断**：set_loading 会把进度行覆盖成它自己的文字。
+	# 这里故意按字面量断言 —— 断 Strings.X 等于断常量自己，证明不了观感没变。
+	_ok(hud._loading._title.text == "骑马与砍杀 · 战略大地图", "开局遮罩标题未变")
+	_ok(hud._loading._sub.text == "程序化生成中：地形 / 河流 / 植被 / 定居点 / 道路 / 部队",
+		"开局遮罩副标题未变")
+	_ok(hud._loading._label.text == "准备中…", "开局遮罩进度行初始文案未变")
 	hud.set_loading("加载中：测试")
 	_ok(hud._loading.visible, "遮罩初始可见")
 	_ok(hud._loading.mouse_filter == Control.MOUSE_FILTER_STOP, "遮罩挡住点击（STOP）")
@@ -134,6 +141,12 @@ func _run() -> void:
 		"不传 entries 时用兜底两行：%s" % [hud.dialog.row_actions()])
 	_ok(hud.dialog.attack_button.text.contains("攻"), "攻击按钮就位")
 	_ok(hud.dialog.row_button(0).has_focus(), "打开时焦点给第一个可用条目")
+	# 文案迁进 Strings.gd（第七轮 §14.2）后，提示行仍然逐字是原来那句。
+	# 这里**故意按字面量断言**：断 Strings.X 等于断常量自己，证明不了观感没变。
+	_ok(hud.dialog.hint_label.text.ends_with("↑↓ 选择条目")
+		and hud.dialog.hint_label.text.contains("确认")
+		and hud.dialog.hint_label.text.contains("撤退"),
+		"遭遇框提示行文案未变（%s）" % hud.dialog.hint_label.text)
 
 	hud.show_tooltip("提示", Vector2(10, 10))
 	_ok(not hud._tooltip.visible, "对话框打开时悬停提示被抑制")
@@ -214,6 +227,9 @@ func _run() -> void:
 		"状态行原样显示系统给的文字：%s" % hud.settlement_dialog._status.text)
 	_ok(hud.settlement_dialog.row_button(0).has_focus(), "打开时焦点给第一个可用条目")
 	_ok(hud.settlement_dialog.row_button(1).disabled, "「不可用」落到 Button.disabled 上（不是只换颜色）")
+	_ok(hud.settlement_dialog.hint_label.text.ends_with("↑↓ 选择条目")
+		and hud.settlement_dialog.hint_label.text.contains("离开"),
+		"进城菜单提示行文案未变（%s）" % hud.settlement_dialog.hint_label.text)
 
 	# 菜单打开时悬停提示同样让路（否则提示条会浮在菜单上面）
 	hud.show_tooltip("提示", Vector2(10, 10))
@@ -240,6 +256,23 @@ func _run() -> void:
 	_ok(frame.mouse_filter == Control.MOUSE_FILTER_IGNORE, "小地图外框 IGNORE")
 	_ok(hud.get_node("HelpPanel").mouse_filter == Control.MOUSE_FILTER_IGNORE, "操作说明面板 IGNORE")
 	_ok(hud.get_node("DebugStatsPanel").mouse_filter == Control.MOUSE_FILTER_IGNORE, "性能面板 IGNORE")
+
+	# ---- 两块「只读」面板的文案（第七轮 §14.2 迁进 Strings.gd）逐字未变 ----
+	# 迁 TopBar 时靠已有断言守观感；这两块此前没有任何文案断言，所以本批补上
+	# （开局遮罩的三行在上面 set_loading 之前已断过）。
+	# 断的是**渲染出来的字符串**，不是 Strings.gd 里的常量（断常量等于没断）。
+	var help_label := hud.get_node("HelpPanel").get_child(0) as Label
+	_ok(help_label.text.begins_with("【操作】"), "操作说明标题仍是「【操作】」")
+	_ok(help_label.text.contains("左键点击地面：部队寻路移动（行军途中时间流动，抵达后立刻暂停）"),
+		"操作说明首行文案未变")
+	_ok(help_label.text.contains("快速读档（回到上次存档；会重跑一遍地图生成）"), "操作说明末行文案未变")
+	# 性能面板每 0.25 s 采一次样（@60fps 约 15 帧），多跑几帧让它至少刷一次再按格式断言
+	var stats_label := hud.get_node("DebugStatsPanel").get_child(0) as Label
+	for i in 20:
+		await process_frame
+	var stats_re := RegEx.new()
+	stats_re.compile("^FPS \\d+   绘制调用 \\d+   三角形 [\\d.]+ 万$")
+	_ok(stats_re.search(stats_label.text) != null, "性能面板文案格式未变（%s）" % stats_label.text)
 
 	print("")
 	# 主动清理：本工具是自行 quit 的，不清理会留下

@@ -7,6 +7,9 @@ class_name LoadingOverlay
 extends Control
 
 var _label: Label
+## 标题 / 副标题也留成成员：文案迁进 Strings.gd 之后，「屏幕上还是那句」由 hud_check 直接断言取用
+var _title: Label
+var _sub: Label
 
 func _ready() -> void:
 	# 必须用 set_anchors_**and_offsets**_preset：只设 anchors 的那版会「保留当前矩形」，
@@ -31,15 +34,15 @@ func _ready() -> void:
 	vb.add_theme_constant_override("separation", 10)
 	cc.add_child(vb)
 
-	var title := UiTheme.label("骑马与砍杀 · 战略大地图", 40, Color(0.95, 0.88, 0.66))
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(title)
+	_title = UiTheme.label(Strings.LOADING_TITLE, 40, Color(0.95, 0.88, 0.66))
+	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(_title)
 
-	var sub := UiTheme.label("程序化生成中：地形 / 河流 / 植被 / 定居点 / 道路 / 部队", 17, Color(0.72, 0.78, 0.85))
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(sub)
+	_sub = UiTheme.label(Strings.LOADING_SUBTITLE, 17, Color(0.72, 0.78, 0.85))
+	_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(_sub)
 
-	_label = UiTheme.label("准备中…", 16, Color(1.0, 0.85, 0.45))
+	_label = UiTheme.label(Strings.LOADING_PREPARING, 16, Color(1.0, 0.85, 0.45))
 	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(_label)
 

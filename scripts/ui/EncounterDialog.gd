@@ -35,8 +35,10 @@ var _hints: Array[String] = []
 ## tools/hud_shot.gd 的截图、以及只关心开关行为的自检。
 static func default_entries() -> Array[Dictionary]:
 	return [
-		{"id": "attack", "label": "攻 击", "enabled": true, "hint": "进入 Boss 战"},
-		{"id": "retreat", "label": "撤 退", "enabled": true, "hint": "不战而走（有代价）"},
+		{"id": "attack", "label": Strings.ENCOUNTER_ATTACK_LABEL, "enabled": true,
+			"hint": Strings.ENCOUNTER_ATTACK_HINT},
+		{"id": "retreat", "label": Strings.ENCOUNTER_RETREAT_LABEL, "enabled": true,
+			"hint": Strings.ENCOUNTER_RETREAT_HINT},
 	]
 
 ## 便捷入口：默认两行时的「攻击 / 撤退」按钮（截图脚本与早期自检按名字取）。
@@ -85,7 +87,7 @@ func _ready() -> void:
 	vb.add_child(_rows)
 
 	# 键位提示直接从 InputMap 读（改键位这里跟着变，不再写死「按 X」）
-	hint_label = UiTheme.label("%s 确认      %s 撤退      ↑↓ 选择条目" % [
+	hint_label = UiTheme.label(Strings.ENCOUNTER_HINT_LINE % [
 		InputRouter.action_hint_text("dialog_confirm"),
 		InputRouter.action_hint_text("dialog_cancel")], 14, Color(0.68, 0.70, 0.76))
 	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
