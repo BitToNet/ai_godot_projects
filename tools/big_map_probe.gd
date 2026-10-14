@@ -82,6 +82,10 @@ func _run() -> void:
 	print("[大图] 世界就绪：管线内 %d ms / 墙钟 %d ms / 等待 %d 帧" % [int(main._gen_ms), wall, guard])
 	print("[大图] 结构：定居点 %d / 桥梁 %d / 植被实例 %d / 植被区块 %d" % [
 		d.settlements.size(), d.bridges.size(), veg.total(), _veg_chunks(veg.root)])
+	# 玩法尺度（第六轮 §16.9）：部队数与相机/视野/迷雾半径都按尺寸推导，这里报出来做 4096 m 侧的实证
+	print("[大图] 玩法尺度：AI 部队 %d（cfg.party_count()）/ 相机最高 %.0f m / 战略视图 %.0f m / 迷雾 %.0f m / 视野 %.0f m / 速度 %.0f m/s" % [
+		main.ai_parties.size(), cfg.cam_max_height_m(), cfg.strategic_view_height_m(),
+		cfg.fog_reveal_radius_m(), cfg.bandit_vision_m(), cfg.player_speed])
 	print("[大图] 栅格：细 %d（%.2f m/格）/ 粗 %d / 道路 %d；高度图 %d（%.2f m/格）" % [
 		d.nav_fine.res, d.nav_fine.cell, d.nav_coarse.res, d.nav_road.res, d.hm.res, d.hm.cell])
 	var cs := TerrainManager.chunk_size_for(map_size)

@@ -191,7 +191,7 @@ func run() -> WorldContext:
 		settlement_mat.set_shader_parameter("fog_enabled", 1.0)
 		party_mat.set_shader_parameter("fog_map", fog.texture)
 		party_mat.set_shader_parameter("fog_enabled", 1.0)
-		fog.reveal(Vector2(player.position.x, player.position.z), cfg.fog_reveal_radius * 1.4)
+		fog.reveal(Vector2(player.position.x, player.position.z), cfg.fog_reveal_radius_m() * 1.4)
 
 	# 时间流动状态机与遭遇数值表：必须早于 _setup_ui()，
 	# 因为输入路由会把「点地行军 / 切换流速」直接接到这两个对象上。

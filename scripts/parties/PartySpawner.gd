@@ -57,7 +57,7 @@ func spawn_player() -> PlayerParty:
 	return p
 
 func spawn_ai_parties() -> void:
-	var total := cfg.ai_party_count
+	var total := cfg.party_count()
 	var lords := data.factions.size()
 	var caravans := maxi(2, int(round(float(total) * 0.28)))
 	var bandits := maxi(1, total - lords - caravans)

@@ -5,7 +5,7 @@
 ##  · 鼠标中键 / 右键拖拽旋转；手柄右摇杆或 Q / E 也能转（左右改朝向，上下改俯角）
 ##  · move_* 动作平移（WASD / 方向键 / 左摇杆 / 十字键）+ 屏幕边缘平移；focus_party 回到玩家部队
 ##  · 键位不写死：滚轮 / L1 / R1 / Back 等全部来自 project.godot 的 [input] 段
-##  · 高度超过 strategic_view_height 进入「战略视图」（通知 Main 放大标签、剔除植被）
+##  · 高度超过 strategic_view_height_m() 进入「战略视图」（通知 Main 放大标签、剔除植被）
 ##  · 提供 ray_to_terrain()：屏幕坐标 → 地形世界坐标（供点击移动 / 悬停提示）
 ## =============================================================================
 class_name CameraRig
@@ -43,7 +43,7 @@ func setup(p_cfg: MapConfig, p_data: MapData, p_player: Node3D) -> void:
 	cam.near = 0.5
 	cam.far = far_for(cfg.map_size)
 	add_child(cam)
-	zoom_height = cfg.cam_default_height
+	zoom_height = cfg.cam_default_height_m()
 	_update_pitch_from_zoom()
 	_apply()
 
@@ -77,7 +77,7 @@ func _process(delta: float) -> void:
 	if pan.length_squared() > 0.0:
 		pan = pan.normalized()
 		# 按相机朝向平移，速度随高度缩放（越高移动越快）
-		var speed := cfg.cam_pan_speed * clampf(zoom_height / 90.0, 0.35, 4.0) * delta
+		var speed := cfg.cam_pan_speed_m() * clampf(zoom_height / cfg.cam_default_height_m(), 0.35, 4.0) * delta
 		var fwd := Vector3(sin(yaw), 0, cos(yaw))
 		var right := Vector3(cos(yaw), 0, -sin(yaw))
 		pan_offset += Vector2((fwd.x * -pan.y + right.x * pan.x) * speed, (fwd.z * -pan.y + right.z * pan.x) * speed)
@@ -105,22 +105,22 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	# 缩放与回中走动作表：滚轮 / 手柄 L1 R1 / Back 键都在 project.godot 的 [input] 段里定义
 	if event.is_action_pressed("zoom_in"):
-		zoom_height = clampf(zoom_height * 0.88, cfg.cam_min_height, cfg.cam_max_height)
+		zoom_height = clampf(zoom_height * 0.88, cfg.cam_min_height_m(), cfg.cam_max_height_m())
 		_update_pitch_from_zoom()
 	elif event.is_action_pressed("zoom_out"):
-		zoom_height = clampf(zoom_height / 0.88, cfg.cam_min_height, cfg.cam_max_height)
+		zoom_height = clampf(zoom_height / 0.88, cfg.cam_min_height_m(), cfg.cam_max_height_m())
 		_update_pitch_from_zoom()
 	elif event.is_action_pressed("focus_party"):
 		recenter()
 
 func _update_pitch_from_zoom() -> void:
 	var h := zoom_height
-	var mid := maxf(cfg.cam_default_height, cfg.cam_min_height + 1.0)
+	var mid := maxf(cfg.cam_default_height_m(), cfg.cam_min_height_m() + 1.0)
 	if h <= mid:
-		var t := (h - cfg.cam_min_height) / maxf(1.0, mid - cfg.cam_min_height)
+		var t := (h - cfg.cam_min_height_m()) / maxf(1.0, mid - cfg.cam_min_height_m())
 		pitch_deg = lerpf(cfg.cam_pitch_near, 55.0, clampf(t, 0.0, 1.0))
 	else:
-		var t := (h - mid) / maxf(1.0, cfg.cam_max_height - mid)
+		var t := (h - mid) / maxf(1.0, cfg.cam_max_height_m() - mid)
 		pitch_deg = lerpf(55.0, cfg.cam_pitch_far, clampf(t, 0.0, 1.0))
 
 func _apply() -> void:
@@ -143,7 +143,7 @@ func _apply() -> void:
 	cam.global_position = target
 	cam.look_at(_focus, Vector3.UP)
 
-	var strategic := zoom_height >= cfg.strategic_view_height
+	var strategic := zoom_height >= cfg.strategic_view_height_m()
 	if strategic != _strategic:
 		_strategic = strategic
 		strategic_changed.emit(strategic)

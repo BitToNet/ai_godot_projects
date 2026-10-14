@@ -91,7 +91,7 @@ func _draw() -> void:
 		draw_colored_polygon(PackedVector2Array([a3, b3, c3]), Color(1.0, 0.98, 0.85))
 		draw_polyline(PackedVector2Array([a3, b3, c3, a3]), Color(0.1, 0.1, 0.12), 1.0)
 		# 视野圈
-		var vr := data.cfg.fog_reveal_radius / data.cfg.map_size * size.x
+		var vr := data.cfg.fog_reveal_radius_m() / data.cfg.map_size * size.x
 		draw_arc(pp, vr, 0, TAU, 48, Color(1, 1, 1, 0.25), 1.0)
 	# 边框
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.85, 0.82, 0.72, 0.9), false, 2.0)

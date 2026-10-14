@@ -63,10 +63,10 @@ extends Resource
 @export var flatten_radius: float = 26.0        ## 定居点地基平整半径
 
 @export_group("部队")
-@export var ai_party_count: int = 14
-@export var player_speed: float = 46.0          ## 基准速度（米/秒，战略地图尺度）
+@export var ai_party_count: int = 14            ## **1024 m 基准值**（旧世界 14 支）；4096 m 由 party_count() 推到 100
+@export var player_speed: float = 46.0          ## 基准速度（米/秒，战略地图尺度；**不按尺寸推导**，见下）
 @export var ai_speed: float = 34.0
-@export var bandit_vision: float = 92.0         ## 强盗发现玩家的距离
+@export var bandit_vision: float = 92.0         ## 强盗发现玩家的距离（1024 m 基准值，按尺寸推导）
 @export var encounter_distance: float = 7.0
 
 @export_group("相机")
@@ -155,3 +155,45 @@ func min_settlement_distance_m() -> float:
 ## 定居点地基平整半径（米）：同上，按尺寸线性放大，否则 4 倍图上的地基会变成小坑。
 func flatten_radius_m() -> float:
 	return flatten_radius * size_scale()
+
+
+# ============================================== 尺寸推导：玩法「视觉尺度」与遭遇率
+## 第六轮决定（用户选定）：**看得见的尺度跟着地图走，节奏（速度）不跟着走**。
+## - 视觉尺度（相机高度/平移速度/战略视图阈值/雾半径/视野半径）按 size_scale 线性放大：
+##   它们是「能看多远」，缩了就等于把 4 倍图当成 1/16 的窗口在看。
+## - 速度（player_speed / ai_speed）**故意不放大**：横穿 4096 m 要 89 s（旧世界 22 s），
+##   这是「地图更大」的手感，而不是「人更快」；要改也是独立的节奏调参，不是尺寸推导。
+## - encounter_distance 同样不放大：它是**模型接触距离**，模型本身没有放大。
+## 老规矩：1024 m 下全部逐位回落到旧常量，所以小图（门禁）行为不变。
+func cam_min_height_m() -> float:
+	return cam_min_height * size_scale()
+
+func cam_max_height_m() -> float:
+	return cam_max_height * size_scale()
+
+func cam_default_height_m() -> float:
+	return cam_default_height * size_scale()
+
+## 平移速度：倍率跟着缩放走（相机高度 ×4 → 按屏速度相同的平移量也要 ×4）
+func cam_pan_speed_m() -> float:
+	return cam_pan_speed * size_scale()
+
+func strategic_view_height_m() -> float:
+	return strategic_view_height * size_scale()
+
+## 战争迷雾揭示半径（米）：按尺寸推导，`MinimapView` 里的「半径/地图」比值因此保持不变
+func fog_reveal_radius_m() -> float:
+	return fog_reveal_radius * size_scale()
+
+## AI 部队视野（米）：同上，视野是「看得见多远」，按尺寸推导
+func bandit_vision_m() -> float:
+	return bandit_vision * size_scale()
+
+## AI 部队总数：**不是几何量，是遭遇率曲线**。两个锚点都有依据 —— 1024 m 旧世界 14 支（可玩）、
+## 4096 m 出货世界 100 支（第六轮验收）。中间按幂律插值，指数 = ln(100/14)/ln(4) ≈ 1.42，
+## 落在「线性 56 支」与「面积 224 支」之间：4 倍图按面积补会过密，不补又太空。
+## 基准值就是上面的 @export ai_party_count（1024 m 口径），与其他尺寸推导同一套写法。
+const PARTY_COUNT_EXP := 1.42
+
+func party_count() -> int:
+	return maxi(1, int(round(float(ai_party_count) * pow(size_scale(), PARTY_COUNT_EXP))))

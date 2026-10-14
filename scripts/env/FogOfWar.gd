@@ -68,7 +68,7 @@ func update(delta: float, points: Array) -> void:
 		return
 	_accum = 0.0
 	for p in points:
-		reveal(p, cfg.fog_reveal_radius)
+		reveal(p, cfg.fog_reveal_radius_m())
 	if not _dirty:
 		return          # 没有新揭开的格子就不上传：原地不动时原来每 0.2 秒都会重建 + 上传一次
 	_dirty = false

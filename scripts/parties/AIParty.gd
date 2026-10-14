@@ -42,7 +42,7 @@ func setup_ai(p_data: MapData, p_cfg: MapConfig, p_kind: int, p_name: String, p_
 	repath_timer = rng.randf_range(0.5, 4.0)
 	repath_interval = rng.randf_range(7.0, 13.0)
 	wander_center = Vector2(position.x, position.z)
-	vision = p_cfg.bandit_vision * rng.randf_range(0.8, 1.25)
+	vision = p_cfg.bandit_vision_m() * rng.randf_range(0.8, 1.25)
 	refresh_label()
 
 func ai_kind() -> String:

@@ -282,7 +282,7 @@ func _on_quickload_requested() -> void:
 	var info: Dictionary = a.get("info", {})
 	# 迷雾要在这里揭（WorldContext 里没有 fog 这一项，也没必要为读档加一条引用）
 	if fog != null and player != null:
-		fog.reveal(Vector2(player.position.x, player.position.z), config.fog_reveal_radius * 1.4)
+		fog.reveal(Vector2(player.position.x, player.position.z), config.fog_reveal_radius_m() * 1.4)
 	var warns: Array = a.get("warnings", [])
 	print("[读档] 已载入第 %d 天：金 %d　粮 %d　士气 %d　兵 %d　部队 %d 支（打掉的 %d 支保持消失）%s" % [
 		int(info.get("day", 0)), int(info.get("denars", 0)), int(info.get("supplies", 0)),

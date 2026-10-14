@@ -83,6 +83,35 @@ func _run() -> void:
 		and absf(cfg.map_size / float(VegetationScatter.VEG_CHUNKS_PER_AXIS) - 1024.0) < 0.0001,
 		"植被区块边长 1024 → 256 m、4096 → 1024 m")
 
+	# ---- 1c) 玩法尺度：视觉量按尺寸推导，节奏量**故意不动**（第六轮的取舍，见 ROADMAP §16.9）----
+	_ok(cfg_small.cam_min_height_m() == 20.0 and cfg.cam_min_height_m() == 80.0,
+		"相机最近高度 1024 → 20 m、4096 → 80 m（%.1f / %.1f）" % [cfg_small.cam_min_height_m(), cfg.cam_min_height_m()])
+	_ok(cfg_small.cam_max_height_m() == 400.0 and cfg.cam_max_height_m() == 1600.0,
+		"相机最高高度 1024 → 400 m、4096 → 1600 m（%.1f / %.1f）" % [cfg_small.cam_max_height_m(), cfg.cam_max_height_m()])
+	_ok(cfg_small.cam_default_height_m() == 90.0 and cfg.cam_default_height_m() == 360.0,
+		"相机默认高度 1024 → 90 m、4096 → 360 m（%.1f / %.1f）" % [cfg_small.cam_default_height_m(), cfg.cam_default_height_m()])
+	_ok(cfg_small.strategic_view_height_m() == 275.0 and cfg.strategic_view_height_m() == 1100.0,
+		"战略视图阈值 1024 → 275 m、4096 → 1100 m（%.1f / %.1f）" % [cfg_small.strategic_view_height_m(), cfg.strategic_view_height_m()])
+	_ok(cfg_small.cam_pan_speed_m() == 190.0 and cfg.cam_pan_speed_m() == 760.0,
+		"相机平移速度 1024 → 190 m/s、4096 → 760 m/s（%.1f / %.1f）" % [cfg_small.cam_pan_speed_m(), cfg.cam_pan_speed_m()])
+	_ok(cfg_small.fog_reveal_radius_m() == 118.0 and cfg.fog_reveal_radius_m() == 472.0,
+		"迷雾揭示半径 1024 → 118 m、4096 → 472 m（%.1f / %.1f）" % [cfg_small.fog_reveal_radius_m(), cfg.fog_reveal_radius_m()])
+	_ok(cfg_small.bandit_vision_m() == 92.0 and cfg.bandit_vision_m() == 368.0,
+		"AI 部队视野 1024 → 92 m、4096 → 368 m（%.1f / %.1f）" % [cfg_small.bandit_vision_m(), cfg.bandit_vision_m()])
+	# 迷雾半径 / 地图 的比值不变 ⇒ 小地图上的雾圈看起来一样大（这是推导自洽的旁证）
+	_ok(absf(cfg_small.fog_reveal_radius_m() / cfg_small.map_size
+			- cfg.fog_reveal_radius_m() / cfg.map_size) < 0.0001,
+		"迷雾半径 / 地图边长 的比值不随尺寸变（小地图雾圈同大）")
+
+	# 遭遇率曲线：两端锚点必须分别落在旧世界与第六轮验收值上
+	_ok(cfg_small.party_count() == 14, "1024 m 的 AI 部队数回落到旧世界的 14 支（%d）" % cfg_small.party_count())
+	_ok(cfg.party_count() == 100, "4096 m 的 AI 部队数是 100 支（%d）" % cfg.party_count())
+
+	# 节奏量不推导：速度与接触距离保持绝对值（横穿 4096 m 要 89 s，旧世界 22 s）—— 这是决定，不是遗漏
+	_ok(cfg.player_speed == 46.0 and cfg.ai_speed == 34.0 and cfg.encounter_distance == 7.0,
+		"移动速度与接触距离保持绝对值（%.0f / %.0f / %.1f m）" % [cfg.player_speed, cfg.ai_speed, cfg.encounter_distance])
+	_ok(cfg_small.party_count() < cfg.party_count(), "部队数随尺寸单调增（%d < %d）" % [cfg_small.party_count(), cfg.party_count()])
+
 	# 这两条是「行为不变」的正式证据：推导函数在 1024 m 下必须回落到旧常量本身
 	_ok(CameraRig.far_for(cfg_small.map_size) == LEGACY_FAR,
 		"1024 m 图的远裁剪面仍是旧值 %.1f（%.1f）" % [LEGACY_FAR, CameraRig.far_for(cfg_small.map_size)])
