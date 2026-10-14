@@ -15,6 +15,14 @@
 class_name NavGrid
 extends RefCounted
 
+## 分辨率按「目标格距」推导：格距 s 时节点数 res = round(size/s) + 1（+1 让格点落在两端）。
+## 1024 m / 4 m ⇒ 257、/ 8 m ⇒ 129 —— 正是改造前写死的两个数，所以换尺寸前逐位不变。
+## 4096 m / 4 m ⇒ 1025（105 万节点）、/ 8 m ⇒ 513（见 ROADMAP §12.5 的 #1）。
+static func res_for(size: float, spacing: float) -> int:
+	return int(round(size / maxf(0.001, spacing))) + 1
+
+# 下面三个成员只是默认值：_init() 要求显式传入 res 与 size，没有「忘传就静默用 1024」的路径
+## （ROADMAP §12.5 的 #8 就是担心这一点，核对后确认构造函数本来就不给默认参数）。
 var res: int = 257
 var cell: float = 4.0
 var size: float = 1024.0

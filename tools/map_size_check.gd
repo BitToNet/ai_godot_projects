@@ -162,7 +162,30 @@ func _run() -> void:
 	_ok(is_equal_approx(dens1024, 1.0 / (TerrainManager.MESH_SPACING * TerrainManager.MESH_SPACING * 0.5)),
 		"三角形密度与 %.0f m 间距自洽（%.4f 个/m² = 8 m²/个）" % [TerrainManager.MESH_SPACING, dens1024])
 
-	# ---- 7) 内存量级（只报告，不判定）：2049² float32 的高度图 ----
+	# ---- 7) 寻路栅格：分辨率按目标格距推导（#1），格距本身不随尺寸变 ----
+	# 1024 m 下必须逐位回到旧常量 257 / 129（它们是「4 m 格距」与「8 m 格距」的来历）
+	_ok(NavGrid.res_for(1024.0, 4.0) == 257, "1024 m 细栅格仍是 257（%d）" % NavGrid.res_for(1024.0, 4.0))
+	_ok(NavGrid.res_for(1024.0, 8.0) == 129, "1024 m 粗/道路栅格仍是 129（%d）" % NavGrid.res_for(1024.0, 8.0))
+	_ok(NavGrid.res_for(TARGET_SIZE, 4.0) == 1025, "4096 m 细栅格是 1025（%d）" % NavGrid.res_for(TARGET_SIZE, 4.0))
+	_ok(NavGrid.res_for(TARGET_SIZE, 8.0) == 513, "4096 m 粗/道路栅格是 513（%d）" % NavGrid.res_for(TARGET_SIZE, 8.0))
+	# 格距恒定（分辨率变化只是「同样 4 m / 8 m 精度铺满更大的地图」）
+	for s in [1024.0, 2048.0, TARGET_SIZE]:
+		for sp in [4.0, 8.0]:
+			var r := NavGrid.res_for(s, sp)
+			var actual: float = float(s) / float(r - 1)
+			_ok(is_equal_approx(actual, sp), "%.0f m 图的 %.0f m 栅格格距自洽（%.4f）" % [s, sp, actual])
+	# 节点数：细栅格 4× 边长 ⇒ 16× 节点（4096 m 下 105 万 —— #1 的性能压力就来自这里）
+	var nodes_now := 257 * 257
+	var nodes_target := NavGrid.res_for(TARGET_SIZE, 4.0) * NavGrid.res_for(TARGET_SIZE, 4.0)
+	_ok(nodes_target == 1050625, "4096 m 细栅格是 105 万节点（%d）" % nodes_target)
+	_ok(nodes_target > 1000000, "4096 m 细栅格超过 100 万节点（%d）—— 这是 #1 需要正视的量" % nodes_target)
+	# Pathfinder 的展开上限 = res²（按尺寸推导，不会截断合法路径）
+	var pf_now := Pathfinder.new(NavGrid.new(257, 1024.0))
+	_ok(pf_now.max_expand == nodes_now, "展开上限 = 栅格节点总数（%d）" % pf_now.max_expand)
+	var pf_big := Pathfinder.new(NavGrid.new(NavGrid.res_for(TARGET_SIZE, 4.0), TARGET_SIZE))
+	_ok(pf_big.max_expand == nodes_target, "4096 m 图展开上限跟着放大到 %d（不截断）" % pf_big.max_expand)
+
+	# ---- 8) 内存量级（只报告，不判定）：高度图与寻路栅格 ----
 	# 用十进制 MB，跟 ROADMAP §12.5 #4 写的「≈16.8 MB」同口径（MiB 会显示成 16.0，容易被当成不一致）
 	var bytes := want_res * want_res * 4
 	print("[地图尺寸] 4096 m / %.0f m 间距 ⇒ 高度图 %d² × 4 B = %.1f MB"
@@ -170,6 +193,11 @@ func _run() -> void:
 	print("[地图尺寸] 4096 m ⇒ 地形 %d×%d = %d 块 × %d 四边（LOD0 顶点 %d/块，间距 %.1f m）"
 		% [n_target, n_target, n_target * n_target, TerrainManager.lod_quads_for(TARGET_SIZE)[0],
 			v4096, TerrainManager.MESH_SPACING])
+	# 细栅格每节点 15 B：blocked/speed(4)/road/forest/water/river/ford/bridge = 11 B + component(4) B
+	var nav_bytes := nodes_target * 15
+	print("[地图尺寸] 4096 m ⇒ 细栅格 %d² 节点 × 15 B ≈ %.1f MB（粗/道路栅格 513² 各 %.1f MB）"
+		% [NavGrid.res_for(TARGET_SIZE, 4.0), float(nav_bytes) / 1000000.0,
+			float(513 * 513 * 15) / 1000000.0])
 
 	if _fails.is_empty():
 		print("PASS：地图尺寸推导定式全部正常（%d 项断言）" % _total)

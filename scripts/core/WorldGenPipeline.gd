@@ -86,12 +86,16 @@ func run() -> WorldContext:
 	sb.place_all()
 
 	# ---------------- 3. 寻路栅格 ----------------
+	# 分辨率按「目标格距」推导，而不是写死 257 / 129：
+	#   细栅格 4 m/格、粗栅格 8 m/格、道路栅格 8 m/格 —— 这三条格距就是 1024 m 图上
+	#   257 / 129 / 129 的来历，所以换尺寸前逐位不变（见 tools/map_size_check.gd 的断言）。
+	# 4096 m 图上细栅格变成 1025² = 105 万节点（A* 单次搜索随之变贵，见 ROADMAP §12.5 #1）。
 	await _loading("构建寻路栅格（海/湖/河不可通行）…")
-	data.nav_fine = NavGrid.new(257, cfg.map_size)
+	data.nav_fine = NavGrid.new(NavGrid.res_for(cfg.map_size, 4.0), cfg.map_size)
 	data.nav_fine.build_from(cfg, data.hm, data.gen)
-	data.nav_coarse = NavGrid.new(129, cfg.map_size)
+	data.nav_coarse = NavGrid.new(NavGrid.res_for(cfg.map_size, 8.0), cfg.map_size)
 	data.nav_coarse.build_from(cfg, data.hm, data.gen)
-	data.nav_road = NavGrid.new(129, cfg.map_size)
+	data.nav_road = NavGrid.new(NavGrid.res_for(cfg.map_size, 8.0), cfg.map_size)
 	data.nav_road.build_from(cfg, data.hm, data.gen, true)
 	data.path_fine = Pathfinder.new(data.nav_fine)
 	data.path_fine.heuristic_weight = 1.3
