@@ -120,6 +120,10 @@ func _step(text: String) -> void:
 ## 这里只保留调用点，见 time.evaluate() / time.order_move() / time.lock()。
 
 # =============================================================== 循环
+## 每帧给寻路队列的预算（微秒）：16.6 ms 的一帧里约占 12%。
+## 见 PathQueue —— 预算比单个请求还小时「每帧至少完成一个」，所以队列不会卡死。
+const PATH_BUDGET_US := 2000
+
 func _process(delta: float) -> void:
 	# view / hover / encounters / battler 都是生成流程最后才组装的（要等相机、植被、
 	# 部队、HUD 全部就位），在那之前 _process 已经在跑（_ready 里全是 await），
@@ -144,6 +148,10 @@ func _process(delta: float) -> void:
 	for a in ai_parties:
 		if a != null and is_instance_valid(a):
 			a.step(dt)
+	# 寻路请求队列：本帧 AI 刚提交的请求在这里立刻结算（每帧预算，见 PathQueue）。
+	# 放在 AI step 之后 = 同一帧内完成，低负载下与旧的同步寻路几乎没有差别。
+	if data.path_queue != null:
+		data.path_queue.pump(PATH_BUDGET_US)
 	# 行军音效（马蹄）：只在世界时间流动的那几帧发声，暂停时自动静音
 	_tick_party_audio(dt)
 	# 迷雾（纯视觉，不受时间暂停影响）

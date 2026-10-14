@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行 17 步（20~21 项断言，约 42~44 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行下列步骤（21 项，约 55~60 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -19,6 +19,9 @@
 #    5) 经济定式（tools/economy_check.gd）—— 军费 / 士气 / 招募 / 撤退代价的公式形状，
 #       外加一条 42 天的收支时间轴。这条回路（工资→欠薪→士气→逃兵→兵力→工资）在
 #       900 帧里连一天都跑不完，没有它就只能靠开游戏看几天才发现经济是坏的
+#    5b) 寻路队列契约（tools/path_queue_check.gd）—— 第六轮 6d 后半：结果与同步 find_path
+#        逐点相同 / 严格 FIFO / 预算为 0 时每帧仍前进一个 / 失效 Callable 不崩不少记账。
+#        队列算错的表现是「部队偶尔站着不动」，900 帧主场景里很难稳定复现，只能直接对契约下断言
 #    6) 城镇交互定式（tools/settlement_check.gd）—— 补给 / 招募 / 贸易 / 驻军的价格、
 #       边界（钱不够 / 编制满 / 池子空 / 城里没兵）与「低买高卖」是否真的有利可图。
 #       菜单的分支同样在 900 帧里一个都走不到，而它是整个经济闭环的入口
@@ -212,6 +215,15 @@ $rEco = Invoke-GodotStep -Name 'economy_check' -Extra @('--script', 'res://tools
 $ecoPass = @($rEco.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rEco.Ok -and -not $ecoPass) {
 	$fail.Add('经济定式  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 5b) 寻路队列契约（每帧预算 / FIFO / 与同步结果逐点相同）----
+# 断言在 tools/path_queue_check.gd 里；这里同样只确认「退出码 0 且打印了 PASS」。
+# 为什么值得单独一步：队列算错的表现是「部队偶尔站着不动」，900 帧主场景里很难稳定复现。
+$rPq = Invoke-GodotStep -Name 'path_queue_check' -Extra @('--script', 'res://tools/path_queue_check.gd')
+$pqPass = @($rPq.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rPq.Ok -and -not $pqPass) {
+	$fail.Add('寻路队列  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 6) 城镇交互定式（补给 / 招募 / 贸易 / 驻军）----

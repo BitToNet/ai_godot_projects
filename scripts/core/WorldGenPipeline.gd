@@ -97,6 +97,9 @@ func run() -> WorldContext:
 	data.path_fine.heuristic_weight = 1.3
 	data.path_coarse = Pathfinder.new(data.nav_coarse)
 	data.path_coarse.heuristic_weight = 1.6
+	# 第六轮 6d 后半：AI 寻路统一走队列（每帧预算）；玩家点击仍走同步 find_path
+	# —— 玩家的点击必须立刻有反应，AI 的路可以晚一帧（差的就是「卡顿」与「不掉帧」）
+	data.path_queue = PathQueue.new()
 
 	# ---------------- 4. 道路 ----------------
 	await _loading("铺设道路网（A* 修路 + 架桥）…")

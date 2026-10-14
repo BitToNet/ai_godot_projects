@@ -125,7 +125,20 @@ func _repath_to(goal: Vector2, interval: float) -> bool:
 		repath_timer = interval
 		return false
 	var my := Vector2(position.x, position.z)
-	var pts := data.path_coarse.find_path(my, goal)
+	# 第六轮 6d 后半：AI 寻路走全局队列（每帧预算，见 PathQueue）。结果与同步 find_path
+	# **逐点相同**，只是要等队列排到它（通常就是下一帧）—— 4096 m / 100 部队时，这就是
+	# 「不掉帧」与「一次卡 200~730 ms」的区别。
+	# data.path_queue 为空（个别检查直接构造 MapData）时退回同步，行为与旧版完全一致。
+	if data.path_queue != null:
+		repath_timer = interval
+		data.path_queue.enqueue(data.path_coarse, my, goal, func(pts: PackedVector3Array) -> void:
+			_apply_path(pts, goal, gcell, interval))
+		return true
+	return _apply_path(data.path_coarse.find_path(my, goal), goal, gcell, interval)
+
+## 寻路结果的统一结算：同步与队列两条路共用，保证两条路的成功/失败行为一致
+## （成功则 set_path 并清零失败计数；失败则按指数退避记住这个目标格）。
+func _apply_path(pts: PackedVector3Array, goal: Vector2, gcell: Vector2i, interval: float) -> bool:
 	if pts.size() >= 1:
 		set_path(pts)
 		last_goal = goal

@@ -94,6 +94,12 @@ godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://too
 的正式证据。同一批还试过 `RenderingServer.multimesh_set_buffer` 批量写：正确但**更慢**
 （发射段 2.6 → 5.4 ms），已否决并改回逐实例写（见 ROADMAP §12.7）。
 
+门禁里还有一条 `tools/path_queue_check.gd`（第六轮 6d 后半，第 5b 步）：AI 寻路现在走
+`PathQueue` 队列（每帧预算 2000 µs；**先完成再判预算**，所以预算为 0 时也每帧前进一个）。
+它判的是契约：结果与同步 `find_path` **逐点相同**、严格 FIFO、失效 Callable 不崩不少记账。
+实测单次 coarse 请求均值 15.9 ms、**峰值 53.2 ms** —— 峰值远超预算，这正是「至少完成一个」
+存在的原因，也是切 4096 m 时必须同时调大预算与放大格距的依据（见 ROADMAP §12.8）。
+
 ### 6. 换一张地图
 打开 `scripts/core/MapConfig.gd`，修改：
 ```gdscript

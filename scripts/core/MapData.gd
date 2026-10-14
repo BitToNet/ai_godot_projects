@@ -18,6 +18,7 @@ var nav_coarse: NavGrid
 var nav_road: NavGrid
 var path_fine: Pathfinder
 var path_coarse: Pathfinder
+var path_queue: PathQueue        ## 第六轮 6d 后半：AI 寻路请求队列（每帧预算），由 Main 每帧 pump
 
 var splat_image: Image
 var splat_texture: ImageTexture
