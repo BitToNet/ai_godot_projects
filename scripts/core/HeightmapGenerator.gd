@@ -176,14 +176,19 @@ func desert_mask(u: float, v: float, land: float, mountain: float) -> float:
 	var band := smoothstep(0.02, 0.22, v) * (1.0 - smoothstep(0.72, 0.95, v))
 	return clampf(e * band * land * (1.0 - mountain * 0.9), 0.0, 1.0)
 
+## 注：下面两个 per-sample 循环**试过**用 `WorkerThreadPool` 按行区间并行（每个任务只写自己的行、
+## 共享目标都在任务开始前 resize 完、结果逐位不变 —— 指纹确实一字未动），但实测在**两种尺寸下都更慢**：
+## 1024 m 高度场 1435 → 2411 ms、4096 m 40678 → 43578 ms（噪声那件几乎不变，慢的全在生物群系）。
+## 所以没有保留。数据与讨论见 ROADMAP §16.6；**别再重复这一步**，除非先有证据说明瓶颈换了。
 func _build_heights() -> void:
 	var res := hm.res
+	var cell := hm.cell
 	var inv := 1.0 / cfg.map_size
 	for z in res:
-		var wz := float(z) * hm.cell
+		var wz := float(z) * cell
 		var v := wz * inv
 		for x in res:
-			var wx := float(x) * hm.cell
+			var wx := float(x) * cell
 			var u := wx * inv
 
 			var land := land_mask(u, v)
@@ -231,15 +236,17 @@ func _build_biomes() -> void:
 	biome_moist.resize(n)
 	biome_rock.resize(n)
 	forest_mask.resize(n)
+	var cell := hm.cell
 	var inv := 1.0 / cfg.map_size
+	var hd := hm.data          # 只读别名：省掉每个采样点一次跨对象成员读取（只读，不触发写时复制）
 	for z in res:
-		var wz := float(z) * hm.cell
+		var wz := float(z) * cell
 		var v := wz * inv
 		for x in res:
-			var wx := float(x) * hm.cell
+			var wx := float(x) * cell
 			var u := wx * inv
 			var i := z * res + x
-			var h := hm.data[i]
+			var h := hd[i]
 			var slope := hm.grid_slope(x, z)
 			var mountain := 0.0
 			if h > cfg.mountain_line:
