@@ -185,7 +185,36 @@ func _run() -> void:
 	var pf_big := Pathfinder.new(NavGrid.new(NavGrid.res_for(TARGET_SIZE, 4.0), TARGET_SIZE))
 	_ok(pf_big.max_expand == nodes_target, "4096 m 图展开上限跟着放大到 %d（不截断）" % pf_big.max_expand)
 
-	# ---- 8) 内存量级（只报告，不判定）：高度图与寻路栅格 ----
+	# ---- 8) grid_slope 与 slope_at 的逐位等价（③b-1 高度场提速的前提）----
+	# ③b-1 要砍的第一刀是 `_build_biomes` 里**每点一次**的 `slope_at`（它走 normal_at → 4 次双线性
+	# height_at，2049² 上是 36 秒里的一大半），换成直接用网格邻居做中心差分。这条替换**必须逐位相同**：
+	# 坡度喂给 forest_mask / biome_rock → 植被密度与岩石掩码 → 世界布局。差 1 个 ULP 就要重基线，
+	# 而这一批的全部价值就在「不用重基线」。
+	# 等价性只在**采样正好落在网格点上**时成立（双线性权重 tx = tz = 0，返回的就是该点自身的数据），
+	# 所以先钉前提（cell 精确等于 2.0），再拿一张同 cell 的小图把所有点（含 x/z = 0 与 res-1 的
+	# 夹取边界）逐位比一遍。真实世界那一侧由「生成指纹不变」兜着 —— 那是最强的端到端证据。
+	for s in [cfg.map_size, TARGET_SIZE]:
+		var s_f: float = s
+		var rr := int(s_f / spacing_now) + 1
+		var c: float = s_f / float(rr - 1)
+		_ok(c == 2.0, "%.0f m 图的采样间距精确等于 2.0（%.17f）—— grid_slope 的前提" % [s_f, c])
+		var h := Heightmap.new(65, c * 64.0)      # 同 cell 的小图：65² 点便宜，且覆盖全部边界
+		var gen := RandomNumberGenerator.new()
+		gen.seed = 20261014
+		for i in h.res * h.res:
+			h.data[i] = gen.randf_range(-40.0, 90.0)
+		var bad := 0
+		var first_bad := Vector2i(-1, -1)
+		for z in h.res:
+			for x in h.res:
+				if h.grid_slope(x, z) != h.slope_at(float(x) * c, float(z) * c):
+					bad += 1
+					if first_bad.x < 0:
+						first_bad = Vector2i(x, z)
+		_ok(bad == 0, "%.0f m 图（cell %.0f m）：grid_slope 与 slope_at 逐位相同（%d/%d 处不同，首个 %s）"
+			% [s_f, c, bad, h.res * h.res, str(first_bad)])
+
+	# ---- 9) 内存量级（只报告，不判定）：高度图与寻路栅格 ----
 	# 用十进制 MB，跟 ROADMAP §12.5 #4 写的「≈16.8 MB」同口径（MiB 会显示成 16.0，容易被当成不一致）
 	var bytes := want_res * want_res * 4
 	print("[地图尺寸] 4096 m / %.0f m 间距 ⇒ 高度图 %d² × 4 B = %.1f MB"

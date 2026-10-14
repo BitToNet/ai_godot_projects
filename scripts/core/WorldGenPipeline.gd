@@ -79,7 +79,7 @@ func run() -> WorldContext:
 	# ---------------- 1. 高度场 ----------------
 	await _loading("生成地形高度场（多层噪声叠加）…")
 	data.gen = HeightmapGenerator.new(cfg)
-	data.hm = data.gen.generate()
+	data.hm = data.gen.generate(stage_timing)
 	await _loading("雕刻河流与湖泊（河道下切 / 渡口）…")
 
 	# ---------------- 2. 定居点选址 ----------------

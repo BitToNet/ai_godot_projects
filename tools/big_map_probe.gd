@@ -92,12 +92,15 @@ func _run() -> void:
 	cur["veg_instances"] = veg.total()
 	cur["veg_chunks"] = _veg_chunks(veg.root)
 
+	# 高度场分件放在**最前面**：它是对「管线刚跑过的那件事」的复测，
+	# 越早做越接近管线自己的环境（纳秒级复测放在最后会被后续大量分配/CPU 降频带偏）。
+	# 判定绝对值时以管线自己的阶段计时为准，分件只用来定比例。
+	_p_height()
 	_report_settlements()
 	_report_nav()
 	_p_nav()
 	_p_veg(veg)
 	_p_path()
-	_p_height()
 
 	print("[大图] ================ 4096 m 实测 ================")
 	print("[大图] 生成墙钟 %d ms（管线内 %d ms）" % [wall, int(main._gen_ms)])
@@ -284,38 +287,21 @@ func _p_path() -> void:
 			which, pairs.size(), total, maxms, exp_total, npts])
 		print("[大图] A* %s 逐对：%s" % [which, " | ".join(detail)])
 
-# ---------------------------------------------------------------- 4) 高度场分件
-## 阶段计时已经把 83 秒里的 57 秒钉在「生成地形高度场」上。这里再把它拆成 6 件：
-## 只有知道是**噪声采样**慢（→ 降分辨率 / 多线程 / 低频遮罩粗网格化）还是**河道湖泊**慢
-## （→ 算法本身随尺寸超线性），才知道 ③b 该往哪使劲。
+# ---------------------------------------------------------------- 4) 高度场复测
+## 阶段计时（配合 `[高度场]` 分件行）已经把 83 秒里的 57 秒钉在「生成地形高度场」上，分件由
+## `HeightmapGenerator.generate(true)` 自己在原地打 —— 这里只复测一遍总时长。
+## 注意：**别拿这里的复测值去跟管线自己的阶段值比**。实测里复测会偏高（同样一次 generate()，
+## 复测 2707 ms vs 管线阶段 1512 ms，1024 m），因为复测发生在世界建好之后；占比与前后对比
+## 一律看管线自己那两行（`[阶段]` 与 `[高度场]`），它们同源同位置。
 func _p_height() -> void:
 	var hg := HeightmapGenerator.new(cfg)
-	hg.hm = Heightmap.new(cfg.heightmap_res, cfg.map_size)
 	var t := Time.get_ticks_usec()
-	hg._build_heights()
-	var t_h := _ms_us(t)
-	t = Time.get_ticks_usec()
-	hg.hm.blur(1)
-	var t_b1 := _ms_us(t)
-	t = Time.get_ticks_usec()
-	hg._build_biomes()
-	var t_bio := _ms_us(t)
-	t = Time.get_ticks_usec()
-	hg._make_lakes()
-	var t_lake := _ms_us(t)
-	t = Time.get_ticks_usec()
-	hg._make_rivers()
-	var t_riv := _ms_us(t)
-	t = Time.get_ticks_usec()
-	hg.hm.blur(1)
-	var t_b2 := _ms_us(t)
-	var sum := t_h + t_b1 + t_bio + t_lake + t_riv + t_b2
-	cur["height_heights_ms"] = snappedf(t_h, 0.1)
-	cur["height_total_ms"] = snappedf(sum, 0.1)
-	print("[大图] 高度场分件：噪声 %.0f / 模糊① %.0f / 生物群系 %.0f / 湖 %.0f / 河 %.0f / 模糊② %.0f ms" % [
-		t_h, t_b1, t_bio, t_lake, t_riv, t_b2])
-	print("[大图] 高度场合计 %.0f ms（%.1f 万采样点 → %.2f µs/点）" % [
-		sum, float(cfg.heightmap_res * cfg.heightmap_res) / 10000.0, sum * 1000.0 / float(cfg.heightmap_res * cfg.heightmap_res)])
+	hg.generate(true)
+	var ms := _ms_us(t)
+	cur["height_total_ms"] = snappedf(ms, 0.1)
+	print("[大图] 高度场复测（进程内第二次 generate，仅供量级参考）：%.0f ms（%.1f 万采样点 → %.2f µs/点）" % [
+		ms, float(cfg.heightmap_res * cfg.heightmap_res) / 10000.0,
+		ms * 1000.0 / float(cfg.heightmap_res * cfg.heightmap_res)])
 
 func _ms_us(t0: int) -> float:
 	return float(Time.get_ticks_usec() - t0) / 1000.0
@@ -354,9 +340,8 @@ func _lines() -> Array:
 		TerrainManager.chunk_size_for(map_size), int(ceil(map_size / TerrainManager.chunk_size_for(map_size))) ** 2,
 		str(want.get("terrain_chunks", "n/a")), _lod0_verts(map_size),
 		str(want.get("terrain_lod0_verts", "n/a"))])
-	out.append("高度场 合计 %.0f ms（其中噪声采样 %.0f ms = %.0f%%）—— 83 秒里的头号开销" % [
-		float(cur.get("height_total_ms", 0.0)), float(cur.get("height_heights_ms", 0.0)),
-		100.0 * float(cur.get("height_heights_ms", 0.0)) / maxf(1.0, float(cur.get("height_total_ms", 0.0)))])
+	out.append("高度场 本进程复测 %.0f ms（占比与前后对比请看上面的 [阶段] / [高度场] 两行，同源同位置）" % [
+		float(cur.get("height_total_ms", 0.0))])
 	out.append("定居点 包围盒 %.0f m（占图 %.0f%%）/ 最近邻中位 %.0f m —— 太小说明定居点没铺开" % [
 		float(cur.get("settle_bbox", 0.0)),
 		100.0 * float(cur.get("settle_bbox", 0.0)) / map_size, float(cur.get("settle_nn_median", 0.0))])

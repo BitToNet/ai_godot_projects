@@ -131,14 +131,34 @@ func _setup_noise() -> void:
 	n_moist.fractal_octaves = 3
 
 # ------------------------------------------------------------------ 主流程
-func generate() -> Heightmap:
+## timing = true 时把 6 件分件的耗时打到 stdout（默认 false，一个字都不多打）。
+## 为什么把分件做进 generate() 而不是在探针里重写一遍这段顺序：
+##   重写出来的顺序**不是**「管线刚刚跑过的那一次」，实测里复测值能比管线自己的阶段值高 1.8 倍
+##   （`_build_biomes` 换掉 slope_at 之后更明显）—— 于是「占比」就变成了跨两条路径的数字游戏。
+##   分件与阶段计时同源同位置，加起来就等于那一阶段，没有对不上的余地。
+func generate(timing: bool = false) -> Heightmap:
 	hm = Heightmap.new(cfg.heightmap_res, cfg.map_size)
+	var t0 := Time.get_ticks_msec()
 	_build_heights()
+	var t_h := Time.get_ticks_msec() - t0
+	t0 = Time.get_ticks_msec()
 	hm.blur(1)             # 去掉单点毛刺，让寻路/落地更稳
+	var t_b1 := Time.get_ticks_msec() - t0
+	t0 = Time.get_ticks_msec()
 	_build_biomes()
+	var t_bio := Time.get_ticks_msec() - t0
+	t0 = Time.get_ticks_msec()
 	_make_lakes()
+	var t_lake := Time.get_ticks_msec() - t0
+	t0 = Time.get_ticks_msec()
 	_make_rivers()
+	var t_riv := Time.get_ticks_msec() - t0
+	t0 = Time.get_ticks_msec()
 	hm.blur(1)             # 柔化河道与湖岸边缘
+	var t_b2 := Time.get_ticks_msec() - t0
+	if timing:
+		print("[高度场] 噪声 %d / 模糊① %d / 生物群系 %d / 湖 %d / 河 %d / 模糊② %d ms"
+			% [t_h, t_b1, t_bio, t_lake, t_riv, t_b2])
 	return hm
 
 ## 大陆遮罩：椭圆距离 + 噪声扰动海岸线
@@ -220,7 +240,7 @@ func _build_biomes() -> void:
 			var u := wx * inv
 			var i := z * res + x
 			var h := hm.data[i]
-			var slope := hm.slope_at(wx, wz)
+			var slope := hm.grid_slope(x, z)
 			var mountain := 0.0
 			if h > cfg.mountain_line:
 				mountain = clampf((h - cfg.mountain_line) / 60.0, 0.0, 1.0)

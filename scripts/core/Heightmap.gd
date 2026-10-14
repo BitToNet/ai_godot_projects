@@ -62,6 +62,27 @@ func normal_at(wx: float, wz: float) -> Vector3:
 func slope_at(wx: float, wz: float) -> float:
 	return 1.0 - clampf(normal_at(wx, wz).y, 0.0, 1.0)
 
+## 网格坡度：与 slope_at(float(x) * cell, float(z) * cell) **逐位相同**，但省掉 4 次双线性重采样。
+##   为什么能省：`slope_at` 走 `normal_at` → `height_at`，而 `height_at` 在**正好落在采样点**上时
+##   权重 tx = tz = 0，返回的就是该点自身的数据；于是「±1 格中心差分」与「±cell 双线性」拿到的
+##   是同一批数字、同一串运算（同样的 `Vector3().normalized()`、同样的 clampi 夹取），差别只在
+##   省掉的插值开销。这条替换是本轮 4096 m 提速的第一刀 —— `_build_biomes` 每点一次 `slope_at`，
+##   在 2049² 上是 36 秒里的一大半。
+##   前提：`x * cell / cell` 必须精确等于 `x`（cell 为 2 的幂即成立）。本项目 `heightmap_res` 由
+##   `map_size / 2 + 1` 推导，cell 恒为 2.0。`tools/map_size_check.gd` 有「逐位相等」的断言守这条前提，
+##   包括 x/z = 0 与 res-1 的边界（那里靠 clampi 把 ±1 折回自身，与 height_at 的夹取一致）。
+func grid_slope(x: int, z: int) -> float:
+	var xm := clampi(x - 1, 0, res - 1)
+	var xp := clampi(x + 1, 0, res - 1)
+	var zm := clampi(z - 1, 0, res - 1)
+	var zp := clampi(z + 1, 0, res - 1)
+	var row := z * res
+	var hl := data[row + xm]
+	var hr := data[row + xp]
+	var hd := data[zm * res + x]
+	var hu := data[zp * res + x]
+	return 1.0 - clampf(Vector3(hl - hr, 2.0 * cell, hd - hu).normalized().y, 0.0, 1.0)
+
 func is_water(wx: float, wz: float, sea_level: float) -> bool:
 	return height_at(wx, wz) <= sea_level
 
