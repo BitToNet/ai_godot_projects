@@ -69,8 +69,9 @@ func order_move(goal: Vector2) -> void:
 	player.set_destination(goal)
 	if player.moving:
 		evaluate()
-		# 行军号角（下达命令的听觉反馈）
-		Sfx.play("order", -4.0)
+		# 这里**刻意不播**行军号角：大地图上每点一次就响一声太吵（需求方反馈），
+		# 而"命令已下达"已经有路线与目标点做视觉反馈。音色 order 仍留在 SfxSynth 库里备用
+		# （`tools/audio_check.gd` 还会播它），但游戏运行时不再由任何点击触发。
 		print("[行军] 前往 (%.0f, %.0f)：途中时间流动，抵达后立刻暂停。" % [goal.x, goal.y])
 
 ## 强制暂停（遭遇对话 / Boss 战），并立刻刷新 game_paused

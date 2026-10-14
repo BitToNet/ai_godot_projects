@@ -7,14 +7,18 @@
 ##
 ##  做三件事：
 ##    1) 真的启动 Main.tscn（完整程序化生成 + 音效合成）
-##    2) 下达一次行军命令 → 检查"行军号角"与"行军马蹄"是否响起
+##    2) 下达一次行军命令 → 检查"行军马蹄"是否响起，并断言**没有**行军号角
+##       （大地图点击静音是需求：走的就是这个 order_move 入口，见 TimeFlowController.gd）
 ##    3) 命令 AI 部队靠近并触发遭遇 → 检查"遭遇提示音"
 ##
-##  退出码 0 = 关键音效全部触发过；1 = 有缺失
+##  退出码 0 = 关键音效全部触发过、且点击静音依然成立；1 = 有缺失 / 又多出声了
 ## =============================================================================
 extends SceneTree
 
-const KEY_IDS := ["order", "hoof_a", "hoof_b", "encounter"]
+const KEY_IDS := ["hoof_a", "hoof_b", "encounter"]
+## 必须**一次都不响**的 id：大地图点一下就"嘟"一声音色太吵，已按要求去掉触发点。
+## 这条断言是回归护栏 —— 谁哪天顺手把 Sfx.play("order") 加回去，这里就会红。
+const SILENT_IDS := ["order"]
 
 var main: Node
 
@@ -111,9 +115,16 @@ func _check() -> void:
 	for id in KEY_IDS:
 		if int(counts.get(id, 0)) == 0:
 			missing.append(id)
-	if missing.is_empty():
-		print("[大地图联调] PASS：行军号角 / 马蹄 / 遭遇提示音全部触发过")
-		quit(0)
-	else:
+	var noisy: Array = []
+	for id in SILENT_IDS:
+		if int(counts.get(id, 0)) > 0:
+			noisy.append("%s×%d" % [String(id), int(counts[id])])
+	if not missing.is_empty():
 		print("[大地图联调] FAIL：以下音效没被触发过 -> %s" % str(missing))
 		quit(1)
+	elif not noisy.is_empty():
+		print("[大地图联调] FAIL：大地图点击**又**出声了（应已静音）-> %s" % str(noisy))
+		quit(1)
+	else:
+		print("[大地图联调] PASS：马蹄 / 遭遇提示音全部触发过，且下令行军**不再**响号角")
+		quit(0)

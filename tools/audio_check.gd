@@ -129,8 +129,14 @@ func _run() -> void:
 	_eqi(int(AudioBus.stats()["ducks"]) - ducks1, 0, "时长为 0 的 duck 被拒")
 
 	var ducks2 := int(AudioBus.stats()["ducks"])
+	Sfx.play("battle_start")
+	_eqi(int(AudioBus.stats()["ducks"]) - ducks2, 1, "扇子音 battle_start 自动触发 duck")
+	# "order"（行军号角）本来也在这张名单里，但大地图点击已按要求去掉触发点
+	# （见 TimeFlowController.order_move），它就只剩"音色库里还有这条音色"的身份：
+	# 缓存结构不能动（整体命中/整体丢弃），但播放它不该再压低音乐。
+	var ducks2b := int(AudioBus.stats()["ducks"])
 	Sfx.play("order")
-	_eqi(int(AudioBus.stats()["ducks"]) - ducks2, 1, "扇子音 order 自动触发 duck")
+	_eqi(int(AudioBus.stats()["ducks"]) - ducks2b, 0, "order 已移出扇子音名单，播放不再 duck")
 	_nearf(AudioBus.music_db(), cfg.bgm_db + cfg.fanfare_duck_db, 0.001, "扇子音期间音乐被压低")
 	await _wait_frames(110)
 	_nearf(AudioBus.music_db(), cfg.bgm_db, 0.001, "%.1f s 后音乐自动恢复" % cfg.fanfare_duck_time)

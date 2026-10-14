@@ -10,8 +10,11 @@
 ##   · 分类音量 / 音高随机抖动取自 AudioConfig；总音量写在 Master 总线上（见 AudioBus）
 ##   · 播放器挂在 Sfx 总线上（default_bus_layout.tres：Master → Music / Sfx）；
 ##     号角 / 开战 / 结算这类"扇子音"会临时压低音乐（AudioBus.duck），别让 BGM 压住它
+##   · 移动类音色（脚步 / 马蹄 / 起跳落地 / 闪避）优先用录音素材（SfxFoley），
+##     有素材时每次播放随机挑一个 take，没有就回退到合成音色
 ##
-##  设计约束：不加载任何外部音频文件，全部音色由代码合成（见 SfxSynth.gd）。
+##  设计约束：打击 / 金属 / 破风类音色全部由代码合成（见 SfxSynth.gd）；只有"移动"
+##  这一类改用 CC0 录音素材（见 SfxFoley.gd 与 audio/sfx/foley/CREDITS.md）。
 ## =============================================================================
 class_name Sfx
 extends RefCounted
@@ -34,9 +37,16 @@ static var _rng := RandomNumberGenerator.new()
 const _JIT_SEED := 0x5F3A17 + 7
 static var _jit := RandomNumberGenerator.new()
 
+## 录音变体（SfxFoley）挑选用**另一个**独立 RNG，理由同上：音高抖动序列是玩家能听出来的
+## 东西，不该因为"这一声多挑了一个变体"就整体移位。同样固定种子，只取决于播放次数。
+const _VAR_SEED := 0x5F3A17 + 23
+static var _var := RandomNumberGenerator.new()
+
 ## 扇子音名单：播放时把音乐临时压低。刻意不塞进 SfxSynth.SPECS ——
 ## 那是"音色配方"，而这是"混音行为"，两件事放在一起以后必然互相牵制。
-const FANFARE := ["order", "battle_start", "result_win", "result_lose"]
+## "order" 曾经在这个名单里：大地图点击不再出声后（见 TimeFlowController.order_move），
+## 它已经不是扇子音，留在名单里只会让人以为还有地方在播它。
+const FANFARE := ["battle_start", "result_win", "result_lose"]
 
 # =============================================================== 初始化
 ## 参数配置（未初始化时返回一份默认配置，调用方可以安全地直接读字段）
@@ -90,6 +100,7 @@ static func setup(host: Node, c: AudioConfig = null) -> void:
 				"pitch": float(cm[3]),
 			}
 		_jit.seed = _JIT_SEED
+		_attach_foley()
 		_ready = true
 		return
 	# 2) 冷启动：逐个合成音色；按时间切片让出帧，Loading 界面不会卡住
@@ -111,6 +122,7 @@ static func setup(host: Node, c: AudioConfig = null) -> void:
 	# 3) 落盘（写不进去只影响下次启动的快慢，不影响本次运行）
 	SfxCache.save_bank(_bank)
 	_jit.seed = _JIT_SEED
+	_attach_foley()
 	_ready = true
 
 # =============================================================== 开关 / 音量
@@ -146,6 +158,32 @@ static func total_plays() -> int:
 static func bank_size() -> int:
 	return _bank.size()
 
+# =============================================================== 录音素材层（自检用）
+static func foley_ready() -> bool:
+	return SfxFoley.is_ready()
+
+## 某个动作挂上了几个录音变体（0 = 该动作仍用合成音色）
+static func foley_variants(id: String) -> int:
+	return SfxFoley.variant_count(id)
+
+static func foley_total() -> int:
+	return SfxFoley.total_variants()
+
+static func foley_missing() -> Array[String]:
+	return SfxFoley.missing()
+
+## 某个音色当前是否走录音素材
+static func uses_foley(id: String) -> bool:
+	return not SfxFoley.variants_of(id).is_empty()
+
+## 音色**条目上真正挂到**的录音变体数（0 = 建库时没挂上，播放会退回合成音色）。
+## 与 foley_variants() 的分工：那个问"素材层有什么"，这个问"音色库挂上了什么"——
+## 只有后者能抓住"素材齐全但 _attach_foley 没跑"这类断链（不写状态，不走节流）。
+static func entry_foley_count(id: String) -> int:
+	if not _bank.has(id):
+		return 0
+	return (_bank[id].get("variants", []) as Array).size()
+
 static func pool_size() -> int:
 	return _players.size()
 
@@ -173,7 +211,7 @@ static func play_2d(parent: Node, id: String, pos: Vector2, vol_db := 0.0, pitch
 		_play_plain(e, vol_db, pitch)
 		return
 	var p := AudioStreamPlayer2D.new()
-	p.stream = e["stream"]
+	p.stream = _stream_of(e)
 	p.pitch_scale = _pitch_of(e, pitch)
 	p.volume_db = _final_db(e, vol_db)
 	# 2D 定位音：镜头（Camera2D）就是听者，自带左右声像与距离衰减
@@ -195,7 +233,7 @@ static func play_3d(parent: Node, id: String, pos: Vector3, vol_db := 0.0, pitch
 		_play_plain(e, vol_db, pitch)
 		return
 	var p := AudioStreamPlayer3D.new()
-	p.stream = e["stream"]
+	p.stream = _stream_of(e)
 	p.pitch_scale = _pitch_of(e, pitch)
 	p.volume_db = _final_db(e, vol_db)
 	# 3D 定位音：以 Camera3D 为听者（大地图拉远时马蹄声自然变轻）
@@ -211,6 +249,29 @@ static func stop_all() -> void:
 		p.stop()
 
 # =============================================================== 内部
+## 挂载录音素材（SfxFoley）：给对应音色条目加上 "variants" —— 播放时随机取一个 take。
+## 没有素材 / 素材缺失的 id 保持纯合成音色；一个素材都没加载到时这一层等于不存在。
+static func _attach_foley() -> void:
+	SfxFoley.load_all()
+	_var.seed = _VAR_SEED
+	for id in SfxFoley.loaded_ids():
+		var sid := String(id)
+		if not _bank.has(sid):
+			continue
+		var vs := SfxFoley.variants_of(sid)
+		if vs.is_empty():
+			continue
+		(_bank[sid] as Dictionary)["variants"] = vs
+
+## 取这一声要播的流：有录音变体就随机挑一个（同一动作多个 take），否则用合成音色。
+static func _stream_of(e: Dictionary) -> AudioStream:
+	var v: Variant = e.get("variants")
+	if v is Array:
+		var arr := v as Array
+		if not arr.is_empty():
+			return arr[_var.randi() % arr.size()] as AudioStream
+	return e["stream"] as AudioStream
+
 ## 取音色条目并做"同音最短间隔"节流判定，**不写任何状态**。
 ## 调用方在确认这一声一定会发出去（含下面的退化路径）之后再调 _commit()。
 ## 拆成 _peek / _commit 的原因：play_2d / play_3d 在 parent 非法时会退化成非定位播放，
@@ -237,7 +298,7 @@ static func _play_plain(e: Dictionary, vol_db: float, pitch: float) -> void:
 		return
 	var p := _players[_next]
 	_next = (_next + 1) % _players.size()
-	p.stream = e["stream"]
+	p.stream = _stream_of(e)
 	p.pitch_scale = _pitch_of(e, pitch)
 	p.volume_db = _final_db(e, vol_db)
 	p.play()
