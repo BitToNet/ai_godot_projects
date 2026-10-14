@@ -242,6 +242,12 @@ func _assign_garrisons() -> void:
 # =============================================================== 建筑
 func build_all(parent: Node3D, mat: Material, light_mat: Material) -> void:
 	for s in data.settlements:
+		# 第③批-2：每个定居点一条**独立的几何随机流**。
+		# 以前所有定居点共用一条 rng，于是「村庄多抽一次」会顺移它后面城镇 / 城堡的排布；
+		# 换成按 id 派生之后，村庄布局与别的定居点彻底解耦（③-3 换城镇时同样受益）。
+		# 安全性：指纹项（选址 / 地基 / 驻军）全都在 build_all 之前就定下来了，
+		# 所以这一步换流不可能动 tools/gen_fingerprint.json 的基线。
+		rng = cfg.make_rng("settle_geom|%d" % s.id)
 		var root := Node3D.new()
 		root.name = "Settlement_%d_%s" % [s.id, s.name]
 		root.position = Vector3(s.pos.x, s.ground_h, s.pos.y)
@@ -253,7 +259,10 @@ func build_all(parent: Node3D, mat: Material, light_mat: Material) -> void:
 			Settlement.Kind.TOWN:
 				_build_town(s)
 			_:
-				_build_village(s)
+				# 第③批-2：村庄先试真模型；只要有一个模型取不到就**整套**回退程序化
+				# —— 绝不允许「一半 GLB 房子 + 一半程序化小屋」这种半成品混搭。
+				if not _build_village_models(s, root):
+					_build_village(s)
 		var mesh := kit.build()
 		if mesh != null:
 			var mi := MeshInstance3D.new()
@@ -461,9 +470,108 @@ func _house(pos: Vector3, rot: float, w: float, d: float, h: float, wall: Color,
 		_window(Vector3(w * 0.25, h * 0.55, -d * 0.5 - 0.02), Vector3(0, 0, -1), 1.0, 1.3)
 	kit.pop_transform()
 
+# --------------------------------------------------- 村庄（真模型，第③批-2）
+## 用 AssetManifest.VILLAGE_LAYOUT 摆真模型。返回是否**整套**摆成功。
+##
+## 为什么是「全有或全无」：如果某个 GLB 丢了（忘了 import、文件损坏），
+## 混着摆的结果是「3 栋真房子 + 1 栋方块小屋」，比全程序化更糟且更难查。
+## 所以只要有一个模型取不到，就把已经放下的收掉、返回 false，让调用方整套回退。
+## 这里**不** push_error：回退是设计好的路径，不是故障；真正的故障由
+## tools/asset_check.gd 在门禁里硬失败（"清单里的模型必须能加载"）。
+func _build_village_models(s: Settlement, root: Node3D) -> bool:
+	var mm := MaterialFactory.model_material(cfg, data.faction(s.faction_id).color)
+	if mm == null:
+		return false
+	# 先按布局表展开成 8 条「待落位」记录（只读表，不动 rng）：
+	# 任何模型取不到就整村回退，绝不摆出「3 栋真房子 + 1 栋方块小屋」的半成品。
+	# 半径带在这里就定下来（r0/r1），落位循环只负责挑具体角度与半径。
+	var plan: Array = []
+	for e in AssetManifest.VILLAGE_LAYOUT:
+		var key: String = e["key"]
+		if ModelLibrary.scene(key) == null:
+			return false
+		for _i in int(e["count"]):
+			plan.append({
+				"key": key,
+				"r0": float(e["radius_min"]),
+				"r1": float(e["radius_max"]),
+			})
+	# 分两类：占中心位的（半径带覆盖原点，目前只有水井）与上环的（其余 7 栋）。
+	var centers: Array = []
+	var ring: Array = []
+	for it in plan:
+		if float(it["r0"]) <= 0.1:
+			centers.append(it)
+		else:
+			ring.append(it)
+	# 落位分两步：先中心件（角度全随机），再环上的件（按角度分槽）。
+	#   · 判据 = 两者**实测内切半径**之和 + AssetManifest.VILLAGE_MIN_GAP
+	#   · 为什么要分槽：第一版是纯随机角度 + 纯随机半径，实测 9 个村庄只摆下 62 栋
+	#     （8×9=72，少了 10 栋）——「随机顺序丢盘子」在 84% 占空比下必然卡住；
+	#     而且摆下的那些里还出现过一栋房子的屋顶插进另一栋墙里（v3v_near_noon.png 目视可见）。
+	#     分槽后相邻两栋的中心距有弦长下界，槽内仍留 ±1/3 槽宽的抖动，不至于摆成表盘。
+	var spots: Array = []
+	for it in centers:
+		var csp := _place_one(spots, -1, 0, ModelLibrary.inner_radius(it["key"]),
+				float(it["r0"]), float(it["r1"]), false)
+		csp["key"] = it["key"]
+		spots.append(csp)
+	var n := ring.size()
+	for i in n:
+		var rit: Dictionary = ring[i]
+		var rsp := _place_one(spots, i, n, ModelLibrary.inner_radius(rit["key"]),
+				float(rit["r0"]), float(rit["r1"]), false)
+		rsp["key"] = rit["key"]
+		spots.append(rsp)
+	if spots.is_empty():
+		return false
+	var placed := 0
+	for sp in spots:
+		if ModelLibrary.spawn_at(sp["key"], root, sp["pos"], sp["yaw"], mm) != null:
+			placed += 1
+	if placed != spots.size():
+		for c in root.get_children():
+			if c.has_meta("model_key"):
+				root.remove_child(c)
+				c.free()
+		return false
+	_village_dressing(s, spots)
+	return true
+
+## 挑一个落点，返回 {"pos", "ir", "yaw"}；allow_skip 时挑不到就返回空字典。
+##   slot < 0  → 中心件/杂物：角度全随机
+##   slot ≥ 0  → 第 slot 个角度槽（共 slots 个），槽心 ± 槽宽 × VILLAGE_SLOT_JITTER
+## 判据：与 spots 里已放下的每一个的中心距 ≥ 两者内切半径之和 + VILLAGE_MIN_GAP。
+## 40 个候选全不合格时：建筑取「最宽松的那个」保证一栋不少（实测少摆一栋比挤一点更糟），
+## 杂物直接放弃（少一个草堆没人看得出来，草堆插在房子里一眼就看见）。
+func _place_one(spots: Array, slot: int, slots: int, inner: float,
+		r0: float, r1: float, allow_skip: bool) -> Dictionary:
+	var slot_w := TAU / float(slots) if slots > 0 else TAU
+	var best := Vector3.ZERO
+	var best_slack := -INF
+	for _try in 40:
+		var a := rng.randf_range(0.0, TAU)
+		if slot >= 0:
+			a = (float(slot) + 0.5) * slot_w \
+					+ rng.randf_range(-slot_w * AssetManifest.VILLAGE_SLOT_JITTER,
+							slot_w * AssetManifest.VILLAGE_SLOT_JITTER)
+		var r := rng.randf_range(r0, r1)
+		var p := Vector3(cos(a) * r, 0.0, sin(a) * r)
+		var slack := INF
+		for sp in spots:
+			slack = minf(slack, p.distance_to(sp["pos"])
+					- (inner + float(sp["ir"]) + AssetManifest.VILLAGE_MIN_GAP))
+		if slack >= 0.0:
+			return {"pos": p, "ir": inner, "yaw": rng.randf_range(0, TAU)}
+		if slack > best_slack:
+			best_slack = slack
+			best = p
+	if allow_skip:
+		return {}
+	return {"pos": best, "ir": inner, "yaw": rng.randf_range(0, TAU)}
+
 # --------------------------------------------------------------- 村庄
 func _build_village(s: Settlement) -> void:
-	var f := data.faction(s.faction_id)
 	var huts := rng.randi_range(3, 6)
 	var placed: Array[Vector3] = []
 	for i in huts:
@@ -487,6 +595,14 @@ func _build_village(s: Settlement) -> void:
 		var d := rng.randf_range(3.0, 4.2)
 		var h := rng.randf_range(2.2, 3.0)
 		_house(pos, rng.randf_range(0, TAU), w, d, h, WOOD_DARK if rng.randf() < 0.5 else WOOD, THATCH, rng.randf() < 0.6)
+	_village_dressing(s)
+
+## 村庄的**非建筑**件：农田色块 / 干草堆 / 木车 / 势力小旗。
+## 真模型与程序化两条路径共用它 —— 它们是地表件与身份件，不是「建筑本体」，
+## 而且 GLB 里没有对应物（③-3 再决定要不要换成 prop_* 模型）。
+## spots 非空 = 真模型路径：建筑占着 r 6.4~8.5 的环，杂物改放**环内侧的空当**，
+## 用与建筑同一套判据落位。程序化路径传空数组，沿用原来的随机撒点。
+func _village_dressing(s: Settlement, spots: Array = []) -> void:
 	# 农田色块
 	var plots := rng.randi_range(2, 4)
 	for i in plots:
@@ -494,14 +610,31 @@ func _build_village(s: Settlement) -> void:
 		var r := rng.randf_range(11.0, 17.0)
 		_farm_plot(s, cos(a) * r, sin(a) * r, rng.randf_range(0, TAU), rng.randf_range(7.0, 11.0), rng.randf_range(5.0, 8.0))
 	# 干草堆 + 木车
-	var hs := Vector3(rng.randf_range(-8, 8), 0, rng.randf_range(-8, 8))
-	kit.add_cone(hs, 2.0, 3.0, 7, _xc(THATCH.darkened(0.1)))
-	var cart := Vector3(rng.randf_range(-9, 9), 0, rng.randf_range(-9, 9))
-	kit.add_box(cart + Vector3(0, 1.2, 0), Vector3(3.2, 0.5, 1.6), _xc(WOOD))
-	kit.add_cylinder(cart + Vector3(-1.2, 0.7, 0.9), 0.7, 0.7, 0.25, 8, _xc(WOOD_DARK), true, true)
-	kit.add_cylinder(cart + Vector3(-1.2, 0.35, -0.9), 0.7, 0.7, 0.25, 8, _xc(WOOD_DARK), true, true)
-	# 势力小旗
-	kit.add_flag(Vector3(rng.randf_range(-4, 4), 0, rng.randf_range(-4, 4)), 5.0, 3.0, 1.8, f.color)
+	if spots.is_empty():
+		var hs0 := Vector3(rng.randf_range(-8, 8), 0, rng.randf_range(-8, 8))
+		kit.add_cone(hs0, 2.0, 3.0, 7, _xc(THATCH.darkened(0.1)))
+		var cart0 := Vector3(rng.randf_range(-9, 9), 0, rng.randf_range(-9, 9))
+		_cart(cart0)
+	else:
+		var hs := _place_one(spots, -1, 0, 1.0, 4.2, 6.2, true)
+		if not hs.is_empty():
+			spots.append(hs)
+			kit.add_cone(hs["pos"], 2.0, 3.0, 7, _xc(THATCH.darkened(0.1)))
+		var cart := _place_one(spots, -1, 0, 1.6, 4.2, 6.2, true)
+		if not cart.is_empty():
+			spots.append(cart)
+			_cart(cart["pos"])
+	# 势力小旗：细杆 + 5 米高的旗面，两条路径都要放（身份件），所以只做尽力避让不跳过
+	var flag := Vector3(rng.randf_range(-4, 4), 0, rng.randf_range(-4, 4))
+	if not spots.is_empty():
+		flag = _place_one(spots, -1, 0, 0.9, 3.0, 5.0, false)["pos"]
+	kit.add_flag(flag, 5.0, 3.0, 1.8, data.faction(s.faction_id).color)
+
+## 木车（车斗 + 两个轮子），位置是车厢底面中心
+func _cart(base: Vector3) -> void:
+	kit.add_box(base + Vector3(0, 1.2, 0), Vector3(3.2, 0.5, 1.6), _xc(WOOD))
+	kit.add_cylinder(base + Vector3(-1.2, 0.7, 0.9), 0.7, 0.7, 0.25, 8, _xc(WOOD_DARK), true, true)
+	kit.add_cylinder(base + Vector3(-1.2, 0.35, -0.9), 0.7, 0.7, 0.25, 8, _xc(WOOD_DARK), true, true)
 
 ## 农田：贴合地形高度的四边形色块 + 垄沟线
 ## 注意：kit 的顶点是「相对定居点节点」的局部坐标，

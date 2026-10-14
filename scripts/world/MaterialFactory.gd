@@ -50,9 +50,24 @@ const GROUND_EMISSION_ENERGY := 0.60
 ## 平均饱和度从 0.40 掉到 0.35）。只补 albedo，不动光照，夜里不会跟着变艳。
 const ALBEDO_SATURATION := 1.10
 
+## ---- 第③批-2：真模型（外部 GLB）的材质 ----
+## 势力染色强度：mix(vec3(1.0), tint, k) 里的 k。乘色只改色相、不改明暗，
+## 调 0.0 就等于完全不染 —— 是个可以放心拧的旋钮，不是结构。
+## 这里与 shaders/settlement_model.gdshader 的默认值写同一个数：万一哪天忘了赋值，
+## 退化成 shader 默认值也不会突变。tools/asset_check.gd 会断言这个 uniform 被赋过值。
+const MODEL_TINT_STRENGTH := 0.22
+
 ## 无缝贴图的进程内缓存：内容与地图尺寸 / 种子完全无关，整局只生成一次。
 ## （settlement_check 之类一次建多个世界的自检也只付一次生成成本。）
 static var _tex_cache: Dictionary = {}
+
+## 真模型材质：**每种势力一个**，该势力所有建筑的 MeshInstance3D 共用。
+## 为什么能共用：KayKit 这批模型内嵌同一张图集（asset_check 用内容哈希钉住这条前提），
+## 所以材质只有「势力染色」一个变量 —— 3 个势力 = 3 个 ShaderMaterial，
+## 而不是「每栋楼一个」。键是染色色的 html 串（tint 是纯数据，不需要额外结构体）。
+static var _model_mats: Dictionary = {}
+## 图集贴图（4 个模型内嵌的是同一张，取第一个能拿到的即可；拿不到就是 null）
+static var _model_atlas: Texture2D = null
 
 ## 地形（splat 混合 + 细节贴图 + 昼夜 + 迷雾）
 var terrain: ShaderMaterial
@@ -99,6 +114,50 @@ func build(cfg: MapConfig, data: MapData) -> void:
 	vegetation.shader = load("res://shaders/vegetation.gdshader")
 	vegetation.set_shader_parameter("map_size", cfg.map_size)
 	vegetation.set_shader_parameter("night_amount", 0.0)
+
+# =========================================================
+#  真模型材质（第③批-2）
+# =========================================================
+
+## 取模型图集贴图。清单里所有模型内嵌同一张（由 asset_check 比对内容哈希保证），
+## 所以这里「取第一个能拿到的」是安全的；一个都拿不到就是 null（门禁会拦下来）。
+static func model_atlas() -> Texture2D:
+	if _model_atlas != null:
+		return _model_atlas
+	for k in AssetManifest.model_keys():
+		var t := ModelLibrary.albedo_texture(k)
+		if t != null:
+			_model_atlas = t
+			return _model_atlas
+	return null
+
+## 势力染色材质（按颜色缓存）。map_size / fog_enabled / night_glow 都**显式赋初值**：
+## Godot 的坑是「没赋过的 uniform，get_shader_parameter() 返回 null，shader 里静默用默认值」
+## —— visual_check 就是踩了这个坑才加的。asset_check 会逐条断言这里赋过值。
+static func model_material(cfg: MapConfig, tint: Color) -> ShaderMaterial:
+	var key := tint.to_html(false)
+	if _model_mats.has(key):
+		return _model_mats[key]
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/settlement_model.gdshader")
+	m.set_shader_parameter("albedo_tex", model_atlas())
+	m.set_shader_parameter("tint", tint)
+	m.set_shader_parameter("tint_strength", MODEL_TINT_STRENGTH)
+	m.set_shader_parameter("night_glow", 0.0)
+	m.set_shader_parameter("map_size", cfg.map_size)
+	m.set_shader_parameter("fog_enabled", 0.0)
+	_model_mats[key] = m
+	return m
+
+## 流水线要遍历它们把 night_glow（昼夜）与 fog_map / fog_enabled（迷雾）注册进去。
+## 顺序 = 首次创建顺序（势力顺序，稳定），不依赖字典哈希。
+static func model_materials() -> Array:
+	return _model_mats.values()
+
+## 自检清场：把真模型材质也清掉，避免一个进程里跑两个世界时串味
+static func clear_model_materials() -> void:
+	_model_mats.clear()
+	_model_atlas = null
 
 # =========================================================
 #  无缝细节贴图（灰度细节 + 法线）

@@ -176,6 +176,11 @@ func run() -> WorldContext:
 	day_night.register_shader(vegetation_mat, "night_amount")
 	day_night.register_shader(settlement_mat, "night_glow")
 	day_night.register_shader(party_mat, "night_glow")
+	# 第③批-2：真模型（村庄建筑）用的是自己的 shader，同样要接进昼夜 ——
+	# 否则夜里村庄不跟着变暗，会像一堆灯塔。材质在 build_all 里（第 149 行）就建好了，
+	# 到这里一定已经在注册表里（这里不做任何 RNG 抽取，指纹安全）。
+	for mm in MaterialFactory.model_materials():
+		day_night.register_shader(mm, "night_glow")
 	for l in lights_root.get_children():
 		if l is OmniLight3D:
 			day_night.register_night_light(l)
@@ -197,6 +202,12 @@ func run() -> WorldContext:
 		settlement_mat.set_shader_parameter("fog_enabled", 1.0)
 		party_mat.set_shader_parameter("fog_map", fog.texture)
 		party_mat.set_shader_parameter("fog_enabled", 1.0)
+		# 第③批-2：真模型材质走的是同一套迷雾语义（settlement_model.gdshader 里
+		# 的 fog_map / fog_enabled / map_size 与 settlement.gdshader 逐字对齐）。
+		# 漏掉这里 = 迷雾里亮着几个村子，而且它不报错、不崩、指纹也不变。
+		for mm in MaterialFactory.model_materials():
+			mm.set_shader_parameter("fog_map", fog.texture)
+			mm.set_shader_parameter("fog_enabled", 1.0)
 		fog.reveal(Vector2(player.position.x, player.position.z), cfg.fog_reveal_radius_m() * 1.4)
 
 	# 时间流动状态机与遭遇数值表：必须早于 _setup_ui()，

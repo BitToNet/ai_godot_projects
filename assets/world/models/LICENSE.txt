@@ -1,0 +1,11 @@
+本目录下的建筑模型（bld_house_a / bld_house_b / bld_well / bld_windmill）均为
+CC0 1.0 Universal（公共领域贡献）。
+
+  建筑 —— Kay Lousberg (KayKit)
+    bld_*.glb
+    https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack
+
+CC0 1.0 的条款：你可以复制、修改、分发、用于商业目的，无需署名。
+本文件保留来源记录仅出于可追溯性，不构成任何署名义务。
+
+详细的文件清单与 SHA-256 见同目录的 ATTRIBUTION.md。

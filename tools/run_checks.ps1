@@ -5,8 +5,9 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（27 项，约 60~80 秒）；性能若超软容差会**额外**追加一行「性能基准 注意…」，
-#  所以汇总里的项数偶尔是 27 或 28 —— 别把某一跑的行数当成脚本的固有常量。
+#  依次执行下列步骤（29 项，约 60~80 秒）；性能若超软容差会**额外**追加一行「性能基准 注意…」，
+#  首次运行（或换了机器 / 净克隆，.godot/ 还没建）还会**按需**先跑一次资源导入，
+#  所以汇总里的项数会在 28~30 之间浮动 —— 别把某一跑的行数当成脚本的固有常量。
 #  任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
@@ -37,6 +38,12 @@
 #        shader 静默用默认值）、云的 cloud_speed 是否仍为 0、细节贴图是不是「均值 1.0 的
 #        无缝图」（8 位通道存不下 >1.0，这条断言当场挖出过「提亮一半被钳掉」的真事故）、
 #        以及昼夜的 day_amount 白昼权重推不推得出去。像素要开窗才能看，接线 headless 就能钉死
+#    5g) 外部模型资产定式（tools/asset_check.gd）—— 第③批-2：这是全工程第一份外部美术资源，
+#        失败方式全是「不报错、不崩、指纹也不变」：清单里的 GLB 没 import（→ SettlementBuilder
+#        静默回退程序化几何，画面看着还行，于是没人发现真模型根本没上）、target_m 写错
+#        （房子变 12 米巨物或 0.8 米玩具）、接地偏移算错符号（悬空 / 埋地）、图集前提被破坏
+#        （「一个材质喂所有建筑」不再成立）、材质 uniform 忘了赋值（Godot 静默用默认值，
+#        夜里村庄不跟着变暗）。这一步把上面每一条都变成会红的断言，并打印每个模型的世界尺寸
 #    6) 城镇交互定式（tools/settlement_check.gd）—— 补给 / 招募 / 贸易 / 驻军的价格、
 #       边界（钱不够 / 编制满 / 池子空 / 城里没兵）与「低买高卖」是否真的有利可图。
 #       菜单的分支同样在 900 帧里一个都走不到，而它是整个经济闭环的入口
@@ -196,6 +203,25 @@ if (-not (Test-Path $BASELINE_JSON)) {
 	}
 }
 
+# ---- 0) 按需资源导入（第③批-2：工程第一次有了外部美术资源）----
+# assets/world/models/*.glb 必须先被编辑器 import 出 .godot/imported/*.scn 才能按导入配置加载，
+# 而 .godot/ 是忽略目录 —— 净克隆 / 换机器 / 清了缓存的机器上，门禁会跑在一个「模型全加载失败」
+# 的工程上：asset_check 会红，而更阴的情况是 SettlementBuilder 静默回退程序化几何、画面看着还行。
+# 这里按需补一次导入（已经导入过就整段跳过，不占项数）。
+# 只判退出码、不套 Invoke-GodotStep 的 ERROR: 扫描：导入期的其它资源噪声不该判死门禁，
+# 而「GLB 到底能不能用」由后面的 5g 资产定式做语义级保证。
+$needImport = $false
+foreach ($m in @('bld_house_a', 'bld_house_b', 'bld_well', 'bld_windmill')) {
+	if (-not (Test-Path (Join-Path $PROJ ".godot\imported\$m.glb-*.scn"))) { $needImport = $true }
+}
+if ($needImport) {
+	Write-Host "（.godot/imported 里缺模型，先补一次资源导入）" -ForegroundColor DarkYellow
+	$r0 = Invoke-GodotStep -Name 'asset_import' -Extra @('--import')
+	if (-not $r0.Ok) {
+		$fail.Add('资源导入  FAIL  --import 没成功：assets/world/models/*.glb 没进 .godot/imported')
+	}
+}
+
 # ---- 1) 指纹 A ----
 $r1 = Invoke-GodotStep -Name 'gen_fingerprint A' -Extra @('--script', 'res://tools/gen_fingerprint.gd')
 $fpA = Get-Fingerprint $r1.Lines
@@ -290,6 +316,17 @@ $rVis = Invoke-GodotStep -Name 'visual_check' -Extra @('--script', 'res://tools/
 $visPass = @($rVis.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rVis.Ok -and -not $visPass) {
 	$fail.Add('观感接线  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 5g) 外部模型资产定式（清单能加载 / 尺度自洽 / 接地 / 材质接线 / 兜底 / 无泄漏）----
+# 断言在 tools/asset_check.gd 里。为什么单独一步而不并进 visual_check：
+# 那一步验的是「观感接线」（光照 / 雾 / 天空 / 贴图），这一步验的是「资产契约」
+# （清单里的模型真的能加载、target_m 与几何自洽、接地不悬空不埋地、图集前提成立、
+# 材质 uniform 都赋过值）。混在一起，出问题时就分不清是「接线错了」还是「资产错了」。
+$rAst = Invoke-GodotStep -Name 'asset_check' -Extra @('--script', 'res://tools/asset_check.gd')
+$astPass = @($rAst.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rAst.Ok -and -not $astPass) {
+	$fail.Add('外部模型资产  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 6) 城镇交互定式（补给 / 招募 / 贸易 / 驻军）----

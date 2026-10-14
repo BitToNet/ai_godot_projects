@@ -7,9 +7,12 @@
 ##        --script res://tools/visual_shot.gd -- --tag=before
 ##    # 输出目录也可显式给（与 hud_shot.gd 同一套写法）：
 ##    ...--script res://tools/visual_shot.gd -- --out user://shots --tag=after
+##    # 把机位中心挪到某个定居点上（默认是玩家 = 自家城堡）：
+##    ...--script res://tools/visual_shot.gd -- --focus=village --tag=village
+##      --focus 取 village / town / castle，或直接给定居点 id（数字）
 ##
 ##  ---- 为什么要有这个探针 ----
-##  门禁里的 26 项全是数值断言：它们能证明「几何没变、指纹没动、没有报错」，
+##  门禁里的几十项全是数值断言：它们能证明「几何没变、指纹没动、没有报错」，
 ##  **不能**证明「好不好看」。而观感类改动（环境光 / 雾 / 天空 / 细节贴图）恰恰是
 ##  「改完不许用眼睛确认」最容易翻车的一类 —— 数值全绿而画面过曝 / 发灰 / 全黑。
 ##  所以这里把画面固化成 PNG：同一套机位、同一套时间点，前后两张直接对比。
@@ -60,6 +63,10 @@ var main: Node
 var tag: String = "shot"
 var out_abs: String = ""
 var out_uri: String = OUT_DIR
+## 机位中心：空 = 玩家（开局站在自家城堡上）；否则是"要找的定居点"。
+## 没有它，「村庄从方块小屋换成真模型」这件事在一张图里连一个像素都看不到 ——
+## 第③批-2 的目视验收正是卡在这：镜头永远对着城堡。
+var focus: String = ""
 
 func _initialize() -> void:
 	_run()
@@ -78,6 +85,8 @@ func _run() -> void:
 			out_dir = String(args[i + 1])
 		elif String(args[i]).begins_with("--tag="):
 			tag = String(args[i]).substr(6)
+		elif String(args[i]).begins_with("--focus="):
+			focus = String(args[i]).substr(8)
 
 	out_abs = ProjectSettings.globalize_path(out_dir)
 	out_uri = out_dir
@@ -111,10 +120,30 @@ func _run() -> void:
 	for _i in SETTLE_FRAMES:
 		await process_frame
 
+	if focus != "":
+		var fs := _focus_settlement()
+		if fs == null:
+			print("[截图] FAIL：--focus=%s 找不到匹配的定居点" % focus)
+			main.free()
+			quit(2)
+			return
+		# CameraRig._apply() 拿 player.position.xz 当画面中心（camera/CameraRig.gd:129），
+		# 所以「换机位」在这里就等于「把玩家挪过去」——不改 CameraRig，也不动世界数据。
+		main.player.position = Vector3(fs.pos.x, fs.ground_h, fs.pos.y)
+		main.camera_rig.pan_offset = Vector2.ZERO
+		for _i in WARM_FRAMES:
+			await process_frame
+		print("[截图] 机位中心 -> %s「%s」（id %d / 半径 %.0f m / 世界 %.0f, %.0f）" % [
+			fs.kind_name(), fs.name, fs.id, fs.radius, fs.pos.x, fs.pos.y])
+
 	var vp := root.get_visible_rect().size
+	var vc := _village_models()
 	print("[截图] 环境：种子 %d / 世界 %.0f m / 生成 %d ms / 植被 %d / AI 部队 %d / 视口 %d×%d" % [
 		main.config.map_seed, main.config.map_size, int(main._gen_ms),
 		main.vegetation.total(), main.ai_parties.size(), int(vp.x), int(vp.y)])
+	# 真模型实例数：这一条是给「静默回退」准备的 —— GLB 加载失败时 SettlementBuilder 会
+	# 整套退回程序化几何，画面看着还行、指纹也不变（几何不进指纹），只有把数字打出来才看得见。
+	print("[截图] 真模型：%d 栋 / %d 个村庄（0 = 全部回退成程序化几何）" % [vc[0], vc[1]])
 
 	var written: Array[String] = []
 	for shot in SHOTS:
@@ -210,3 +239,39 @@ func _stats(img: Image) -> Dictionary:
 		"dark_pct": 100.0 * float(dark) / float(n),
 		"blown_pct": 100.0 * float(blown) / float(n),
 	}
+
+## 数全世界摆下的真模型实例：返回 [栋数, 村庄数]。
+## 判据是 SettlementBuilder/ModelLibrary 给每个模型打的 "model_key" 元数据。
+## 这一条是给「静默回退」准备的诊断：GLB 取不到时整套退回程序化几何，
+## 画面看着还行、指纹也不变（几何不进指纹），只有把数字打出来才看得见。
+func _village_models() -> Array:
+	var n := 0
+	var villages := 0
+	for s in main.data.settlements:
+		if s.kind != Settlement.Kind.VILLAGE or s.node == null:
+			continue
+		villages += 1
+		for c in s.node.get_children():
+			if c.has_meta("model_key"):
+				n += 1
+	return [n, villages]
+
+## --focus 解析：village / town / castle / 数字 id。取**第一个**匹配（定居点顺序稳定）。
+## 注意：这些工具函数必须放在 _run() **之外** —— 第一版把 _focus_settlement 插在
+## _run() 中间，结果 _run() 被从中间截断、后面半截（截图循环）变成它的函数体，
+## 于是它被判定成协程、整个脚本 Parse Error（实测踩过）。
+func _focus_settlement() -> Settlement:
+	var want := -1
+	match focus:
+		"castle", "城堡":
+			want = Settlement.Kind.CASTLE
+		"town", "城镇":
+			want = Settlement.Kind.TOWN
+		"village", "村庄":
+			want = Settlement.Kind.VILLAGE
+	for s in main.data.settlements:
+		if want >= 0 and s.kind == want:
+			return s
+		if want < 0 and focus.is_valid_int() and s.id == focus.to_int():
+			return s
+	return null
