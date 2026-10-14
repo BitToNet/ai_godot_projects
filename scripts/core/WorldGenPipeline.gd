@@ -59,6 +59,8 @@ var party_mat: ShaderMaterial
 ## 整条流水线。返回装配好的 WorldContext（同时已写回 host 的公开字段）。
 func run() -> WorldContext:
 	parties = host.ai_parties
+	stage_timing = OS.get_environment("WARBAND_STAGE_TIMING") == "1" \
+		or OS.get_cmdline_user_args().has("--stage-timing")
 	_build_loading_ui()
 	# 与原版一致：先空等两帧让 Loading 界面出来，再进第 0 步
 	await host.get_tree().process_frame
@@ -291,6 +293,7 @@ func run() -> WorldContext:
 	# 4d：快速存档 / 快速读档（数据格式与校验在 SaveGame.gd，这里只接线）
 	router.save_requested.connect(Callable(host, "_on_quicksave_requested"))
 	router.load_requested.connect(Callable(host, "_on_quickload_requested"))
+	_stage_flush()   # 把最后一阶段的耗时也交出来（打开阶段计时时才有输出）
 	return ctx
 
 # =============================================================== 内部
@@ -309,10 +312,26 @@ func report_settlement_env() -> void:
 
 ## 推进一步并让 Loading 界面刷新两帧（顺序 / 次数即指纹，别合并）
 func _loading(text: String) -> void:
+	_stage_flush()
+	_stage_label = text
+	_stage_t0 = Time.get_ticks_msec()
 	if hud != null:
 		hud.set_loading(text)
 	await host.get_tree().process_frame
 	await host.get_tree().process_frame
+
+## 阶段耗时（默认关）：`WARBAND_STAGE_TIMING=1` 或 `-- --stage-timing` 时，
+## 每进入下一个阶段就打印**上一阶段**的墙钟耗时。
+## 为什么默认关：多出来的行会破坏「被工具解析的输出」的既有格式（log_check 正守着这一点）。
+## 为什么需要它：4096 m 世界的生成是 83 秒，而「83 秒花在哪」不看这个数就只能猜（见 ROADMAP §16.4）。
+var stage_timing := false
+var _stage_label := ""
+var _stage_t0 := 0
+
+func _stage_flush() -> void:
+	if stage_timing and _stage_t0 > 0:
+		print("[阶段] %s  %d ms" % [_stage_label, Time.get_ticks_msec() - _stage_t0])
+		_stage_t0 = 0
 
 func _build_loading_ui() -> void:
 	hud = HUD.new()

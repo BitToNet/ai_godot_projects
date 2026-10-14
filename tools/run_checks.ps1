@@ -44,6 +44,8 @@
 #        拾取最远距离 / heightmap_res 导出上限」这类**纯数值**假设钉住。它们的失败方式不是报错，
 #        而是在 4096 m 图上「地形被裁掉 / 编辑器里根本调不上去」，而 1024 m 图上门禁全绿 ——
 #        只有「按尺寸推导」这层关系本身的断言抓得到。它不建世界、不渲染，跑得很快
+#    7d) 4096 m 世界实测（tools/big_map_probe.gd）—— **可选**：$env:WARBAND_BIG_MAP = '1' 才跑。
+#        它不进默认流程：跑一次要 80~120 秒（真的建一个 4096 m 世界）。想换世界之前先看它
 #    6c) 存档定式（tools/save_check.gd）—— 存档格式 / 三道门（版本 / 种子 / 实体 id）/
 #        坏数据钳制 / 读档后的引用修复 / 文件读写（不建世界，纯定式）
 #    6d) 音频总线定式（tools/audio_check.gd）—— default_bus_layout.tres（Master → Music / Sfx）
@@ -318,6 +320,17 @@ $rSize = Invoke-GodotStep -Name 'map_size_check' -Extra @('--script', 'res://too
 $sizePass = @($rSize.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rSize.Ok -and -not $sizePass) {
 	$fail.Add('地图尺寸  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 7d) 4096 m 世界实测（tools/big_map_probe.gd）—— **可选**，默认跳过 ----
+# 它是「换世界之前先量一遍」的测量工具，不是断言型检查：跑一次要 80~120 秒（生成 83 秒 + 复测），
+# 塞进 70 秒的门禁里不划算。想看就 $env:WARBAND_BIG_MAP = '1' 后再跑本脚本。
+if ($env:WARBAND_BIG_MAP -eq '1') {
+	$rBig = Invoke-GodotStep -Name 'big_map_probe' -Extra @('--script', 'res://tools/big_map_probe.gd') -TimeoutSec 900
+	$bigPass = @($rBig.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+	if ($rBig.Ok -and -not $bigPass) {
+		$fail.Add('4096 m 实测  FAIL  退出码为 0 但没打印 PASS')
+	}
 }
 
 # ---- 8) / 9) 音效联调 ----
