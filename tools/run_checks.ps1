@@ -5,8 +5,8 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（26 项，约 60~75 秒）；性能若超软容差会**额外**追加一行「性能基准 注意…」，
-#  所以汇总里的项数偶尔是 26 —— 别把某一跑的行数当成脚本的固有常量。
+#  依次执行下列步骤（27 项，约 60~80 秒）；性能若超软容差会**额外**追加一行「性能基准 注意…」，
+#  所以汇总里的项数偶尔是 27 或 28 —— 别把某一跑的行数当成脚本的固有常量。
 #  任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
@@ -32,6 +32,11 @@
 #        （半径→像素、钳位 14~90、小目标让先 6 px）与「点城 = 选中 / 再点 = 进城」这条链。
 #        它同样是 900 帧里一步都走不到的路径（玩家不动、不点任何东西），而失败方式恰好是
 #        「点了没反应」—— 只有对拾取几何与路由分流直接下断言才抓得到
+#    5f) 观感层接线定式（tools/visual_check.gd）—— 第七轮 ②：环境光是否还来自天空、
+#        SSAO 有没有被关掉、天空材质每个 uniform 是否真的赋过值（没赋过的读回 null，
+#        shader 静默用默认值）、云的 cloud_speed 是否仍为 0、细节贴图是不是「均值 1.0 的
+#        无缝图」（8 位通道存不下 >1.0，这条断言当场挖出过「提亮一半被钳掉」的真事故）、
+#        以及昼夜的 day_amount 白昼权重推不推得出去。像素要开窗才能看，接线 headless 就能钉死
 #    6) 城镇交互定式（tools/settlement_check.gd）—— 补给 / 招募 / 贸易 / 驻军的价格、
 #       边界（钱不够 / 编制满 / 池子空 / 城里没兵）与「低买高卖」是否真的有利可图。
 #       菜单的分支同样在 900 帧里一个都走不到，而它是整个经济闭环的入口
@@ -276,6 +281,15 @@ $rSel = Invoke-GodotStep -Name 'selection_check' -Extra @('--script', 'res://too
 $selPass = @($rSel.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rSel.Ok -and -not $selPass) {
 	$fail.Add('点单位交互  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 5f) 观感层接线定式（环境光 / SSAO / 天空 uniform / 细节贴图 / 昼夜推送）----
+# 断言在 tools/visual_check.gd 里；像素验不了（headless 画不出画面），
+# 但「接线与契约」能验 —— 这类改动不报错、不崩、指纹不变，只是"看着不对"。
+$rVis = Invoke-GodotStep -Name 'visual_check' -Extra @('--script', 'res://tools/visual_check.gd')
+$visPass = @($rVis.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rVis.Ok -and -not $visPass) {
+	$fail.Add('观感接线  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 6) 城镇交互定式（补给 / 招募 / 贸易 / 驻军）----

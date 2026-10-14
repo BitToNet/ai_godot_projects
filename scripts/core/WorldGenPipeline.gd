@@ -169,6 +169,8 @@ func run() -> WorldContext:
 	day_night.setup(cfg, data)
 	day_night.paused = true   # 开局世界时间是冻结的：行军或长按空格才开始流动
 	day_night.register_shader(terrain_mat, "night_amount")
+	# 地面自发光地板要的是白昼权重（白天才抬最暗处），不是"越夜越大"
+	day_night.register_shader(terrain_mat, "day_amount", "day")
 	for wm in water.mats:
 		day_night.register_shader(wm, "night_amount")
 	day_night.register_shader(vegetation_mat, "night_amount")
