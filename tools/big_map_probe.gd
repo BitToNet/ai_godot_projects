@@ -101,6 +101,7 @@ func _run() -> void:
 	_p_nav()
 	_p_veg(veg)
 	_p_path()
+	_p_bridge_diag()
 
 	print("[大图] ================ 4096 m 实测 ================")
 	print("[大图] 生成墙钟 %d ms（管线内 %d ms）" % [wall, int(main._gen_ms)])
@@ -303,6 +304,83 @@ func _p_height() -> void:
 		ms, float(cfg.heightmap_res * cfg.heightmap_res) / 10000.0,
 		ms * 1000.0 / float(cfg.heightmap_res * cfg.heightmap_res)])
 
+# ---------------------------------------------------------------- 6) 桥梁诊断
+## ③b-3 前置：4 倍尺度下为什么一座桥都不落？
+## 落桥条件（`RoadNetwork._collect_bridges`）：道路折线上出现**连续 ≥2 个**「细栅格
+## water=1 且 river=1」的采样点（采样步长 2 m，与地图尺寸无关）。所以先把两种情况分开：
+##   A) 道路根本没踩到河道 → 问题在上游（寻路 / 道路走向 / 定居点铺开）；
+##   B) 踩到了却不落桥       → 问题在落桥判定本身（run 长度 / 14 m 去重 / 端点距离）。
+func _p_bridge_diag() -> void:
+	var nav: NavGrid = main.data.nav_fine
+	var roads: Array = main.data.roads
+	var samples := 0
+	var on_water := 0
+	var on_river := 0
+	var on_lake := 0
+	var on_road := 0
+	var runs: Array[int] = []          # 每条道路的最长「连续河道」run（单位：2 m 采样点数）
+	for poly in roads:
+		var pts: PackedVector2Array = poly
+		var run := 0
+		var best := 0
+		for i in range(1, pts.size()):
+			var a: Vector2 = pts[i - 1]
+			var b: Vector2 = pts[i]
+			var n := int(ceil(a.distance_to(b) / 2.0))
+			for k in range(0, n + 1):
+				var p := a.lerp(b, float(k) / float(maxi(1, n)))
+				var c := nav.cell_of(p)
+				var idx := nav.at(c.x, c.y)
+				samples += 1
+				var w := nav.water[idx] == 1
+				var r := w and nav.river[idx] == 1
+				if w:
+					on_water += 1
+				if r:
+					on_river += 1
+					run += 1
+					best = maxi(best, run)
+				else:
+					if w:
+						on_lake += 1
+					run = 0
+				if nav.road[idx] == 1:
+					on_road += 1
+		runs.append(best)
+	runs.sort()
+	var longest := 0
+	if not runs.is_empty():
+		longest = runs[runs.size() - 1]
+	cur["bridge_river_samples"] = on_river
+	cur["bridge_max_run"] = longest
+	cur["bridge_roads"] = roads.size()
+	print("[大图] 桥梁诊断：道路 %d 条 / 采样点 %d（踩到水 %d：河道 %d、湖海 %d；落在道路格 %d）" % [
+		roads.size(), samples, on_water, on_river, on_lake, on_road])
+	print("[大图] 桥梁诊断：单条道路最长连续河道 run = %d（落桥要求 ≥2）；桥 %d 座 / 桥格 %d" % [
+		longest, main.data.bridges.size(), _count_flag(nav.bridge)])
+	# 道路是在 nav_road 上寻路的，而 nav_road 的 res 是**固定 513**：1024 m → 2 m/格，4096 m → 8 m/格。
+	# 河流宽度是绝对米数，所以它在道路栅格上占几格会随尺寸变 —— 这正是「同一条判定、两种结果」的嫌疑点。
+	var nroad: NavGrid = main.data.nav_road
+	var n_river := 0
+	var n_river_blocked := 0
+	var n_water := 0
+	for i in nroad.river.size():
+		if nroad.river[i] == 1:
+			n_river += 1
+			if nroad.blocked[i] == 1:
+				n_river_blocked += 1
+		if nroad.water[i] == 1:
+			n_water += 1
+	print("[大图] 桥梁诊断：nav_road %d²（%.1f m/格）水 %d / 河 %d（其中不可通行 %d）；nav_fine %.1f m/格、河 %d" % [
+		nroad.res, nroad.cell, n_water, n_river, n_river_blocked, nav.cell, _count_flag(nav.river)])
+
+func _count_flag(arr: PackedByteArray) -> int:
+	var n := 0
+	for v in arr:
+		if v == 1:
+			n += 1
+	return n
+
 func _ms_us(t0: int) -> float:
 	return float(Time.get_ticks_usec() - t0) / 1000.0
 
@@ -340,6 +418,8 @@ func _lines() -> Array:
 		TerrainManager.chunk_size_for(map_size), int(ceil(map_size / TerrainManager.chunk_size_for(map_size))) ** 2,
 		str(want.get("terrain_chunks", "n/a")), _lod0_verts(map_size),
 		str(want.get("terrain_lod0_verts", "n/a"))])
+	out.append("桥梁诊断 过河采样点 %d / 单路最长 run %d（≥2 才会落桥）—— run=0 说明是「道路没过河」，不是落桥判定坏了" % [
+		int(cur.get("bridge_river_samples", 0)), int(cur.get("bridge_max_run", 0))])
 	out.append("高度场 本进程复测 %.0f ms（占比与前后对比请看上面的 [阶段] / [高度场] 两行，同源同位置）" % [
 		float(cur.get("height_total_ms", 0.0))])
 	out.append("定居点 包围盒 %.0f m（占图 %.0f%%）/ 最近邻中位 %.0f m —— 太小说明定居点没铺开" % [
