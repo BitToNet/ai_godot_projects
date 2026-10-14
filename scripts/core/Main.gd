@@ -59,6 +59,8 @@ var _gen_ms: int = 0
 var gen_done: bool = false
 
 func _ready() -> void:
+	# 分级日志：级别来自 -- --log-level=debug 或环境变量 WARBAND_LOG（默认 info）
+	Log.setup(OS.get_cmdline_user_args())
 	var t0 := Time.get_ticks_msec()
 	if config == null:
 		config = MapConfig.new()
@@ -199,7 +201,7 @@ func _on_day_settled(report: Dictionary) -> void:
 	var morale := int(report.get("morale", 0))
 	var deserted := int(report.get("deserted", 0))
 	var week: Dictionary = report.get("week", {})
-	print("[日结] 第 %d 天：兵力 %d，粮 %d（吃 %d），士气 %d，钱 %d" % [
+	Log.info("[日结] 第 %d 天：兵力 %d，粮 %d（吃 %d），士气 %d，钱 %d" % [
 		day, troops, supplies, int(report.get("eaten", 0)), morale, int(report.get("denars", 0))])
 
 	var notices: Array[String] = []
@@ -211,11 +213,11 @@ func _on_day_settled(report: Dictionary) -> void:
 		if int(week.get("short", 0)) > 0:
 			notices.append("❗军费不足：周薪 %d，只付了 %d（欠薪 %d 周）" % [
 				wage, paid, int(week.get("debt_weeks", 0))])
-			print("[周结] 军费不足：应发 %d，实发 %d，欠薪 %d 周" % [
+			Log.warn("[周结] 军费不足：应发 %d，实发 %d，欠薪 %d 周" % [
 				wage, paid, int(week.get("debt_weeks", 0))])
 		else:
 			notices.append("💰 发了本周军费 %d 金" % paid)
-			print("[周结] 军费已发：%d 金" % paid)
+			Log.info("[周结] 军费已发：%d 金" % paid)
 	if deserted > 0:
 		notices.append("❗%d 名士兵因士气崩溃离队" % deserted)
 	if not notices.is_empty() and hud != null:
@@ -250,7 +252,7 @@ func _on_quicksave_requested() -> void:
 				campaign.day, campaign.denars, campaign.troops(),
 				InputRouter.action_hint_text("quicksave")], 4.0)
 	else:
-		print("[存档] 失败：%s" % str(r.get("error", "")))
+		Log.warn("[存档] 失败：%s" % str(r.get("error", "")))
 		if hud != null:
 			hud.show_toast("存档失败：%s" % str(r.get("error", "")), 4.0)
 
@@ -273,7 +275,7 @@ func _on_quickload_requested() -> void:
 		return
 	var a := SaveGame.apply(ctx, r.get("data", {}), encounters, settlements)
 	if not bool(a.get("ok", false)):
-		print("[读档] 拒绝：%s" % str(a.get("error", "")))
+		Log.warn("[读档] 拒绝：%s" % str(a.get("error", "")))
 		if hud != null:
 			hud.show_toast("读档被拒绝：%s" % str(a.get("error", "")), 5.0)
 		return
@@ -312,7 +314,7 @@ func _toggle_faction_labels(fid: int) -> void:
 		if s.faction_id == fid and s.label != null:
 			s.label.visible = not s.label.visible
 			any_visible = any_visible or s.label.visible
-	print("[UI] 势力 %s 的定居点标签：%s" % [data.faction(fid).name, "显示" if any_visible else "隐藏"])
+	Log.debug("[UI] 势力 %s 的定居点标签：%s" % [data.faction(fid).name, "显示" if any_visible else "隐藏"])
 
 # =============================================================== 进城菜单
 ## 交互键（见 InputRouter.interact_requested）→ 进最近的那个定居点。

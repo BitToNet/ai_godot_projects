@@ -19,6 +19,7 @@ config/description="程序化生成的《骑马与砍杀》风格 3D 战略大�
 run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"
+config/version="0.6.0"
 
 [display]
 

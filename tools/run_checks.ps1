@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（21 项，约 55~60 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
+#  依次执行下列步骤（22 项，约 60~65 秒）；任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
 #    2) 生成指纹 B —— 必须与 A 的 FINGERPRINT= 完全一致（同种子可复现）
@@ -22,6 +22,8 @@
 #    5b) 寻路队列契约（tools/path_queue_check.gd）—— 第六轮 6d 后半：结果与同步 find_path
 #        逐点相同 / 严格 FIFO / 预算为 0 时每帧仍前进一个 / 失效 Callable 不崩不少记账。
 #        队列算错的表现是「部队偶尔站着不动」，900 帧主场景里很难稳定复现，只能直接对契约下断言
+#    5c) 分级日志契约（tools/log_check.gd）—— 第六轮 ⑦：默认级别必须仍是 INFO（门禁按默认
+#        级别解析输出），ERROR 必须仍以 "ERROR: " 开头走 stderr（门禁靠它兜底抓失败）
 #    6) 城镇交互定式（tools/settlement_check.gd）—— 补给 / 招募 / 贸易 / 驻军的价格、
 #       边界（钱不够 / 编制满 / 池子空 / 城里没兵）与「低买高卖」是否真的有利可图。
 #       菜单的分支同样在 900 帧里一个都走不到，而它是整个经济闭环的入口
@@ -62,7 +64,8 @@
 # =============================================================================
 $ErrorActionPreference = 'Continue'
 
-$GODOT = 'G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe'
+# 引擎路径：CI 用环境变量 GODOT_BIN 覆盖；本机默认走用户全局规则 2 的固定路径
+$GODOT = if ($env:GODOT_BIN) { $env:GODOT_BIN } else { 'G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe' }
 $PROJ = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $BASELINE_JSON = Join-Path $PROJ 'tools\gen_fingerprint.json'
 $fail = New-Object System.Collections.Generic.List[string]
@@ -224,6 +227,15 @@ $rPq = Invoke-GodotStep -Name 'path_queue_check' -Extra @('--script', 'res://too
 $pqPass = @($rPq.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rPq.Ok -and -not $pqPass) {
 	$fail.Add('寻路队列  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 5c) 分级日志契约（默认级别必须仍是 INFO / ERROR 前缀仍在）----
+# 断言在 tools/log_check.gd 里。两条周边契约一破就是事故：默认级别一变高，门禁就
+# 「因为看不见」而变绿；ERROR 前缀一改，门禁的兜底网就漏了。
+$rLog = Invoke-GodotStep -Name 'log_check' -Extra @('--script', 'res://tools/log_check.gd')
+$logPass = @($rLog.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rLog.Ok -and -not $logPass) {
+	$fail.Add('分级日志  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 6) 城镇交互定式（补给 / 招募 / 贸易 / 驻军）----

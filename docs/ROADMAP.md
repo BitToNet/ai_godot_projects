@@ -217,7 +217,7 @@
 | 第三轮 | 拆 `Main.gd` + 拆 `HUD.gd` + 引入 `InputMap` | ✅ **已完成**：`HUD.gd` 拆分（`eddd8c2`）、`InputMap` / `InputRouter`（`8063a9e`）、`Main.gd` 拆分四批（`a54d9d5` / `f9a09a8` / `951d3b2` / 本批，**854 → 191 行**，见 9.5）；另修掉门禁挂死隐患（工具脚本调用已改名方法 + 每步 180 s 硬超时） |
 | 第四轮 | 玩法闭环：`CampaignState` 经济 + 城镇交互 + 遭遇多选项 + 存档 | 🔄 **进行中**：4a 经济（钱袋 / 军费 / 士气 / 战利品 / HUD）已完成并通过门禁，见 §10.1–10.5；4b-1 城镇交互**逻辑层**（服务表 / 繁荣度定价 / 招募 / 贸易 / 驻军）已完成并通过门禁，见 §10.6；4b-2 进城**菜单界面 + 交互键**（G / 手柄 A、灰条目带原因、到地提示）已完成并通过门禁，见 §10.7；4c 遭遇**多选项**（选项表数据驱动 + 四条路各自的效果与代价 + 结算台账）已完成并通过门禁，见 §10.8；4d 存档待办 |
 | 第五轮 | 音频总线 + PCM 缓存 + 合成热点 + BGM 接口 | ✅ **已完成**（2026-10-14）：5a 音频总线（`default_bus_layout.tres` + `AudioBus` + 扇子音 duck + `audio_check`）已完成并通过门禁，见 §11.1；5b 合成热点（先装体检器再改，合成 −28% 且音色逐字节不变 + 音色指纹入门禁）已完成，见 §11.2–11.3；5c PCM 缓存（`SfxCache`：679 KB，`Sfx.setup()` 1.35 秒 → 9 毫秒，音色逐字节不变 + 77 项自检进 9d 步，15 → 16 步）已完成并推送（`597bc63`），见 §11.4 |
-| 第六轮 | 规模扩展（植被 / 地形 / 寻路）+ i18n + 导出预设与 CI | 🔄 **进行中**：6a 规模热点探针（门禁 7b 步，16 → 17 步）✅ §12.1；6c 地形建块 3.06×、顶点位置与索引逐位不变 ✅ §12.2；6d 前半 A* 内联 1.20~1.45×、搜索结果逐对不变 ✅ §12.3，**后半请求队列待做**；6b 植被筛选段 2.06× 且**布局逐位不变** ✅ §12.4（会改布局的「单遍筛选」仍待显式决定，建议并入 ④ 4096 地图一起做）；6b 后半 植被分桶 128 → 256 m（节点 212 → 67，perf `nodes` −29%）+ MultiMesh 批量写实测**否决** ✅ §12.7；6d 后半 全局寻路请求队列 `PathQueue`（每帧预算 2000 µs、单请求峰值 53.2 ms、结果与同步 `find_path` 逐点相同）+ 门禁 5b 新项 ✅ §12.8；④/⑤ 4096 m 与 100 部队硬编码清单（15 项、4 处拦路虎）✅ §12.5；⑥ i18n、⑦ 导出预设与日志、⑧ CI 待做 |
+| 第六轮 | 规模扩展（植被 / 地形 / 寻路）+ i18n + 导出预设与 CI | 🔄 **进行中**：6a 规模热点探针（门禁 7b 步，16 → 17 步）✅ §12.1；6c 地形建块 3.06×、顶点位置与索引逐位不变 ✅ §12.2；6d 前半 A* 内联 1.20~1.45×、搜索结果逐对不变 ✅ §12.3，**后半请求队列待做**；6b 植被筛选段 2.06× 且**布局逐位不变** ✅ §12.4（会改布局的「单遍筛选」仍待显式决定，建议并入 ④ 4096 地图一起做）；6b 后半 植被分桶 128 → 256 m（节点 212 → 67，perf `nodes` −29%）+ MultiMesh 批量写实测**否决** ✅ §12.7；6d 后半 全局寻路请求队列 `PathQueue`（每帧预算 2000 µs、单请求峰值 53.2 ms、结果与同步 `find_path` 逐点相同）+ 门禁 5b 新项 ✅ §12.8；⑦ LICENSE（MIT，素材来源已核实：只有本地 CC0 渲染的 BGM + icon.svg）+ `config/version=0.6.0` + `export_presets.cfg`（预设合法、被引擎认得）+ 分级日志 `Log.gd`（19 项断言、门禁 5c）✅ §12.9；⑧ CI 门 `.github/workflows/ci.yml`（建缓存 + 跑门禁）+ `GODOT_BIN` 接线 ✅ §12.10；④/⑤ 4096 m 与 100 部队硬编码清单（15 项、4 处拦路虎）✅ §12.5；⑥ i18n、⑦ 导出预设与日志、⑧ CI 待做 |
 
 > 第四轮之后按「内容产能」推进：小兵单位 → 武器招式表 → 势力战争。
 >
@@ -1578,4 +1578,54 @@ headless 量不到剔除开销（`draw_calls` 恒为 0，要开窗另测），�
 
 **门禁**：新增第 5b 步（`path_queue_check`）。它判的是契约而不是观感 —— 队列算错的表现是
 「部队偶尔站着不动」，在 900 帧主场景里几乎不可能稳定复现。
+
+---
+
+### 12.9 本批（⑦）交付：LICENSE + config/version + 导出预设 + 分级日志
+
+**(a) 素材来源先查清，再定 LICENSE**【实证】。`git ls-files` 逐一过一遍媒体/字体/模型：
+仓库里只有 `audio/bgm/map_theme.ogg`、`audio/bgm/battle_theme.ogg`（`Bgm.gd` 注释写明是
+XSXB-Band 本地工作室写谱 + 用**真实 CC0 录音乐器**渲染）与 `icon.svg`，**没有任何第三方字体 / 模型 / 贴图**。
+⇒ 挑 MIT 是安全的（CC0 素材不带来署名义务）。`LICENSE` 里的版权署名取仓库归属 `BitToNet`
+（如需改成别的署名，改这一行即可）。
+
+**(b) 版本号与导出预设**。`project.godot` 补 `config/version="0.6.0"`（第六轮）；新增
+`export_presets.cfg`（Windows Desktop / x86_64 / `build/warband.exe`，`build/` 本来就在 `.gitignore` 里）。
+
+**(c) 分级日志 `scripts/core/Log.gd`**：DEBUG < INFO < WARN < ERROR 四档，
+级别来自 `-- --log-level=debug` 或环境变量 `WARBAND_LOG`（默认 **INFO**）。迁移是**逐字保真**的：
+`print("[日结] …")` → `Log.info("[日结] …")`，屏幕上一字不差，所以迁移不改变任何既有观感。
+`Main` 里 6 处已迁移（日结 / 周结 ×2 / 存档失败 / 读档拒绝 / UI 标签）；**故意留 1 处裸 `print`**
+（「地图生成完成」那一行被门禁与 `gen_fingerprint` 解析，不能受日志级别影响）；其余脚本里的
+11 处裸 `print` 列入后续批次。
+
+**(d) 两条周边契约写成断言**（`tools/log_check.gd`，19 项，门禁第 5c 步）：
+① 默认级别必须是 INFO —— 否则门禁会因为「看不见」而变绿；② `Log.error` 必须仍以 `"ERROR: "` 开头走
+stderr —— 门禁靠这个前缀兜底抓失败。第 ② 条在进程内抓不到 stdout，所以**改成对 `Log.gd` 源码字面量下断言**；
+而且 `log_check` 自己**故意不真的调 `Log.error`**（门禁把输出里的 `ERROR: ` 一律记为失败）——
+这条自检第一次跑就撞上了这个坑，写进注释留档。
+
+**验证**【实证】：`--headless --editor --quit` exit 0 且生成 `global_script_class_cache.cfg`（⑧ 的 CI 第一步）；
+`--export-release "Windows Desktop"` **认得这个预设**（报错只针对缺失的导出模板
+`export_templates/4.7.stable/windows_{debug,release}_x86_64.exe`）。
+**【未解】本机没有导出模板 ⇒ 「真的能导出一个能跑的 exe」这件事无法在此验证**，只能验证到「预设合法且被引擎接受」。
+
+---
+
+### 12.10 本批（⑧）交付：CI 门（建缓存 + 跑门禁）
+
+新增 `.github/workflows/ci.yml`（`windows-latest`，因为门禁是 Windows PowerShell 5.1 脚本）：
+
+1. 取固定版本 Godot（官方 release，`4.7-stable`，**不解析「最新版」**）+ 把路径写进 `GODOT_BIN`；
+2. `--headless --path . --editor --quit` 建导入缓存，并断言类缓存文件确实出现；
+3. `powershell -NoProfile -ExecutionPolicy Bypass -File tools/run_checks.ps1`（即本地那道门）；
+4. 失败时上传 `%TEMP%\warband_check_*.log` 作为 artifact。
+
+为此 `tools/run_checks.ps1` 的引擎路径改成 `GODOT_BIN` 可覆盖（本机默认仍走用户全局规则 2 的固定路径）。
+
+**验证**【实证】：把 `GODOT_BIN` 设成本机引擎后**跑完整门禁** —— 表头打印
+`引擎：G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe`，即覆盖真的生效。
+**【未解】工作流本身从未在真实 Runner 上跑过**（本机无法验证 GitHub Actions，也不能为此去装东西）：
+`GODOT_URL` 按官方命名约定写死了资产名，第一次真跑若 404，改 workflow 里那一行即可。
+
 

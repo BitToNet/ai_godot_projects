@@ -1,0 +1,61 @@
+# =============================================================================
+#  CI —— 两道门：① 建导入缓存（--headless --editor --quit）② 跑 tools/run_checks.ps1
+#
+#  为什么用 windows-latest：本仓库的门禁是 Windows PowerShell 5.1 脚本（用户全局规则 2 定的
+#  工作方式），godot 的 --headless 行为一致，但脚本里的 Join-Path / 进程超时逻辑是按 PS 5.1 写的。
+#
+#  引擎从官方 release 取：Runner 上没有本机的 G:\godot_project\_godotengine（那是本地开发机路径，
+#  规则 2 只管本机"不要另外安装/到处找"）。这里用固定版本 + 官方 URL，不解析"最新版"，
+#  保证 CI 与本地跑的是同一个 4.7-stable。tools/run_checks.ps1 通过 GODOT_BIN 环境变量接收它。
+#
+#  【未解】本工作流从未在真实 Runner 上跑过（本机无法验证 GitHub Actions）；URL 与资产名
+#  按官方命名约定写死，第一次真跑时若 404，改 workflow_dispatch 里那个 URL 即可。
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GODOT_VERSION: 4.7-stable
+      GODOT_URL: https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_win64.exe.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 取 Godot 引擎（固定版本）
+        shell: powershell
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'godot.zip'
+          Invoke-WebRequest -Uri $env:GODOT_URL -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+          $exe = Join-Path $env:RUNNER_TEMP 'Godot_v4.7-stable_win64_console.exe'
+          if (-not (Test-Path $exe)) { throw "解压后没找到 $exe" }
+          "GODOT_BIN=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & $exe --version
+
+      - name: 建导入缓存（--headless --editor --quit）
+        shell: powershell
+        run: |
+          & $env:GODOT_BIN --headless --path . --editor --quit
+          if ($LASTEXITCODE -ne 0) { throw "编辑器导入退出码 $LASTEXITCODE" }
+          if (-not (Test-Path .godot/global_script_class_cache.cfg)) { throw "导入后没有类缓存" }
+
+      - name: 回归门禁（tools/run_checks.ps1）
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/run_checks.ps1
+
+      - name: 失败时留下引擎日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warband-check-logs
+          path: ${{ runner.temp }}/warband_check_*.log
+          if-no-files-found: ignore

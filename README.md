@@ -100,6 +100,14 @@ godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://too
 实测单次 coarse 请求均值 15.9 ms、**峰值 53.2 ms** —— 峰值远超预算，这正是「至少完成一个」
 存在的原因，也是切 4096 m 时必须同时调大预算与放大格距的依据（见 ROADMAP §12.8）。
 
+工程侧（第六轮 ⑦⑧）：许可证是 MIT —— 定之前先核实过素材来源，仓库里只有本地工作室用
+**CC0 录音乐器**渲染的两首 BGM 与 `icon.svg`，没有第三方字体/模型/贴图。`project.godot` 带
+`config/version`，`export_presets.cfg` 有 Windows Desktop 预设（本机未装导出模板，所以只验证到
+「预设被引擎认得」）。日志走 `scripts/core/Log.gd`：默认 INFO，`-- --log-level=debug` 或环境变量
+`WARBAND_LOG` 可调，但 `ERROR: ` 前缀**故意保持不变**，门禁靠它兜底抓失败。CI 见
+`.github/workflows/ci.yml`：先 `--headless --editor --quit` 建导入缓存，再跑 `tools/run_checks.ps1`
+（引擎路径用 `GODOT_BIN` 注入，本机已用它跑通整道门）。
+
 ### 6. 换一张地图
 打开 `scripts/core/MapConfig.gd`，修改：
 ```gdscript
