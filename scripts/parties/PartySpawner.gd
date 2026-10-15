@@ -52,6 +52,7 @@ func spawn_player() -> PlayerParty:
 	p.position = player_start()
 	var mesh := PartyModelBuilder.build("player", f0.color, PartyModelBuilder.HORSE_BROWN, f0.color)
 	p.setup_player(data, cfg, "%s的部队" % f0.name.substr(0, 4), 0, GameState.PLAYER_START_TROOPS, mat, mesh)
+	p.attach_rig(PartyModels.rig("player"))
 	p.refresh_label()
 	p.label.text = "玩家部队 · %d 人" % GameState.PLAYER_START_TROOPS
 	return p
@@ -162,6 +163,17 @@ func _add_ai(kind: int, pname: String, faction: int, count: int, pos: Vector2, m
 		cart.position = Vector3(0, 0, 3.4)
 		cart.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		p.add_child(cart)
+	p.attach_rig(PartyModels.rig(_kind_name(kind)))
 	p.refresh_label()
 	parties.append(p)
 	return p
+
+## AIParty.Kind → 外观种类名（选坐骑用）
+func _kind_name(kind: int) -> String:
+	match kind:
+		AIParty.Kind.CARAVAN:
+			return "caravan"
+		AIParty.Kind.BANDIT:
+			return "bandit"
+		_:
+			return "lord"

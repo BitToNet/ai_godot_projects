@@ -85,6 +85,10 @@ func _check_manifest() -> void:
 	_ok(int(st["scenes"]) == keys.size(), "场景缓存条目数 = 清单条目数（%d）" % int(st["scenes"]))
 
 # ------------------------------------------------- 几何：尺度与接地必须自洽
+## 第④批（部队）的清单键。它们与建筑那批的贴图前提不同，所以单列出来。
+const ARMY := ["mount_horse", "mount_horse_alt", "mount_donkey", "rider_seated"]
+
+
 func _check_geometry() -> void:
 	print(" · 尺度与接地")
 	var host := Node3D.new()
@@ -105,9 +109,19 @@ func _check_geometry() -> void:
 			var wa := _world_aabb(inst, host.transform)
 			_ok(absf(wa.position.y - host.position.y) <= TOL_GROUND,
 					"%s yaw=%.1f 底面贴地（最低点 y=%.4f，期望 %.4f）" % [k, yaw, wa.position.y, host.position.y])
+			# 世界高度分两条判：
+			#   a) 落位后的包围盒高必须等于"倍率 × 原始包围盒高"（证明 spawn_at 真的缩放了、
+			#      且高度不随 yaw 变）；
+			#   b) "清单里 target_m = 可见身体世界高度"这条按 body_box 判 —— 部队那批的包围盒里
+			#      混着不带蒙皮的武器节点（骑士 2.4666 vs 身体 2.3145），拿包围盒判会得到一个
+			#      永远差 6% 的假断言。建筑那批两者是同一个数，所以这条对它们仍然等价。
+			var derived_h := aabb.size.y * k_scale
+			_ok(absf(wa.size.y - derived_h) <= derived_h * TOL_H,
+					"%s yaw=%.1f 落位后包围盒高 = 倍率推出高（%.3f / %.3f 米）" % [k, yaw, wa.size.y, derived_h])
 			var want_h := float(e["target_m"])
-			_ok(absf(wa.size.y - want_h) <= want_h * TOL_H,
-					"%s yaw=%.1f 世界高度 = %.3f 米（目标 %.1f）" % [k, yaw, wa.size.y, want_h])
+			var body_h := ModelLibrary.body_box(k).size.y * k_scale
+			_ok(absf(body_h - want_h) <= want_h * TOL_H,
+					"%s 可见身体世界高度 = %.3f 米（目标 %.1f）" % [k, body_h, want_h])
 			# 2) 外接尺寸必须小于村庄台地平整半径 —— 尺度写错数量级时这条会红
 			var span := maxf(wa.size.x, wa.size.z)
 			_ok(span < VILLAGE_FLAT_RADIUS,
@@ -144,9 +158,13 @@ func _collect_aabb(n: Node, xf: Transform3D, acc: Array) -> void:
 
 # ---------------------------------------------------------------- 贴图前提
 func _check_textures() -> void:
-	print(" · 图集前提（一个材质喂所有建筑）")
+	print(" · 贴图前提（建筑共用一张图集 / 部队按清单声明）")
+	# 1) 建筑那批：4 个模型来自同一个 KayKit 六角包，共用一张图集 ——
+	#    「一个材质喂所有建筑」这条前提必须成立，否则 SettlementBuilder 的共用材质就是假的。
 	var digests: Array[String] = []
 	for k in AssetManifest.model_keys():
+		if ARMY.has(k):
+			continue
 		var t := ModelLibrary.albedo_texture(k)
 		_ok(t != null, "%s 取到自带图集贴图" % k)
 		if t == null:
@@ -160,8 +178,23 @@ func _check_textures() -> void:
 	for d in digests:
 		if d != digests[0]:
 			all_same = false
-	_ok(all_same, "全部模型的图集内容哈希一致（%d 个，%s）"
+	_ok(all_same, "建筑图集内容哈希一致（%d 个，%s）"
 			% [digests.size(), digests[0].substr(0, 16) if digests.size() > 0 else "-"])
+
+	# 2) 部队那批（第④批）：三匹坐骑是**平色**（Quaternius 那套材质里没有贴图，只有 albedo_color），
+	#    骑士带 KayKit 角色包图集。清单的 texture 字段声明了这一点，实测必须与声明一致 ——
+	#    模型文件被换成另一批（带贴图的 / 不带贴图的）会在门禁里直接暴露。
+	var army_tex: Array[String] = []
+	for k in ARMY:
+		var e: Dictionary = AssetManifest.MODELS[k]
+		var want_tex := bool(e.get("texture", true))
+		var t2 := ModelLibrary.albedo_texture(k)
+		_ok((t2 != null) == want_tex, "%s 贴图有无与清单一致（清单 %s / 实测 %s）" % [k, want_tex, t2 != null])
+		_ok(ModelLibrary.material_of(k) != null, "%s 自带材质（平色也算）" % k)
+		if t2 != null:
+			army_tex.append(_image_digest(t2))
+	_ok(army_tex.size() == 1 and not digests.has(army_tex[0]),
+			"部队里只有骑士带贴图，且与建筑图集不是同一张（部队贴图 %d 张）—— 模型没串包" % army_tex.size())
 
 ## 贴图内容 SHA-256（前 16 位足以判等）。注意 HashingContext.update 不收空数组，
 ## 所以空数据直接返回 ""（scale_probe 踩过：喂空数组会打出 ERROR 行）。

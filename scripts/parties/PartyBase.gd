@@ -26,6 +26,8 @@ var has_target: bool = false
 var moving: bool = false
 
 var model: MeshInstance3D
+## 外部 GLB 拼装（坐骑 + 骑手，第④批）。null = 用程序化方块模型。
+var rig: Node3D
 var label: Label3D
 var _bob: float = 0.0
 var _yaw: float = 0.0
@@ -119,6 +121,7 @@ func step(delta: float) -> void:
 	else:
 		idle_time += delta
 	_update_visual(delta)
+	_update_rig()
 
 func terrain_speed() -> float:
 	return data.nav_fine.speed_at_world(Vector2(position.x, position.z))
@@ -173,9 +176,34 @@ func _update_visual(delta: float) -> void:
 	# 颠簸
 	var s := terrain_speed()
 	_bob += delta * (4.0 + 6.0 * s) * (1.0 if moving else 0.25)
+	# 颠簸：有 GLB 拼装就整体颠（含骑手），否则颠程序化模型
+	var bob_y := sin(_bob) * (0.12 if moving else 0.03)
+	var bob_roll := sin(_bob * 0.5) * (0.02 if moving else 0.0)
+	if rig != null:
+		rig.position.y = bob_y
+		rig.rotation.z = bob_roll
+	elif model != null:
+		model.position.y = bob_y
+		model.rotation.z = bob_roll
+
+## 换成外部 GLB 拼装（第④批）：丢掉程序化方块模型，但**保留一个网格节点**给
+## MapPicker / 马蹄声等既有代码用（它们只认 model 是个 MeshInstance3D）。
+func attach_rig(p_rig: Node3D) -> void:
+	if p_rig == null:
+		return
 	if model != null:
-		model.position.y = sin(_bob) * (0.12 if moving else 0.03)
-		model.rotation.z = sin(_bob * 0.5) * (0.02 if moving else 0.0)
+		model.queue_free()
+		model = null
+	rig = p_rig
+	add_child(rig)
+	model = ModelLibrary.first_mesh(rig)
+	PartyModels.tick(rig, false, 0.0)
+
+## 动画跟随移动状态（PartyModels.tick 内部幂等，不换状态不重播）
+func _update_rig() -> void:
+	if rig == null:
+		return
+	PartyModels.tick(rig, moving, speed_base * terrain_speed())
 
 func distance_to_party(other: PartyBase) -> float:
 	return Vector2(position.x, position.z).distance_to(Vector2(other.position.x, other.position.z))

@@ -36,7 +36,49 @@ const MODELS := {
 	"bld_house_b": {"path": "res://assets/world/models/bld_house_b.glb", "target_m": 4.6, "tris": 1393},
 	"bld_well": {"path": "res://assets/world/models/bld_well.glb", "target_m": 2.6, "tris": 726},
 	"bld_windmill": {"path": "res://assets/world/models/bld_windmill.glb", "target_m": 6.0, "tris": 2653},
+
+	# ---- 第④批：部队（坐骑 + 骑手），全部 CC0，见 assets/world/models/ATTRIBUTION.md ----
+	# 「body」字段 = 量**可见身体轮廓**的口径（默认 "aabb"）：
+	#   "aabb"    —— 网格包围盒就是可见轮廓。三匹坐骑整匹就是一张蒙皮网格，
+	#                且静止姿态下**背是全身最高点**（头是低着的），所以 target_m 就是"背高"。
+	#   "skinned" —— 包围盒里混着**不带蒙皮**的节点（武器 / 备用网格），那些节点的形状
+	#                不代表"这个人多高"。unit_knight 实测：包围盒 2.4666 米（最高点是武器），
+	#                身体轮廓 2.3145 米（15 个网格节点里 9 个不带蒙皮）。按包围盒定倍率，
+	#                1.85 米的骑士只有 1.74 米 —— 差 6%，肉眼看不出来，但"清单里的 target_m
+	#                就是世界高度"这条前提就不成立了。
+	# 「anim_*」只写**逻辑名**：坐骑的实际片段名带头骨前缀（AnimalArmature|Gallop），
+	# 由 ModelLibrary.resolve_clip 兜底解析，tools/party_model_check.gd 断言这些片段真的存在。
+	# 「anim_ref_speed」= 片段看起来"不打滑"时的世界速度（米/秒），速率 = 实际速度 ÷ 它，夹到 0.30~2.50。
+	# 「texture」= 该模型是否自带图集贴图。坐骑是**平色**（Quaternius 那套只给 albedo_color），
+	# 骑士带 KayKit 角色包图集 —— 声明出来，asset_check 才会在"文件被换成另一批"时报红。
+	"mount_horse": {
+		"path": "res://assets/world/models/mount_horse.glb", "target_m": 1.40, "tris": 2182,
+		"body": "aabb", "texture": false, "anim_move": "Gallop", "anim_idle": "Idle", "anim_ref_speed": 5.0,
+		"author": "Quaternius", "license": "CC0 1.0", "source": "https://poly.pizza/m/bEdE4rmZy9",
+	},
+	"mount_horse_alt": {
+		"path": "res://assets/world/models/mount_horse_alt.glb", "target_m": 1.40, "tris": 2182,
+		"body": "aabb", "texture": false, "anim_move": "Gallop", "anim_idle": "Idle", "anim_ref_speed": 4.84,
+		"author": "Quaternius", "license": "CC0 1.0", "source": "https://poly.pizza/m/qvTrSG9pZF",
+	},
+	"mount_donkey": {
+		"path": "res://assets/world/models/mount_donkey.glb", "target_m": 1.10, "tris": 2000,
+		"body": "aabb", "texture": false, "anim_move": "Gallop", "anim_idle": "Idle", "anim_ref_speed": 3.74,
+		"author": "Quaternius", "license": "CC0 1.0", "source": "https://poly.pizza/m/qmX6nhnvp7",
+	},
+	"rider_seated": {
+		"path": "res://assets/world/models/unit_knight.glb", "target_m": 1.85, "tris": 6952,
+		"body": "skinned", "texture": true, "anim_move": "Sit_Chair_Idle", "anim_idle": "Sit_Chair_Idle", "anim_ref_speed": 1.0,
+		"author": "Kay Lousberg (KayKit)", "license": "CC0 1.0",
+		"source": "https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0",
+	},
 }
+
+## 骑手坐姿的**胯骨高度占体高的比例** —— 实测值（Knight Sit_Chair_Idle @1.2s）：
+##   胯骨 0.4813 ÷ 体高 2.3145 = 0.2080
+## 存成比例而不是绝对值：换模型 / 改体高时它自动跟着变，不会像参考项目那样留一个
+## 只对它有意义的 0.8839（那是它 468 米世界标定的）。tools/party_model_check.gd 会重测这一项。
+const RIDER_HIP_FRAC := 0.2080
 
 ## 村庄布局表：极坐标（米），原点 = 定居点中心（台地中心，y 就是 ground_h）。
 ##   · 条目顺序 = 落位抽取顺序，动了它村庄排布就变（几何不进指纹，门禁无感，但没必要动）
