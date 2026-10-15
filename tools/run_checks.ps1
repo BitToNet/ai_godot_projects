@@ -5,7 +5,7 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（约 30 项，本机实测 **62~71 秒**；第 7 步显式摘掉尺寸覆盖、按**出货默认**跑）；
+#  依次执行下列步骤（约 31 项，本机实测 **78~85 秒**；第 7 步显式摘掉尺寸覆盖、按**出货默认**跑）；
 #  性能若超软容差会**额外**追加一行「性能基准 注意…」，
 #  首次运行（或换了机器 / 净克隆，.godot/ 还没建）还会**按需**先跑一次资源导入，
 #  所以汇总里的项数会在 29~31 之间浮动 —— 别把某一跑的行数当成脚本的固有常量。
@@ -74,6 +74,12 @@
 #    7c2) 战争迷雾逐字节自检（tools/fog_check.gd）—— 第七轮 ①：迷雾贴图会进三个 shader，
 #        而这次为性能改了 reveal() 的算式与 update() 的跳过策略，所以拿「改动前的原始循环」
 #        当参照实现逐字节比对（三个世界尺寸 × 三条轨迹，不建世界，<1 秒）
+#    7c3) 地图设计度量（tools/map_design_check.gd）—— 第七轮 ②：地形观感以前只有「看着还行」
+#        这一种判据（参考项目 §14.1 的原话是"先量化"）。这条把「像不像一张大地图」拆成
+#        可断言的结构量：陆地占比 / 高度分位 / 竖向比例 / 坡度直方图 / 分形海岸的等周商 /
+#        高地区域连贯性 / 河流是否入海入湖或出图 / 聚落离水距离 / 道路入水是否只出现在桥渡上 /
+#        植被与部队密度。每条阈值都写了"为什么是这个数"，且**动机都是地图观感**，
+#        不是「让数字好看」。它要建一个 1024 m 世界（约 6 秒）
 #    7d) 4096 m 世界实测（tools/big_map_probe.gd）—— **可选**：$env:WARBAND_BIG_MAP = '1' 才跑。
 #        它不进默认流程：跑一次要 80~120 秒（真的建一个 4096 m 世界）。想换世界之前先看它
 #    6c) 存档定式（tools/save_check.gd）—— 存档格式 / 三道门（版本 / 种子 / 实体 id）/
@@ -437,6 +443,16 @@ $rFog = Invoke-GodotStep -Name 'fog_check' -Extra @('--script', 'res://tools/fog
 $fogPass = @($rFog.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rFog.Ok -and -not $fogPass) {
 	$fail.Add('迷雾自检  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 7c3) 地图设计度量（tools/map_design_check.gd）----
+# 第七轮 ②：地形观感以前只有「看着还行」这一种判据。这条把「像不像一张大地图」拆成
+# 可断言的结构量（陆地占比 / 高度分位 / 竖向比例 / 坡度直方图 / 等周商 / 高地连贯性 /
+# 河流入海 / 聚落离水 / 道路入水是否只在桥渡上 / 植被与部队密度）。要建一个 1024 m 世界。
+$rDesign = Invoke-GodotStep -Name 'map_design_check' -Extra @('--script', 'res://tools/map_design_check.gd')
+$designPass = @($rDesign.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rDesign.Ok -and -not $designPass) {
+	$fail.Add('地图设计度量  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 7d) 4096 m 世界实测（tools/big_map_probe.gd）—— **可选**，默认跳过 ----

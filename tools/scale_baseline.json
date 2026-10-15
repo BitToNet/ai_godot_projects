@@ -1,246 +1,246 @@
 {
-	"calib_ms": 14.059,
+	"calib_ms": 13.445,
 	"map_size": 1024,
 	"note": "由 tools/scale_probe.gd --write-baseline 生成；结构量必须精确一致，耗时只做上界比对",
 	"path_coarse_detail": [
 		{
-			"expanded": 15,
-			"ms": 0.519,
+			"expanded": 16,
+			"ms": 0.531,
 			"pts": 2
 		},
 		{
-			"expanded": 21,
-			"ms": 0.641,
+			"expanded": 29,
+			"ms": 1.177,
 			"pts": 2
 		},
 		{
-			"expanded": 13,
-			"ms": 0.32,
+			"expanded": 22,
+			"ms": 0.821,
 			"pts": 2
 		},
 		{
-			"expanded": 13,
-			"ms": 0.402,
-			"pts": 2
-		},
-		{
-			"expanded": 25,
-			"ms": 0.859,
-			"pts": 2
-		},
-		{
-			"expanded": 24,
-			"ms": 0.869,
-			"pts": 2
-		},
-		{
-			"expanded": 626,
-			"ms": 7.924,
-			"pts": 5
-		},
-		{
-			"expanded": 62,
-			"ms": 1.144,
-			"pts": 3
-		},
-		{
-			"expanded": 430,
-			"ms": 6.131,
-			"pts": 4
-		},
-		{
-			"expanded": 24,
-			"ms": 0.735,
-			"pts": 4
-		},
-		{
-			"expanded": 18,
-			"ms": 0.611,
-			"pts": 2
-		},
-		{
-			"expanded": 3913,
-			"ms": 56.132,
-			"pts": 10
-		}
-	],
-	"path_coarse_expanded": 5184,
-	"path_coarse_max_ms": 56.132,
-	"path_coarse_total_ms": 76.287,
-	"path_fine_detail": [
-		{
-			"expanded": 31,
-			"ms": 1.33,
+			"expanded": 26,
+			"ms": 0.949,
 			"pts": 2
 		},
 		{
 			"expanded": 41,
-			"ms": 1.539,
+			"ms": 1.331,
 			"pts": 2
 		},
 		{
-			"expanded": 21,
-			"ms": 0.614,
+			"expanded": 2638,
+			"ms": 39.399,
+			"pts": 4
+		},
+		{
+			"expanded": 14,
+			"ms": 0.477,
 			"pts": 2
 		},
 		{
-			"expanded": 49,
-			"ms": 1.149,
+			"expanded": 18,
+			"ms": 0.482,
 			"pts": 2
 		},
 		{
-			"expanded": 133,
-			"ms": 3.334,
+			"expanded": 17,
+			"ms": 0.607,
 			"pts": 2
 		},
 		{
-			"expanded": 49,
-			"ms": 2.389,
+			"expanded": 15,
+			"ms": 0.474,
+			"pts": 2
+		},
+		{
+			"expanded": 27,
+			"ms": 0.895,
+			"pts": 2
+		},
+		{
+			"expanded": 6491,
+			"ms": 73.234,
+			"pts": 4
+		}
+	],
+	"path_coarse_expanded": 9354,
+	"path_coarse_max_ms": 73.234,
+	"path_coarse_total_ms": 120.377,
+	"path_fine_detail": [
+		{
+			"expanded": 32,
+			"ms": 1.496,
+			"pts": 2
+		},
+		{
+			"expanded": 57,
+			"ms": 3.381,
+			"pts": 2
+		},
+		{
+			"expanded": 44,
+			"ms": 2.201,
+			"pts": 2
+		},
+		{
+			"expanded": 58,
+			"ms": 2.766,
+			"pts": 2
+		},
+		{
+			"expanded": 91,
+			"ms": 3.701,
+			"pts": 2
+		},
+		{
+			"expanded": 338,
+			"ms": 9.82,
+			"pts": 3
+		},
+		{
+			"expanded": 27,
+			"ms": 1.146,
+			"pts": 2
+		},
+		{
+			"expanded": 28,
+			"ms": 1.045,
+			"pts": 2
+		},
+		{
+			"expanded": 35,
+			"ms": 1.255,
 			"pts": 2
 		},
 		{
 			"expanded": 30,
-			"ms": 1.127,
+			"ms": 0.667,
 			"pts": 2
 		},
 		{
-			"expanded": 52,
-			"ms": 1.798,
-			"pts": 3
-		},
-		{
-			"expanded": 296,
-			"ms": 5.317,
-			"pts": 5
-		},
-		{
-			"expanded": 53,
-			"ms": 1.438,
-			"pts": 5
-		},
-		{
-			"expanded": 37,
-			"ms": 1.563,
+			"expanded": 62,
+			"ms": 1.518,
 			"pts": 2
 		},
 		{
-			"expanded": 351,
-			"ms": 14.702,
-			"pts": 5
+			"expanded": 1417,
+			"ms": 26.92,
+			"pts": 4
 		}
 	],
-	"path_fine_expanded": 1143,
-	"path_fine_max_ms": 14.702,
-	"path_fine_total_ms": 36.3,
+	"path_fine_expanded": 2219,
+	"path_fine_max_ms": 26.92,
+	"path_fine_total_ms": 55.916,
 	"path_n": 12,
 	"path_pairs": [
 		[
 			555.37,
 			584.748,
+			590.353,
+			711.204
+		],
+		[
+			590.353,
+			711.204,
 			432.539,
 			482.612
 		],
 		[
 			432.539,
 			482.612,
-			431.797,
-			649.844
+			553.153,
+			658.156
 		],
 		[
-			431.797,
-			649.844,
-			443.802,
-			562.246
-		],
-		[
-			443.802,
-			562.246,
-			541.795,
-			644.462
-		],
-		[
-			541.795,
-			644.462,
+			553.153,
+			658.156,
 			492.346,
 			447.456
 		],
 		[
 			492.346,
 			447.456,
-			393.858,
-			253.431
+			512.71,
+			709.194
 		],
 		[
-			393.858,
-			253.431,
+			512.71,
+			709.194,
+			381.885,
+			286.78
+		],
+		[
+			381.885,
+			286.78,
 			273.609,
 			192.334
 		],
 		[
 			273.609,
 			192.334,
-			471.986,
-			94.251
+			322.419,
+			81.129
 		],
 		[
-			471.986,
-			94.251,
-			286.235,
-			272.771
+			322.419,
+			81.129,
+			212.121,
+			218.553
 		],
 		[
-			286.235,
-			272.771,
-			336.871,
-			75.474
+			212.121,
+			218.553,
+			333.994,
+			169.413
 		],
 		[
-			336.871,
-			75.474,
-			205.913,
-			212.732
+			333.994,
+			169.413,
+			144.255,
+			230.744
 		],
 		[
-			205.913,
-			212.732,
-			840.171,
-			527.889
+			144.255,
+			230.744,
+			849.733,
+			507.039
 		]
 	],
-	"prim_height_at_us": 0.922,
-	"prim_normal_at_us": 3.964,
+	"prim_height_at_us": 1.026,
+	"prim_normal_at_us": 4.429,
 	"seed": 20250929,
 	"terrain_chunks": 64,
 	"terrain_idx_hash": "ed3c6f4ec427b094",
-	"terrain_lod0_max_ms": 2.612,
-	"terrain_lod0_median_ms": 1.925,
+	"terrain_lod0_max_ms": 2.583,
+	"terrain_lod0_median_ms": 2.006,
 	"terrain_lod0_n": 64,
-	"terrain_lod0_sum_ms": 118.828,
+	"terrain_lod0_sum_ms": 124.756,
 	"terrain_lod0_verts": 1601,
-	"terrain_lod1_max_ms": 0.598,
-	"terrain_lod1_median_ms": 0.581,
+	"terrain_lod1_max_ms": 0.662,
+	"terrain_lod1_median_ms": 0.618,
 	"terrain_lod1_n": 16,
-	"terrain_lod1_sum_ms": 9.28,
-	"terrain_lod2_max_ms": 0.216,
-	"terrain_lod2_median_ms": 0.209,
+	"terrain_lod1_sum_ms": 9.956,
+	"terrain_lod2_max_ms": 0.315,
+	"terrain_lod2_median_ms": 0.224,
 	"terrain_lod2_n": 16,
-	"terrain_lod2_sum_ms": 3.341,
-	"terrain_lod3_max_ms": 0.098,
-	"terrain_lod3_median_ms": 0.095,
+	"terrain_lod2_sum_ms": 3.788,
+	"terrain_lod3_max_ms": 0.146,
+	"terrain_lod3_median_ms": 0.106,
 	"terrain_lod3_n": 16,
-	"terrain_lod3_sum_ms": 1.517,
-	"terrain_norm_hash": "a712dd9038c7b2ef",
-	"terrain_pos_hash": "5a2e59665239f171",
-	"veg_chunks": 67,
-	"veg_emit_ms": 3.083,
-	"veg_instances": 5150,
+	"terrain_lod3_sum_ms": 1.775,
+	"terrain_norm_hash": "1c61986283137816",
+	"terrain_pos_hash": "c08b1301457aa6a3",
+	"veg_chunks": 64,
+	"veg_emit_ms": 7.23,
+	"veg_instances": 11007,
 	"veg_kinds": {
-		"broadleaf": 2174,
-		"cactus": 257,
-		"conifer": 1925,
-		"deadtree": 190,
-		"rock": 604
+		"broadleaf": 4867,
+		"cactus": 406,
+		"conifer": 4655,
+		"deadtree": 386,
+		"rock": 693
 	},
-	"veg_total_ms": 238.246,
-	"veg_xform_hash": "0b1c0703cc20f77f"
+	"veg_total_ms": 492.765,
+	"veg_xform_hash": "356098de987842b3"
 }

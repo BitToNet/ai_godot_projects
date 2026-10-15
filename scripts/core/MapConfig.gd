@@ -41,13 +41,64 @@ extends Resource
 @export var continent_center: Vector2 = Vector2(0.60, 0.36)
 ## 大陆半径（归一化 UV），越大陆地越大
 @export var continent_radius: Vector2 = Vector2(0.70, 0.64)
-@export var mountain_amplitude: float = 168.0   ## 北部雪山最大高度
-@export var hill_amplitude: float = 26.0        ## 中部丘陵起伏
-@export var desert_amplitude: float = 11.0      ## 东部沙丘高度
-@export var detail_amplitude: float = 2.6       ## 高频细节
-@export var snow_line: float = 118.0            ## 雪线
-@export var mountain_line: float = 88.0         ## 岩石线
-@export var ridge_sharpness: float = 1.55       ## 山脊锐度（对 ridged 噪声取幂）
+@export var mountain_amplitude: float = 62.0    ## 显式山脉带的最高抬升（第七轮 ②：168 → 62）
+@export var hill_amplitude: float = 17.0        ## 中部丘陵起伏（26 → 17，"底噪只负责质感"）
+@export var base_amplitude: float = 13.0        ## 大陆缓坡基底（17 → 13）
+@export var desert_amplitude: float = 8.0       ## 东部沙丘高度（11 → 8）
+@export var detail_amplitude: float = 2.0       ## 高频细节（2.6 → 2.0）
+## 雪线 / 岩石线：**由高度场实测分位数覆盖**（HeightmapGenerator 生成后写回，见下面的
+## `rock_line_of()` / `snow_line_of()`）。这里保留的是「拿不到实测值时的兜底」，
+## 也就是参考项目那套绝对高度常数的位置 —— 但它的图是固定 468 m，
+## 我们要跑 1024/2048/4096 三种尺寸且不能重配阈值，所以只能用分位数：
+## 绝对高度阈值一换图就会整体变成岩石或整体不变成岩石（旧值 88/118 m 在 1024 m 图上
+## 只覆盖 5.5% / 1.1% 陆地 —— 等于雪和裸岩几乎看不见，这是 ② 批要修的观感问题之一）。
+@export var snow_line: float = 118.0            ## 雪线兜底值
+@export var mountain_line: float = 88.0         ## 岩石线兜底值
+@export var ridge_sharpness: float = 1.55       ## 山脊锐度（对 ridged 噪声取幂，只做山体内部质感）
+## 高度场平滑：分隔式盒式模糊，横一遍 + 纵一遍算一遍，叠 smooth_passes 遍 ≈ 高斯。
+## 参考项目 6 遍 × 半径 2 把平均坡度从 47.4° 压到 12.5°、≥45° 悬崖格 54.2% → 1.4%。
+## **必须在聚落压平之前做**，否则平台会被糊掉（本工程聚落压平在 generate() 之后，天然满足）。
+@export var smooth_passes: int = 3
+@export var smooth_radius_m: float = 5.0        ## 单遍模糊半径（米），按尺寸不缩放
+
+## 显式山脉带：线段 + 宽度 + 高度倍数。取代"噪声堆山"。
+## 参考项目 docs/大地图设计.md §14.3-14.4 的实测结论：**噪声天生到处都有高频起伏**，
+## 无论怎么配比都会在整张图撒满尖峰，不可能出现「大片平原 + 几条山脉」这种结构 ——
+## 这不是参数问题，是方法问题。它的改法是把山脉写成显式线段带：
+## 点到线段距离 < width 时按 smoothstep(width, width*0.30, dist) 抬升，
+## **宽 = 缓坡、高 = 山高，两个旋钮独立** —— 这是噪声做不到的。
+## 坐标用归一化 UV（0~1），换图不用重配；表是常量、不使用 RNG，
+## 所以不改变随机数抽取顺序（高度场本身变化 → 指纹变化，属第七轮 ② 的刻意重基线）。
+func mountain_ranges() -> Array:
+	var s := map_size
+	return [
+		{"from": Vector2(0.04, 0.22), "to": Vector2(0.46, 0.08), "width": 0.145 * s, "height": 0.85},
+		{"from": Vector2(0.26, 0.05), "to": Vector2(0.88, 0.24), "width": 0.175 * s, "height": 1.00},
+		{"from": Vector2(0.08, 0.46), "to": Vector2(0.44, 0.60), "width": 0.105 * s, "height": 0.52},
+		{"from": Vector2(0.70, 0.50), "to": Vector2(0.97, 0.78), "width": 0.095 * s, "height": 0.58},
+	]
+
+## 内海 / 海湾：显式圆形盆地（inner 半径内是水，outer 外无影响，之间 smoothstep）。
+## 参考项目用 3 个 sea_basins 把「圆盘大陆 + 分形噪声海岸」变成有海湾、半岛的形状。
+func sea_basins() -> Array:
+	var s := map_size
+	return [
+		{"center": Vector2(0.155, 0.120), "inner": 0.085 * s, "outer": 0.235 * s},
+		{"center": Vector2(0.905, 0.415), "inner": 0.075 * s, "outer": 0.215 * s},
+		{"center": Vector2(0.330, 0.945), "inner": 0.065 * s, "outer": 0.195 * s},
+	]
+
+## 岩石线：优先用高度场实测分位数（生成后写回），拿不到才用 @export 兜底
+func rock_line_of(gen) -> float:
+	if gen != null and gen.h_rock_line > -1e8:
+		return gen.h_rock_line
+	return mountain_line
+
+## 雪线：同上
+func snow_line_of(gen) -> float:
+	if gen != null and gen.h_snow_line > -1e8:
+		return gen.h_snow_line
+	return snow_line
 
 @export_group("地形 · 水系")
 @export var river_count: int = 2
@@ -61,11 +112,11 @@ extends Resource
 
 @export_group("植被 · 森林")
 @export var vegetation_enabled: bool = true
-@export var conifer_count: int = 2600
-@export var broadleaf_count: int = 3200
-@export var cactus_count: int = 700
-@export var deadtree_count: int = 420
-@export var rock_count: int = 1500
+@export var conifer_count: int = 8000     ## 第七轮 ②：2600 → 8000（参考项目"细节信息量靠装饰物撑"）
+@export var broadleaf_count: int = 10000    ## 3200 → 10000
+@export var cactus_count: int = 1600
+@export var deadtree_count: int = 1000
+@export var rock_count: int = 3200
 @export var forest_noise_freq: float = 0.0075   ## 森林成片噪声频率（越低林子越大片）
 @export var forest_threshold: float = 0.52      ## 高于该值才长树
 @export var max_slope_veg: float = 0.46         ## 植被可生长的最大坡度

@@ -1,52 +1,52 @@
 {
 	"counts": {
-		"bridges": 7,
+		"bridges": 5,
 		"settlements": 18,
-		"vegetation": 5150
+		"vegetation": 11007
 	},
-	"fingerprint": "958433c2f04c0e3996d90a0552716b85f2a6b1134268c7a71b22bc00691ed869",
+	"fingerprint": "3d2a1dd217ec1e49112ccc5a32fb29aa2c42b065a288dc5949c1404736d07ba5",
 	"map_size": 1024.0,
 	"note": "由 tools/gen_fingerprint.gd --write-baseline 生成；指纹变化 = 生成结果变化（多半是 RNG 抽取顺序被动了）",
 	"parts": {
 		"bridges": {
-			"detail": "7 座",
-			"hash": "28b6f23062a5ef99cfb6a6492b4d14813651665fc0b961264067473b1e79fb00"
+			"detail": "5 座",
+			"hash": "ee3866a4de71b598b82955c1bf6c50db8c3d8fd7b28aabf7bd34cfa697ec3e27"
 		},
 		"heightmap": {
 			"detail": "res 513 / 263169 float32",
-			"hash": "16ee4d7295d9916dd248e383916f7693352078b98979ce14c56c0f69a38c8a09"
+			"hash": "064bfbea9abcec15480833c181cfa2b2b3413f68c7f8cbda4e290814a4d57ff5"
 		},
 		"nav_coarse": {
 			"detail": "res 129",
-			"hash": "7b5dc62f9e2947cfcaecc1ef239fd3a8499625b59b42d92a4942dd7038c5f4b3"
+			"hash": "d0e29e244ff7e14597f68d179b43fa1e2517e836af547e88054b777e5167f667"
 		},
 		"nav_fine": {
 			"detail": "res 257",
-			"hash": "68f4ad91a59799ddf6a7f3b03a531c82eae780dde8ff3f87a56fcc02dfcab27a"
+			"hash": "09714a06f2ee5b2c8c6b12acdecb2a878a6f0a36ef9620d364ebffcf0d841b7c"
 		},
 		"nav_road": {
 			"detail": "res 129",
-			"hash": "21c6289e22dcf4ea91da86668b146778e4ee5872a69a6a50daf6b277ac11d907"
+			"hash": "f4852e50b983025296a3b6d3fe3074a5d92c2c6b4de5bc347e617d8490bc6b93"
 		},
 		"parties": {
 			"detail": "1 玩家 + 14 AI",
-			"hash": "3953ad7d982c6cd34786d65cae9c9aa1e152c2919d2b69ec6b2b2865a02afa9f"
+			"hash": "5fe4bb4f6e10964fcd73a04f2ed4392e52dba1a8ef1bf9f825201d936a7863eb"
 		},
 		"roads": {
 			"detail": "21 条",
-			"hash": "321f9661154af7b5cf7facf55be6bdf85011eb633b0cba5ce9bf92b8d0ecddd4"
+			"hash": "e4082f6ccbad8e38db3dbdcf6047e17f5517a6f96a8d5388e85d2666cbd75a9c"
 		},
 		"settlements": {
 			"detail": "18 个",
-			"hash": "b9f44800a2cf8b4cc327b0f68395fa095155d917754d9539324079307432acb9"
+			"hash": "0357a63ad7a4d97018e3a27e0961132275d5bc599a9cc1bda847b228391ec5b5"
 		},
 		"territory": {
 			"detail": "16384 bytes",
-			"hash": "485767f9e2df4d9ead26142b9dc59eb7c8d692342bc3b7be38267f2292e2071b"
+			"hash": "3d9e72cc8374d53602caa54b57d85c2a4beaba5876e59deb04b01c3be5173bcb"
 		},
 		"vegetation": {
-			"detail": "5150 实例 / broadleaf=2174 cactus=257 conifer=1925 deadtree=190 rock=604",
-			"hash": "a76789cfb32f004d810eb83e9410972e266827a191989a7720f829db7b04661f"
+			"detail": "11007 实例 / broadleaf=4867 cactus=406 conifer=4655 deadtree=386 rock=693",
+			"hash": "15bca8055c4f1a42ae26032d2582c5e9f1efc1cf5a010afb4896a6fdb58f5cd4"
 		}
 	},
 	"seed": 20250929

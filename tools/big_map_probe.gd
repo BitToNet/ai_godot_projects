@@ -10,7 +10,7 @@
 ##    （默认跳过：它要跑一次 4096 m 的完整世界生成，是分钟级，不适合塞进 70 秒的门禁）
 ##
 ##  【它是什么】用**生产代码**（Main.tscn + WorldGenPipeline，只把 cfg.map_size / heightmap_res
-##    换成 4096 / 2049）跑一次完整世界生成，然后复测三件重活：
+##    换成 4096 / 1025）跑一次完整世界生成，然后复测三件重活：
 ##      · 寻路栅格 build_from（细 1025² / 粗 513²）
 ##      · 植被筛选重建（实例数、区块数、耗时）
 ##      · A* 实跑（细 / 粗各几条定居点之间的路径，含展开节点数）
@@ -31,7 +31,7 @@ const WAIT_LIMIT := 400000   ## 帧上限；--fixed-fps 下帧与墙钟无关，
 const PAIRS := 4             ## A* 取样对数（取前几对相邻定居点）
 
 var map_size := SIZE_DEFAULT ## 可用 -- --size=1024 换成现网尺寸做同口径对照
-var hm_res := 0              ## 跟随尺寸：每 2 m 一个高度采样点（1024 → 513，4096 → 2049）
+var hm_res := 0              ## 跟随尺寸推导（MapConfig.scaled_heightmap_res）：1024 → 513（2 m 间距）、4096 → 1025（4 m 间距）
 var main: Node
 var cfg: MapConfig
 var cur: Dictionary = {}

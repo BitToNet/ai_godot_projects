@@ -94,7 +94,9 @@ func _run() -> void:
 	_ok(cfg_small.min_settlement_distance_m() == 96.0 and cfg.min_settlement_distance_m() == 384.0,
 		"定居点最小间距 1024 → 96 m、4096 → 384 m（%.1f / %.1f）" % [cfg_small.min_settlement_distance_m(), cfg.min_settlement_distance_m()])
 	# 植被候选格是**绝对米数**（密度属性），区块边长按尺寸推导（节点数不随地图膨胀）
-	_ok(VegetationScatter.CELL == 7.0, "植被候选格恒为 7 m（%.1f）" % VegetationScatter.CELL)
+	# 第七轮 ②：候选格由 7 m 收紧到 5 m（密度 ×1.96）。这里钉的是**它仍然是一个
+	# 绝对值常量**（不随 map_size 变）—— 变的只是那个常数的取值，性质没变。
+	_ok(VegetationScatter.CELL == 5.0, "植被候选格恒为 5 m（%.1f）" % VegetationScatter.CELL)
 	_ok(absf(cfg_small.map_size / float(VegetationScatter.VEG_CHUNKS_PER_AXIS) - 256.0) < 0.0001
 		and absf(cfg.map_size / float(VegetationScatter.VEG_CHUNKS_PER_AXIS) - 1024.0) < 0.0001,
 		"植被区块边长 1024 → 256 m、4096 → 1024 m")

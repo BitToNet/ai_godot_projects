@@ -30,7 +30,11 @@ extends RefCounted
 const VEG_CHUNKS_PER_AXIS := 4
 ## 候选格边长（米）：**绝对米数**，不随地图变。它的含义是「每 7 m 抽一个候选点」——
 ## 只有保持绝对值，「每平方公里多少棵」这个密度属性才会在 4 倍图上不变（ROADMAP §16.8）。
-const CELL := 7.0
+## 第七轮 ②：7.0 → 5.0。稀疏是「地图看起来空」的直接原因（实测 4.6k 个/km²，
+## 而参考项目是 12.6 万个/km² 的量级）。候选点密度 = 1/CELL²，所以这一条改动
+## **等价于把整张图的装饰物密度乘 1.96**，而「绝对米数、不随尺寸变」这条性质不变
+## （ROADMAP §16.8 的口径：换 4 倍图后每平方公里棵数不变）。
+const CELL := 5.0
 ## 各类（针叶/阔叶/仙人掌/枯木/岩石）的绘制距离，基准 = 1024 m 世界，使用时按 size_scale 放大
 const RANGE_END := [380.0, 340.0, 260.0, 260.0, 340.0]
 const RANGE_STRATEGIC := [260.0, 250.0, 180.0, 200.0, 220.0]
@@ -181,10 +185,10 @@ func _density(kind: String, forest: float, desert: float, rock: float, v: float,
 		"conifer":
 			# 北部山麓针叶林
 			var north := 1.0 - smoothstep(0.30, 0.72, v)
-			return pow(forest, 1.4) * (0.25 + 0.95 * north)
+			return pow(forest, 1.4) * (0.35 + 1.05 * north)
 		"broadleaf":
 			var mid := smoothstep(0.22, 0.42, v) * (1.0 - smoothstep(0.86, 1.0, v))
-			return pow(forest, 1.4) * (0.55 + 0.55 * mid) * (1.0 - desert * 0.85)
+			return pow(forest, 1.4) * (0.70 + 0.70 * mid) * (1.0 - desert * 0.85)
 		"cactus":
 			return clampf((desert - 0.42) * 1.6, 0.0, 1.0) * 0.11 * (1.0 - smoothstep(60.0, 90.0, h))
 		"deadtree":

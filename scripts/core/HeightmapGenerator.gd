@@ -59,9 +59,27 @@ var forest_mask: PackedFloat32Array    ## 0..1 森林成片遮罩
 var rivers: Array[Dictionary] = []     ## {points: PackedVector3Array(水面), widths, fords: PackedInt32Array, dirs}
 var lakes: Array[Dictionary] = []      ## {center: Vector2, radius: float, water_level: float}
 
+## 第七轮 ②：显式山脉带 / 海湾的缓存副本。land_mask / _range_factor 每个采样点都会被调用
+## （1024 m 图 263k 次、4096 m 图 1.05M 次），**绝不能在循环里再调 cfg.xxx()** ——
+## 那会每次分配一个 Array[Dictionary]，光分配就把生成时间吃掉一大块。开工前取一次即可。
+var _ranges: Array = []
+var _basins: Array = []
+## 高度场实测分位阈值（生成后由 _compute_thresholds() 写回）：
+## 岩石线 P88 / 雪线 P96 / 陆地中位 P50。着色（shader uniform）与自检都读这里。
+## **为什么用分位数**：本工程要跑 1024/2048/4096 三种尺寸，高度场随尺寸变化，
+## 绝对高度阈值一换图就会整体变成岩石或整体不变成岩石。参考项目固定 468 m 世界，
+## 所以它用绝对常数（world_map.json 的 hill/mountain/peak 14/19/27）——
+## 那是它的前提，不是普适做法（docs/大地图设计.md §14 只调参数、不换图）。
+var h_rock_line: float = -1e9
+var h_snow_line: float = -1e9
+var h_land_p50: float = 0.0
+var h_land_p90: float = 0.0
+
 func _init(p_cfg: MapConfig) -> void:
 	cfg = p_cfg
 	rng = cfg.make_rng("heightmap")
+	_ranges = cfg.mountain_ranges()
+	_basins = cfg.sea_basins()
 	_setup_noise()
 
 # ------------------------------------------------------------------ 噪声初始化
@@ -142,8 +160,13 @@ func generate(timing: bool = false) -> Heightmap:
 	_build_heights()
 	var t_h := Time.get_ticks_msec() - t0
 	t0 = Time.get_ticks_msec()
-	hm.blur(1)             # 去掉单点毛刺，让寻路/落地更稳
+	# 第七轮 ②：单点毛刺改用「分隔式盒式模糊 ≈ 高斯」，把整张图的高频起伏压掉。
+	# 参考项目实测：这一条把平均坡度从 47.4° 压到 12.5°、≥45° 悬崖格 54.2% → 1.4%。
+	# 顺序不可换：**必须在聚落压平之前**（本工程聚落压平在 generate() 之后，天然满足）。
+	_smooth_heights(cfg.smooth_passes, maxi(1, int(round(cfg.smooth_radius_m / hm.cell))))
 	var t_b1 := Time.get_ticks_msec() - t0
+	# 分位数必须在**河流之前**算一遍：河源门槛要用它（旧代码写死 95 m，高度场一改就失效）
+	_compute_thresholds()
 	t0 = Time.get_ticks_msec()
 	_build_biomes()
 	var t_bio := Time.get_ticks_msec() - t0
@@ -155,6 +178,8 @@ func generate(timing: bool = false) -> Heightmap:
 	var t_riv := Time.get_ticks_msec() - t0
 	t0 = Time.get_ticks_msec()
 	hm.blur(1)             # 柔化河道与湖岸边缘
+	# 河道下切会改变高度分布，最终阈值以这一遍为准（着色 / 自检读的就是它）
+	_compute_thresholds()
 	var t_b2 := Time.get_ticks_msec() - t0
 	if timing:
 		print("[高度场] 噪声 %d / 模糊① %d / 生物群系 %d / 湖 %d / 河 %d / 模糊② %d ms"
@@ -166,9 +191,17 @@ func land_mask(u: float, v: float) -> float:
 	var dx := (u - cfg.continent_center.x) / cfg.continent_radius.x
 	var dz := (v - cfg.continent_center.y) / cfg.continent_radius.y
 	var d := sqrt(dx * dx + dz * dz)
-	# 低幅度噪声扰动，让海岸线不是光滑椭圆
-	var wob := n_detail.get_noise_2d(u * 700.0, v * 700.0) * 0.10
-	return clampf(1.0 - smoothstep(0.50, 1.00, d + wob), 0.0, 1.0)
+	# 海岸线噪声扰动幅度 0.10 → 0.045：分形噪声海岸会让轮廓看起来"在抖"，
+	# 真正给大陆**形状**的是下面的显式海湾 / 内海（参考项目的 3 个 sea_basins）。
+	var wob := n_detail.get_noise_2d(u * 700.0, v * 700.0) * 0.045
+	var m := clampf(1.0 - smoothstep(0.50, 1.00, d + wob), 0.0, 1.0)
+	# 显式圆形盆地：inner 半径内是水，outer 外无影响，之间 smoothstep 收边。
+	# 这一步把「椭圆 + 噪声」变成有海湾、有半岛、有内海的轮廓。
+	var s := cfg.map_size
+	for b in _basins:
+		var dd := Vector2(u * s, v * s).distance_to(b["center"])
+		m = minf(m, smoothstep(float(b["inner"]), float(b["outer"]), dd))
+	return clampf(m, 0.0, 1.0)
 
 func desert_mask(u: float, v: float, land: float, mountain: float) -> float:
 	# 东部（u 大）+ 中部纬度 → 沙漠；山脉区域削弱
@@ -193,14 +226,18 @@ func _build_heights() -> void:
 
 			var land := land_mask(u, v)
 
-			# --- 北部山脉遮罩：v 越小越北；东部稍作限制避免山脉贴到沙漠 ---
+			# --- 山体：**显式山脉带**取代"噪声堆山"（第七轮 ②）---
+			# 参考项目 docs/大地图设计.md §14.3 的原话：噪声天生到处都有高频起伏，
+			# 不管怎么配比都会在整张图撒满尖峰，不可能出现「大片平原 + 几条山脉」——
+			# 这不是参数问题，是方法问题。所以山的位置改由 cfg.mountain_ranges()
+			# 的线段带决定（宽 = 缓坡、高 = 山高，两个旋钮独立），
+			# 旧的大尺度包络 env 只保留 30% 作为山麓过渡，噪声只留 18% 做山体内部质感。
 			var north := smoothstep(0.46, 0.02, v)
 			var east_limit := smoothstep(0.05, 0.45, u)
-			var m_mask := north * east_limit
+			var env := north * east_limit
 			var ridge_v := n_ridge.get_noise_2d(wx, wz) * 0.5 + 0.5
-			var ridge_v2 := n_ridge.get_noise_2d(wx * 2.3 + 999.0, wz * 2.3 - 555.0) * 0.5 + 0.5
-			var ridge := pow(clampf(ridge_v * 0.72 + ridge_v2 * 0.38, 0.0, 1.0), cfg.ridge_sharpness)
-			var mountain := m_mask * ridge * land
+			var band := _range_factor(u, v) * (0.82 + 0.18 * ridge_v)
+			var mountain := clampf(env * 0.30 + band, 0.0, 1.2) * land
 
 			# --- 其他地貌分量 ---
 			var base := n_base.get_noise_2d(wx, wz) * 0.5 + 0.5        # 0..1
@@ -211,7 +248,7 @@ func _build_heights() -> void:
 
 			# --- 陆地剖面（米） ---
 			var land_h := 3.0
-			land_h += base * 17.0                                        # 大陆缓坡
+			land_h += base * cfg.base_amplitude                          # 大陆缓坡（"底噪只负责质感"）
 			land_h += hill * cfg.hill_amplitude * (1.0 - desert * 0.8)   # 丘陵
 			land_h += mountain * cfg.mountain_amplitude                  # 雪山
 			land_h += desert * (dune * cfg.desert_amplitude + 4.0)       # 沙丘
@@ -223,7 +260,7 @@ func _build_heights() -> void:
 
 			# 山脚过渡：山体边缘不要直接插进平原
 			if mountain > 0.02:
-				land_h += mountain * mountain * 22.0
+				land_h += mountain * mountain * 10.0
 
 			var h := lerpf(sea_h, land_h, land)
 			hm.set_h(x, z, h)
@@ -387,6 +424,124 @@ func _carve_lake(c: Vector2, radius: float) -> void:
 		water_level = bed + 2.0
 	lakes.append({"center": c, "radius": radius, "water_level": water_level})
 
+
+# ---------------------------------------------------------------- 第七轮 ②：地形设计
+## 显式山脉带抬升：点到线段距离 < width 时按 smoothstep(width, width*0.30, dist) 抬升。
+## 核心是平台、边缘平滑收尾；**宽度就是缓坡、高度就是山高，两者独立可调**——
+## 这是噪声做不到的（参考项目 docs/大地图设计.md §14.4）。
+func _range_factor(u: float, v: float) -> float:
+	var p := Vector2(u, v) * cfg.map_size
+	var f := 0.0
+	for r in _ranges:
+		var a: Vector2 = (r["from"] as Vector2) * cfg.map_size
+		var b: Vector2 = (r["to"] as Vector2) * cfg.map_size
+		var ab := b - a
+		var t := clampf((p - a).dot(ab) / maxf(1e-6, ab.length_squared()), 0.0, 1.0)
+		var d := p.distance_to(a + ab * t)
+		var w: float = r["width"]
+		f = maxf(f, smoothstep(w, w * 0.30, d) * float(r["height"]))
+	return clampf(f, 0.0, 1.25)
+
+## 分隔式盒式模糊：横一遍 + 纵一遍算「一遍」，叠 passes 遍 ≈ 高斯。
+## 边界用**截断**（分母按可用格数），不是 clamp 复制 —— 图外不存在的地面高度
+## 不该被复制回岸边（海沟会被"扶"起来）。参考项目 terrain_map.gd:207-238 同做法。
+func _smooth_heights(passes: int, radius: int) -> void:
+	if passes <= 0 or radius <= 0:
+		return
+	var n := hm.res
+	var src := hm.data
+	var tmp := PackedFloat32Array()
+	tmp.resize(n * n)
+	var win := 2 * radius + 1
+	for _p in passes:
+		# 横向：**滑动窗口**（进一格加一个、出一格减一个），每格 O(1) 而不是 O(2r+1)。
+		# 朴素写法在 1024 m 图上是 3 遍 × 2 方向 × 263k 格 × 5 抽头 ≈ 790 万次数组访问，
+		# 实测 1179 ms —— 而它只是"把高频起伏压掉"，不值得占住加载界面的 1.2 秒；
+		# 滑动窗口把同一件事降到 ≈ 3 遍 × 2 × 263k = 158 万次，语义逐格完全相同
+		# （边界仍是截断口径：分母只数窗口里真实存在的格）。
+		for z in n:
+			var row := z * n
+			# 初始窗口 = [0, radius]（左边界截断，**不是**把图外的格子复制成 0 号格）：
+			# 复制法会让 0 号格在整行的滑动和里始终多算了 radius 份、而且永远减不掉，
+			# 整行被抬高一截 —— 这是第七轮 ② 里真踩过的坑（定居点/植被会全军覆没）。
+			var hi := mini(radius, n - 1)
+			var acc := 0.0
+			for k in range(hi + 1):
+				acc += src[row + k]
+			tmp[row] = acc / float(hi + 1)
+			for x in range(1, n):
+				var add := x + radius
+				var rem := x - radius - 1
+				if add < n:
+					acc += src[row + add]
+				if rem >= 0:
+					acc -= src[row + rem]
+				tmp[row + x] = acc / float(mini(x + radius, n - 1) - maxi(x - radius, 0) + 1)
+		for x in n:
+			var hz := mini(radius, n - 1)
+			var acc2 := 0.0
+			for k in range(hz + 1):
+				acc2 += tmp[k * n + x]
+			hm.data[x] = acc2 / float(hz + 1)
+			for z in range(1, n):
+				var addz := z + radius
+				var remz := z - radius - 1
+				if addz < n:
+					acc2 += tmp[addz * n + x]
+				if remz >= 0:
+					acc2 -= tmp[remz * n + x]
+				hm.data[z * n + x] = acc2 / float(mini(z + radius, n - 1) - maxi(z - radius, 0) + 1)
+	assert(win > 0, "窗口半径必须为正")
+
+## 陆地高度分位 → 岩石线 / 雪线 / 中位。
+## 覆盖份额是**设计值**（岩石带 12% 陆地、雪 4% 陆地），不是"看起来差不多"：
+## 旧世界绝对阈值 88 m / 118 m 只覆盖 5.5% / 1.1% 陆地 —— 雪和裸岩几乎看不见。
+func _compute_thresholds() -> void:
+	var hs := PackedFloat32Array()
+	for h in hm.data:
+		if h > cfg.sea_level:
+			hs.append(h)
+	if hs.is_empty():
+		return
+	hs.sort()
+	var last := hs.size() - 1
+	h_land_p50 = hs[last / 2]
+	h_land_p90 = hs[clampi(int(0.90 * float(last)), 0, last)]
+	h_rock_line = hs[clampi(int(0.88 * float(last)), 0, last)]
+	h_snow_line = hs[clampi(int(0.96 * float(last)), 0, last)]
+
+## 断头河兜底：找最近的出口（图边中点 / 湖心）沿直线补足采样点。
+## 只在主路径（steepest descent）没能入水时触发，所以图上绝大多数河仍是自然河道。
+func _extend_to_water(pts: Array[Vector2]) -> Array[Vector2]:
+	if pts.is_empty():
+		return pts
+	var last: Vector2 = pts[pts.size() - 1]
+	if hm.height_at(last.x, last.y) <= cfg.sea_level + 0.8:
+		return pts
+	for l in lakes:
+		if last.distance_to(l["center"]) < float(l["radius"]) * 1.1:
+			return pts
+	var s := cfg.map_size
+	var outs: Array[Vector2] = [
+		Vector2(last.x, 1.0), Vector2(last.x, s - 1.0),
+		Vector2(1.0, last.y), Vector2(s - 1.0, last.y),
+	]
+	for l in lakes:
+		outs.append(l["center"])
+	var target := Vector2.INF
+	var best := 1e18
+	for o in outs:
+		var d := last.distance_to(o)
+		if d < best:
+			best = d
+			target = o
+	if target == Vector2.INF or best < 1.0:
+		return pts
+	var step := maxf(4.0, cfg.river_step)
+	var n := maxi(2, int(best / step))
+	for i in range(1, n + 1):
+		pts.append(last.lerp(target, float(i) / float(n)))
+	return pts
 # ------------------------------------------------------------------ 河流
 func _make_rivers() -> void:
 	var sources: Array[Vector2] = []
@@ -398,6 +553,9 @@ func _make_rivers() -> void:
 		var pts := _trace_river(src)
 		if pts.size() < 10:
 			continue
+		# 断头河兜底：河流必须走到水里（海 / 湖）或出图 —— 1024 m 旧世界 2 条河里
+		# 就有 1 条半途而废（第七轮 ② 实测），地图上看着就是一条断掉的蓝线。
+		pts = _extend_to_water(pts)
 		# 河道半宽按尺寸推导（4 倍图上 22 m 宽的河会退化成细线，道路就不需要桥了：ROADMAP §16.7）
 		var width := cfg.river_half_width() * rng.randf_range(0.85, 1.25)
 		var prof := _carve_river(pts, width)
@@ -420,12 +578,16 @@ func _make_rivers() -> void:
 func _find_river_source(existing: Array[Vector2]) -> Vector2:
 	var best := Vector2.INF
 	var best_h := -1e9
+	# 源头门槛按**实测陆地分位**定，不再写死 95 m：高度场一改（第七轮 ② 把山高
+	# 从 168 m 降到 62 m），绝对门槛会让所有候选点都不合格 → 河流直接消失。
+	# 取陆地 P90 的 80%，保证源头一定落在高处，换尺寸也不用重配。
+	var need := maxf(cfg.sea_level + 12.0, h_land_p90 * 0.80)
 	for attempt in 900:
-		var u := rng.randf_range(0.10, 0.86)
-		var v := rng.randf_range(0.03, 0.34)
+		var u := rng.randf_range(0.06, 0.88)
+		var v := rng.randf_range(0.03, 0.46)
 		var p := Vector2(u * cfg.map_size, v * cfg.map_size)
 		var h := hm.height_at(p.x, p.y)
-		if h < 95.0:
+		if h < need:
 			continue
 		var ok := true
 		for e in existing:
@@ -474,7 +636,9 @@ func _trace_river(src: Vector2) -> Array[Vector2]:
 			break
 		if best_h > cur_h + 0.2:
 			uphill += 1
-			if uphill > 10:
+			# 10 → 45：旧上限让河流在丘陵里很容易"爬不出去"就断掉。
+			# 这一步只是放宽主路径，真正保证入海的是 _extend_to_water() 兜底。
+			if uphill > 45:
 				break
 		else:
 			uphill = 0
@@ -514,6 +678,19 @@ func _carve_river(raw: Array[Vector2], width: float) -> Dictionary:
 	for i in n:
 		if sm[i] < cfg.sea_level - 6.0:
 			sm[i] = cfg.sea_level - 6.0
+	# 河口必须跟着降到海面以下（第七轮 ②）：旧世界两条河的末点水面是 3.5 m / 2.2 m，
+	# 而那里地面已在海平面以下 —— 也就是「河面悬在海上的一道台阶」，
+	# 地图上看着就是一条断掉的蓝线（自检口径：河流必须入海 / 入湖 / 出图）。
+	# 从最后一个「原本已在海里」的点起，让入海口一段连续降到海面以下。
+	var sea_i := -1
+	for i in n:
+		if hm.height_at(raw[i].x, raw[i].y) <= cfg.sea_level + 0.5:
+			sea_i = i
+			break
+	if sea_i >= 0:
+		sm[sea_i] = minf(sm[sea_i], cfg.sea_level - 1.8)
+		for i in range(sea_i + 1, n):
+			sm[i] = minf(sm[i], sm[i - 1] - 0.12)
 	var widths := PackedFloat32Array()
 	widths.resize(n)
 	var points := PackedVector3Array()

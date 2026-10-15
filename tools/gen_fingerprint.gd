@@ -228,6 +228,18 @@ func _counts_text(counts: Dictionary) -> String:
 
 # ---------------------------------------------------------------- 哈希 / 基线
 func _add(name: String, bytes: PackedByteArray, detail: String) -> void:
+	# 空数组不能喂给 HashingContext：会直接
+	# `ERROR: Condition "len == 0" is true. Returning: FAILED` 并让整支工具退出 1
+	# （第六轮实测：2048 m 世界一座桥都没有 → 桥梁那项就是空数组 → 指纹工具自己崩了，
+	# 而"这项为空"本来就是这条断言要抓的事实，不该反过来把工具带走）。
+	# 解：空数组哈希记为预定义常量，指纹照样覆盖它，且能在基线里看出"这项是空的"。
+	if bytes.is_empty():
+		var h0 := HashingContext.new()
+		h0.start(HashingContext.HASH_SHA256)
+		h0.update("warband-empty".to_utf8_buffer())
+		parts[name] = {"hash": (h0.finish() as PackedByteArray).hex_encode(),
+			"bytes": 0, "detail": detail + "（空）"}
+		return
 	var c := HashingContext.new()
 	c.start(HashingContext.HASH_SHA256)
 	c.update(bytes)

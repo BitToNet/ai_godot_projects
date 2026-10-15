@@ -84,8 +84,12 @@ func build(cfg: MapConfig, data: MapData) -> void:
 	terrain.set_shader_parameter("splat_map", data.splat_texture)
 	terrain.set_shader_parameter("map_size", cfg.map_size)
 	terrain.set_shader_parameter("sea_level", cfg.sea_level)
-	terrain.set_shader_parameter("snow_line", cfg.snow_line)
-	terrain.set_shader_parameter("mountain_line", cfg.mountain_line)
+	# 第七轮 ②：岩石线 / 雪线改成**高度场实测分位数**（岩石带 = 最高的 12% 陆地、
+	# 雪 = 最高的 4%），而不是绝对高度。旧值 88/118 m 在 1024 m 图上只覆盖
+	# 5.5% / 1.1% 的陆地 —— 山几乎不会变成岩石色、更不会积雪，
+	# 整张图看起来就是"一大片绿"。分位数口径换 1024/2048/4096 都成立。
+	terrain.set_shader_parameter("snow_line", cfg.snow_line_of(data.gen))
+	terrain.set_shader_parameter("mountain_line", cfg.rock_line_of(data.gen))
 	terrain.set_shader_parameter("night_amount", 0.0)
 	# 第七轮 ②：细节贴图 + 自发光地板 + 底色饱和度
 	terrain.set_shader_parameter("detail_map", seamless_detail_texture())
