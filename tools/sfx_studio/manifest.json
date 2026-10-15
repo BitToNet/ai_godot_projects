@@ -1,0 +1,480 @@
+{
+  "bgm": [
+    {
+      "db": 6.0,
+      "exists": true,
+      "fade": 2.4,
+      "id": "map",
+      "path": "audio/bgm/map_theme.ogg"
+    },
+    {
+      "db": -2.0,
+      "exists": true,
+      "fade": 0.6,
+      "id": "battle",
+      "path": "audio/bgm/battle_theme.ogg"
+    }
+  ],
+  "categories": [
+    {
+      "field": "combat_db",
+      "id": "combat",
+      "rest_db": 0.0
+    },
+    {
+      "field": "parry_db",
+      "id": "parry",
+      "rest_db": 1.5
+    },
+    {
+      "field": "move_db",
+      "id": "move",
+      "rest_db": -6.0
+    },
+    {
+      "field": "voice_db",
+      "id": "voice",
+      "rest_db": -1.5
+    },
+    {
+      "field": "ui_db",
+      "id": "ui",
+      "rest_db": -3.0
+    }
+  ],
+  "defaults": {
+    "bgm_db": -2.0,
+    "bgm_fade_battle": 0.6,
+    "bgm_fade_map": 1.8,
+    "boss_step_interval": 0.46,
+    "fanfare_duck_db": -5.0,
+    "fanfare_duck_time": 1.6,
+    "hoof_audible_range": 120.0,
+    "hoof_interval": 0.22,
+    "master_db": 0.0,
+    "pitch_jitter": 0.05,
+    "polyphony": 24,
+    "step_interval": 0.3,
+    "warn_cues": true
+  },
+  "engine": "4.7-stable (official)",
+  "fanfare": [
+    "battle_start",
+    "result_win",
+    "result_lose"
+  ],
+  "generated_at": "2026-10-15 12:11:06",
+  "generator": "tools/sfx_studio_export.gd",
+  "limits": {
+    "category": [
+      -40.0,
+      24.0
+    ],
+    "master": [
+      -60.0,
+      24.0
+    ],
+    "sfx": [
+      -40.0,
+      12.0
+    ]
+  },
+  "profile_schema": "warband.sfx_profile",
+  "project": "Warband Strategic Map",
+  "record_limit": 10,
+  "schema": "warband.sfx_studio.manifest",
+  "sfx": [
+    {
+      "cat": "combat",
+      "db": -1.0,
+      "gap": 0.02,
+      "id": "hit_light",
+      "order": 0,
+      "pitch": 1.0,
+      "preview": "audio_preview/hit_light.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/hit_light_01.wav",
+        "audio/sfx/foley/hit_light_02.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "combat",
+      "db": -0.5,
+      "gap": 0.02,
+      "id": "hit_heavy",
+      "order": 1,
+      "pitch": 1.0,
+      "preview": "audio_preview/hit_heavy.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/hit_heavy_01.wav",
+        "audio/sfx/foley/hit_heavy_02.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "combat",
+      "db": 0.5,
+      "gap": 0.02,
+      "id": "hit_crit",
+      "order": 2,
+      "pitch": 1.0,
+      "preview": "audio_preview/hit_crit.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/hit_crit_01.wav",
+        "audio/sfx/foley/hit_crit_02.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "combat",
+      "db": -3.0,
+      "gap": 0.03,
+      "id": "proj_impact",
+      "order": 3,
+      "pitch": 1.0,
+      "preview": "audio_preview/proj_impact.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "parry",
+      "db": 0.0,
+      "gap": 0.05,
+      "id": "parry",
+      "order": 4,
+      "pitch": 1.0,
+      "preview": "audio_preview/parry.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/parry_01.wav",
+        "audio/sfx/foley/parry_02.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "parry",
+      "db": 0.0,
+      "gap": 0.05,
+      "id": "parry_reflect",
+      "order": 5,
+      "pitch": 1.15,
+      "preview": "audio_preview/parry_reflect.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/parry_reflect_01.wav",
+        "audio/sfx/foley/parry_reflect_02.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "move",
+      "db": 0.0,
+      "gap": 0.05,
+      "id": "dodge",
+      "order": 6,
+      "pitch": 1.0,
+      "preview": "audio_preview/dodge.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/dodge_01.wav",
+        "audio/sfx/foley/dodge_02.wav",
+        "audio/sfx/foley/dodge_03.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "combat",
+      "db": 1.0,
+      "gap": 0.15,
+      "id": "perfect_dodge",
+      "order": 7,
+      "pitch": 1.0,
+      "preview": "audio_preview/perfect_dodge.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "move",
+      "db": -1.0,
+      "gap": 0.09,
+      "id": "step_a",
+      "order": 8,
+      "pitch": 1.0,
+      "preview": "audio_preview/step_a.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/step_a_01.wav",
+        "audio/sfx/foley/step_a_02.wav",
+        "audio/sfx/foley/step_a_03.wav",
+        "audio/sfx/foley/step_a_04.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "move",
+      "db": -1.0,
+      "gap": 0.09,
+      "id": "step_b",
+      "order": 9,
+      "pitch": 1.0,
+      "preview": "audio_preview/step_b.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/step_b_01.wav",
+        "audio/sfx/foley/step_b_02.wav",
+        "audio/sfx/foley/step_b_03.wav",
+        "audio/sfx/foley/step_b_04.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "move",
+      "db": -2.0,
+      "gap": 0.14,
+      "id": "step_heavy",
+      "order": 10,
+      "pitch": 1.0,
+      "preview": "audio_preview/step_heavy.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/step_heavy_01.wav",
+        "audio/sfx/foley/step_heavy_02.wav",
+        "audio/sfx/foley/step_heavy_03.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "move",
+      "db": -2.0,
+      "gap": 0.08,
+      "id": "jump",
+      "order": 11,
+      "pitch": 1.0,
+      "preview": "audio_preview/jump.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/jump_01.wav",
+        "audio/sfx/foley/jump_02.wav",
+        "audio/sfx/foley/jump_03.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "move",
+      "db": -2.0,
+      "gap": 0.08,
+      "id": "land",
+      "order": 12,
+      "pitch": 1.0,
+      "preview": "audio_preview/land.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/land_01.wav",
+        "audio/sfx/foley/land_02.wav",
+        "audio/sfx/foley/land_03.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "move",
+      "db": -1.5,
+      "gap": 0.055,
+      "id": "hoof_a",
+      "order": 13,
+      "pitch": 1.0,
+      "preview": "audio_preview/hoof_a.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/hoof_a_01.wav",
+        "audio/sfx/foley/hoof_a_02.wav",
+        "audio/sfx/foley/hoof_a_03.wav",
+        "audio/sfx/foley/hoof_a_04.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "move",
+      "db": -1.5,
+      "gap": 0.055,
+      "id": "hoof_b",
+      "order": 14,
+      "pitch": 1.0,
+      "preview": "audio_preview/hoof_b.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/hoof_b_01.wav",
+        "audio/sfx/foley/hoof_b_02.wav",
+        "audio/sfx/foley/hoof_b_03.wav",
+        "audio/sfx/foley/hoof_b_04.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "voice",
+      "db": -1.0,
+      "gap": 0.05,
+      "id": "hurt",
+      "order": 15,
+      "pitch": 1.0,
+      "preview": "audio_preview/hurt.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "voice",
+      "db": -3.0,
+      "gap": 0.4,
+      "id": "roar",
+      "order": 16,
+      "pitch": 1.0,
+      "preview": "audio_preview/roar.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "combat",
+      "db": 1.0,
+      "gap": 0.25,
+      "id": "poise_break",
+      "order": 17,
+      "pitch": 1.0,
+      "preview": "audio_preview/poise_break.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "combat",
+      "db": -1.5,
+      "gap": 0.04,
+      "id": "sword_wave",
+      "order": 18,
+      "pitch": 1.0,
+      "preview": "audio_preview/sword_wave.wav",
+      "preview_exists": true,
+      "variants": [
+        "audio/sfx/foley/sword_wave_01.wav",
+        "audio/sfx/foley/sword_wave_02.wav"
+      ],
+      "variants_missing": []
+    },
+    {
+      "cat": "combat",
+      "db": 0.0,
+      "gap": 0.25,
+      "id": "charge_full",
+      "order": 19,
+      "pitch": 1.0,
+      "preview": "audio_preview/charge_full.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "ui",
+      "db": -5.0,
+      "gap": 0.12,
+      "id": "warn_parry",
+      "order": 20,
+      "pitch": 1.0,
+      "preview": "audio_preview/warn_parry.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "ui",
+      "db": -5.0,
+      "gap": 0.12,
+      "id": "warn_danger",
+      "order": 21,
+      "pitch": 1.0,
+      "preview": "audio_preview/warn_danger.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "ui",
+      "db": 0.0,
+      "gap": 0.2,
+      "id": "encounter",
+      "order": 22,
+      "pitch": 1.0,
+      "preview": "audio_preview/encounter.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "ui",
+      "db": -2.0,
+      "gap": 0.4,
+      "id": "order",
+      "order": 23,
+      "pitch": 1.0,
+      "preview": "audio_preview/order.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "ui",
+      "db": 2.0,
+      "gap": 0.5,
+      "id": "battle_start",
+      "order": 24,
+      "pitch": 1.0,
+      "preview": "audio_preview/battle_start.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "ui",
+      "db": -1.0,
+      "gap": 0.5,
+      "id": "result_win",
+      "order": 25,
+      "pitch": 1.0,
+      "preview": "audio_preview/result_win.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "ui",
+      "db": -3.0,
+      "gap": 0.5,
+      "id": "result_lose",
+      "order": 26,
+      "pitch": 1.0,
+      "preview": "audio_preview/result_lose.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    },
+    {
+      "cat": "ui",
+      "db": -1.0,
+      "gap": 0.3,
+      "id": "ui_back",
+      "order": 27,
+      "pitch": 1.0,
+      "preview": "audio_preview/ui_back.wav",
+      "preview_exists": true,
+      "variants": [],
+      "variants_missing": []
+    }
+  ],
+  "sfx_rate": 22050,
+  "version": 1
+}

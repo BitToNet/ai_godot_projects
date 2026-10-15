@@ -61,18 +61,19 @@
 
 | 项 | 实测值 | 口径 / 备注 |
 |---|---|---|
-| 一键门禁 | **`exit 0`，29 项全 PASS，61.1 s** | 1 条 `perf_probe` WARN 在容差内，不判失败 |
+| 一键门禁 | **`exit 0`，30 项全 PASS，58.6 s** | 1 条 `perf_probe` WARN 在容差内，不判失败 |
 | 生成物指纹 | `958433c2f04c0e3996d90a0552716b85f2a6b1134268c7a71b22bc00691ed869` | 与 `tools/gen_fingerprint.json` **存档一致**；且跨进程双跑一致 —— 只比"A=B"是**假**安全网 |
 | 门禁口径的生成内容 | 定居点 **18** / 桥梁 **7** / 植被实例 **5150** | `map_seed = 20250929`；**这是 `WARBAND_MAP_SIZE=1024` 的门禁口径** |
 | **出货口径（默认 4096 m）** | 定居点 **18** / 桥梁 **6** / 植被实例 **84 125** | 本次实跑 `big_map_probe` 所得，见 §D.3 与 §二十五.2 |
 | 世界尺寸 | 出货 **4096 m**；门禁为速度跑 **1024 m** | 两者**不是同一个世界** —— 见 §D.3 的重要发现 |
 | 部队数 | **100**（3 领主 / 28 商队 / 69 强盗） | 由 `cfg.party_count()` 按尺寸推导 |
-| 代码规模 | **110 个 `.gd` / 24 804 行** + **6 个 shader / 612 行** | `scripts/` 84 / 16 781 + `tools/` 26 / 8 023 |
-| 最大脚本 | `BattleScene.gd` 760 / `SfxSynth.gd` 716 / `SettlementBuilder.gd` 664 / `HeightmapGenerator.gd` 585 | 第五名 `tools/encounter_check.gd` 575 |
+| 代码规模 | **113 个 `.gd` / 25 964 行** + **6 个 shader / 612 行** | `scripts/` 85 / 17 388 + `tools/` 28 / 8 576 |
+| 最大脚本 | `BattleScene.gd` 760 / `SfxSynth.gd` 716 / `SettlementBuilder.gd` 664 / `HeightmapGenerator.gd` 585 / `SfxProfile.gd` 579 | 第六名 `tools/encounter_check.gd` 575 |
 | `project.godot` | 227 行，`[input]` **31 个动作** | 已不再"键位全硬编码"（旧文档写 28 / 29，见 §D.4） |
 | i18n 棘轮 | `scripts/ui` 硬编码中文 **0** 条；`scripts/core` 等仍有 **631** 条 | 见 `tools/i18n_baseline.json` |
 | 基线文件 | `gen_fingerprint.json` / `perf_baseline.json` / `scale_baseline.json` / `sfx_pcm.json` / `i18n_baseline.json` | 都**只能有意更新** |
 | 音效 | 28 音色 / 24 路池；PCM 缓存 679 KB，热启动 `Sfx.setup()` ≈9 ms | 冷启动合成 ≈1.1–1.7 s |
+| 音效调音台 | `tools/sfx_studio`（浏览器）+ `user://sfx_profile.json`；第 9f 步 **85 条断言** | 关闭 = `Sfx._peek()` 真丢弃（连计数都不加）；`WARBAND_SFX_PROFILE=0` 关闭整层 |
 | 4096 m 生成耗时 | 管线内 **24.3 s** / 墙钟 **30.7 s** | 旧文档记的"83 秒"已过期（§D.4） |
 | 版本 / 仓库 | `0.6.0`；`main` 与上游同步 | — |
 
@@ -80,7 +81,7 @@
 **不要用 `Measure-Object -Line`** —— 它把空行算 0 行，会少算约 6–10%。
 （`docs/PM_BRIEF.md` 的"23 393 行"就是这个口径差的产物；真实值见本表，详见 §二十五.2。）
 
-**本表不含**其它会话正在进行、**尚未入库**的文件（2026-10-15 在途：`docs/ARCHITECTURE.md`、`scripts/audio/SfxProfile.gd`）。
+**本表不含**其它会话正在进行、**尚未入库**的文件（2026-10-15：无在途 —— `docs/ARCHITECTURE.md` 与 `scripts/audio/SfxProfile.gd` 均已入库）。
 
 ---
 
@@ -107,7 +108,7 @@
 
 ### D.1 审计方法（可复现）
 
-1. **跑门禁**：`powershell -File tools\run_checks.ps1` → 29 项全绿（§B）。
+1. **跑门禁**：`powershell -File tools\run_checks.ps1` → 30 项全绿（§B）。
 2. **对每个"已完成"声称，核对产物是否真在盘**：文件存在性 + 门禁里有无对应步骤 + 关键实现是否真接了。
 3. **对每个"未完成"声称，反向核对是否真没做**（防虚报进度）。
 4. 结论只写三类：`✅ 已达成` / `⏸ 如实待办` / `⚠ 有出入`。
@@ -158,7 +159,7 @@
 
 **校验 2：README 失效承诺核对** —— README 的"零外部资源 / 全程序化为真"在 ③-2 之后已不成立，本轮修正（§二十五.2）。
 
-**校验 3：门禁项数与动作数核对** —— 门禁 29 项（旧文档写 28）；`[input]` **31** 个动作（旧文档写 28 / 29）。
+**校验 3：门禁项数与动作数核对** —— 门禁 **30** 项（旧文档写 28 / 29）；`[input]` **31** 个动作（旧文档写 28 / 29）。
 
 > ### ⚠ 发现 A（**重要**）：出货的 4096 m 世界**没有确定性守护**
 >

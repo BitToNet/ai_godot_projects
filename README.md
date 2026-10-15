@@ -13,12 +13,12 @@
 除此之外，**没有任何外部模型 / 贴图 / 字体 / 音频**。城镇与城堡目前**仍是程序化几何**（第 ③-3 批才换真模型）。
 
 > 📌 **现状与完整计划见 [`docs/PLAN.md`](docs/PLAN.md)**（§B 是唯一的「现状」来源）：
-> 一键门禁 **29 项全绿**（61.1 s）· 生成指纹 `958433c2…` 与基线**逐字节一致** ·
-> 代码 **110 个 `.gd` / 24 804 行** + **6 个 shader / 612 行** · 默认世界 **4096 m**、**100 支部队** ·
+> 一键门禁 **30 项全绿**（58.6 s）· 生成指纹 `958433c2…` 与基线**逐字节一致** ·
+> 代码 **113 个 `.gd` / 25 964 行** + **6 个 shader / 612 行** · 默认世界 **4096 m**、**100 支部队** ·
 > 版本 `0.6.0`。
 
 - 引擎：**Godot 4.7.stable**（Forward+）；开发与验证环境为 **Windows x64**
-- 语言：GDScript（**110 个脚本 / 24 804 行**）+ **6 个手写 Shader（612 行）**
+- 语言：GDScript（**113 个脚本 / 25 964 行**）+ **6 个手写 Shader（612 行）**
 - 地图：默认 **4096 × 4096 m**（`MapConfig.map_size`，海平面 = 0）；一键门禁为了速度仍跑 **1024 m** 小图（`WARBAND_MAP_SIZE=1024`）
 - 随机性：**单一 `map_seed` 控制全局**，换一个种子就能得到一张完全不同的、但同样合理的地图
 
@@ -80,6 +80,8 @@ godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://too
 godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://tools/bgm_check.gd
 # 音色 PCM 缓存自检：冷启动落盘 / 热启动逐字节一致 / 坏缓存自愈 / setup 命中
 godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://tools/audio_cache_check.gd
+# 调音台覆盖自检：网页（tools/sfx_studio）写出的 user://sfx_profile.json 游戏侧到底认不认
+godot --headless --path /path/to/godot_opus5.5 --script res://tools/sfx_profile_check.gd
 ```
 音效两个脚本退出码 `0` = 关键音效全部触发过，`1` = 有缺失并打印缺失清单；
 `sfx_foley_check.gd` 退出码 `0` = 40 个素材齐全且规格 / 响度都与合成音色对齐，`1` = 有缺失或偏离过大；
@@ -87,6 +89,30 @@ godot --headless --path /path/to/godot_opus5.5 --fixed-fps 60 --script res://too
 `audio_cache_check.gd` 退出码 `0` = 缓存可命中且 PCM 与冷启动逐字节一致，`1` = 键 / 校验 / 自愈有问题。
 音色 PCM 缓存放在 `user://sfx_cache/`（约 679 KB），**删掉即重新合成**：首次启动多花约 1.1~1.3 秒，
 之后启动只花几毫秒（`Sfx.setup()` 实测 1.35 秒 → 9 毫秒）。
+`sfx_profile_check.gd` 退出码 `0` = 85 条断言（惰性 / 关闭=不播 / 偏移精确 / 十条记录 / 回滚 / 坏文件降级 / 环境变量）。
+
+#### 4b. 音效调音台（浏览器界面，可选）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\sfx_studio\start.ps1
+```
+
+集成在 `tools/sfx_studio/`：导出试听 wav → 生成音色清单 → 起本地服务（默认
+<http://127.0.0.1:8787/tools/sfx_studio/>）并自动开浏览器。页面上能**逐条试听 / 拉音量 /
+开关**（28 条音色 + 13 个动作类的 40 个录音 take），能调 5 个分类音量、总音量与两首 BGM，
+能批量全开 / 全关 / 恢复工程默认，能搜索与筛选"只看被关闭的 / 只看调过音量的"。
+
+- **保存 = 写 `user://sfx_profile.json`**（页面顶部横幅会显示这次实际写入的**绝对路径**），
+  游戏**启动时**读一次 —— 保存后回游戏需要重启一次才生效；
+- 最多 **10 条保存记录**（含中文差异摘要），超出淘汰最旧；点`回滚`**立刻写盘生效**，回滚不占名额；
+- **关闭 = 游戏真的不播这条音效**：`Sfx._peek()` 直接丢弃，连播放计数都不加（门禁第 9f 步钉住了这条）；
+- 不想用覆盖：`AudioConfig.use_sfx_profile = false`，或环境变量 `WARBAND_SFX_PROFILE=0`
+  （一键门禁就是用它跑"工程默认"那条路径的）；
+- 为什么需要本地服务：浏览器不能读 `file://` 下的音频/清单，也碰不到 `user://`。
+  没有服务时页面退化成 localStorage + 导入导出 JSON，并**明确提示"这样保存游戏读不到"**。
+
+完整说明（含"加一条新音效要改哪里"、排错表、这一层**不做**什么）见
+[`tools/sfx_studio/README.md`](tools/sfx_studio/README.md)。
 
 ### 5. 规模热点探针（可选，命令行）
 ```bash
@@ -277,7 +303,8 @@ godot_opus5.5/
         ├── SfxCache.gd               # ★ 音色 PCM 缓存：合成结果写进 user://，冷启动 1.3 秒 → 9 毫秒
         ├── Sfx.gd                    # 音效播放管理：播放器池 + 最短间隔节流 + 2D/3D 定位 + 静音开关
         ├── SfxFoley.gd               # ★ 录音素材层：移动 / 打击类换真实录音，每动作多 take 随机播放
-        └── Bgm.gd                    # 背景音乐：两首曲目交叉淡入淡出 + 循环 + 懒加载 + 随 M 键静音
+        ├── Bgm.gd                    # 背景音乐：两首曲目交叉淡入淡出 + 循环 + 懒加载 + 随 M 键静音
+        └── SfxProfile.gd             # ★ 调音台覆盖层：读 user://sfx_profile.json（逐条开关 / 偏移 + 十条保存记录）
 ├── audio/
 │   ├── bgm/                          # ★ 背景音乐（作者提供的两首母带）
 │   │   ├── map_theme.ogg             # 大地图主题「旧时日」（120.6 秒 / 44.1 kHz 立体声）
@@ -291,7 +318,7 @@ godot_opus5.5/
 │       ├── sword_wave_01..02                                      # 挥砍（需求方"攻击"录音）
 │       └── CREDITS.md                # ★ 逐文件来源、切片表与授权（CC0 + 需求方提供）
 ├── tools/                            # 命令行自检工具（不参与游戏运行）
-│   ├── run_checks.ps1                # ★ 一键跑完全部门禁（17 步 / 20~21 项断言，约 42~44 s，唯一需要的命令）
+│   ├── run_checks.ps1                # ★ 一键跑完全部门禁（30 项 / 约 59 s，唯一需要的命令）
 │   ├── gen_fingerprint.gd            # 生成物指纹（确定性自检，与 gen_fingerprint.json 比对）
 │   ├── perf_probe.gd                 # 性能基准（生成耗时 / 每帧开销，与 perf_baseline.json 比对）
 │   ├── scale_probe.gd                # 规模热点探针（植被筛选 / 地形建块 / A*，含结构量指纹）
@@ -305,7 +332,10 @@ godot_opus5.5/
 │   ├── sfx_foley_check.gd            # 录音素材体检：清单 / 规格 / 与合成音色的响度对照
 │   ├── sfx_foley_build.ps1           # 素材推导配方（一次性脚本，写明源素材与 ffmpeg 链）
 │   ├── bgm_check.gd                  # 背景音乐联调：曲目加载 / 循环 / 战斗切换 / 静音
-│   └── audio_cache_check.gd          # 音色 PCM 缓存：冷启动落盘 / 热启动逐字节一致 / 坏缓存自愈
+│   ├── audio_cache_check.gd          # 音色 PCM 缓存：冷启动落盘 / 热启动逐字节一致 / 坏缓存自愈
+│   ├── sfx_profile_check.gd          # ★ 调音台覆盖自检：85 条断言（关闭=不播 / 偏移 / 十条记录 / 回滚 / 降级）
+│   ├── sfx_studio_export.gd          # 把音色表导成 tools/sfx_studio/manifest.json（调音台的前端清单）
+│   └── sfx_studio/                   # ★ 浏览器音效调音台（静态页 + Python 本地服务 + start.ps1 一键起）
 ```
 
 ---

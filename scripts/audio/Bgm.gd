@@ -53,6 +53,11 @@ static func play(id: String, fade: float = 1.2) -> void:
 		return
 	if id == _want or not TRACKS.has(id):
 		return
+	# 调音台（tools/sfx_studio）把这支曲子关掉了：不起播。走 SfxProfile 而不是 cfg，
+	# 因为"关掉"是稀疏覆盖里的一个布尔，不是音量档（音量档 bgm_map_db / bgm_battle_db
+	# 已经由 SfxProfile 写回 cfg 了，见 SfxProfile._write_back）。
+	if not SfxProfile.bgm_enabled(id):
+		return
 	if not _ensure(id):
 		return
 	_want = id

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音效调音台 · Warband Strategic Map</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <h1>音效调音台</h1>
+    <div class="sub"><span id="projectName">…</span> <span class="dot">·</span> <span id="engineInfo"></span></div>
+  </div>
+  <div class="master">
+    <label for="masterRange">总音量</label>
+    <input id="masterRange" type="range" step="0.5">
+    <output id="masterOut" class="num">0.0 dB</output>
+    <button id="masterReset" class="mini" title="回到工程默认">↺</button>
+  </div>
+  <div class="conn">
+    <span id="connBadge" class="badge">连接中…</span>
+    <span id="dirtyBadge" class="badge warn" hidden>有未保存的改动</span>
+  </div>
+</header>
+
+<section id="banner" class="banner" hidden></section>
+
+<main>
+  <aside class="side">
+    <div class="block">
+      <h2>分类</h2>
+      <div id="catFilter" class="chips"></div>
+    </div>
+
+    <div class="block">
+      <h2>搜索</h2>
+      <input id="search" type="search" placeholder="按 id / 中文名筛选…" autocomplete="off">
+      <label class="chk"><input id="onlyOff" type="checkbox"> 只看被关闭的</label>
+      <label class="chk"><input id="onlyTuned" type="checkbox"> 只看调过音量的</label>
+    </div>
+
+    <div class="block">
+      <h2>分类音量</h2>
+      <div id="catVolumes" class="catvol"></div>
+      <p class="note">分类音量叠在每条音色的基准音量之上（游戏里见 <code>AudioConfig.category_db()</code>）。</p>
+    </div>
+
+    <div class="block">
+      <h2>批量</h2>
+      <div class="btnrow">
+        <button id="allOn" class="mini">全部打开</button>
+        <button id="allOff" class="mini">全部关闭</button>
+        <button id="resetAll" class="mini wide">恢复工程默认（含音量）</button>
+      </div>
+    </div>
+
+    <div class="block">
+      <h2>背景音乐</h2>
+      <div id="bgmList" class="bgmlist"></div>
+      <p class="note">音乐走 Music 总线，与音效共用「总音量」。</p>
+    </div>
+  </aside>
+
+  <section class="listwrap">
+    <div class="listhead">
+      <span id="listCount" class="muted">—</span>
+      <span class="spacer"></span>
+      <button id="stopAll" class="mini">■ 停止试听</button>
+    </div>
+    <div id="sfxList" class="list"></div>
+  </section>
+</main>
+
+<section class="savebar">
+  <button id="saveBtn" class="primary">保存并写入游戏</button>
+  <input id="saveName" type="text" placeholder="给这条记录起个名字（可留空）" maxlength="24">
+  <span id="saveHint" class="hint"></span>
+  <span class="spacer"></span>
+  <button id="exportBtn" class="mini">导出 JSON</button>
+  <button id="importBtn" class="mini">导入 JSON</button>
+  <input id="importFile" type="file" accept=".json,application/json" hidden>
+</section>
+
+<section class="records">
+  <h2>保存记录 <span id="recordCount" class="muted"></span>
+    <span class="spacer"></span>
+    <span class="muted small">最多 10 条，超出自动淘汰最旧的一条；点「回滚」把当时的全部设置搬回来</span>
+  </h2>
+  <div id="recordList" class="reclist"></div>
+</section>
+
+<footer class="foot">
+  <span>音量三层：总音量（Master 总线）+ 分类音量 + 音色基准音量（+ 本页的单条偏移）。</span>
+  <span class="dot">·</span>
+  <span>「关闭」= 游戏里真的不播（<code>Sfx.play()</code> 直接丢弃），不是把音量拧到最小。</span>
+</footer>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

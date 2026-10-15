@@ -5,9 +5,9 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（29 项，约 60~80 秒）；性能若超软容差会**额外**追加一行「性能基准 注意…」，
+#  依次执行下列步骤（30 项，约 60~80 秒）；性能若超软容差会**额外**追加一行「性能基准 注意…」，
 #  首次运行（或换了机器 / 净克隆，.godot/ 还没建）还会**按需**先跑一次资源导入，
-#  所以汇总里的项数会在 28~30 之间浮动 —— 别把某一跑的行数当成脚本的固有常量。
+#  所以汇总里的项数会在 29~31 之间浮动 —— 别把某一跑的行数当成脚本的固有常量。
 #  任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
@@ -82,6 +82,10 @@
 #        **且响度与它替换掉的那条合成音色对齐**（峰值 ±4 dB / 窗口 RMS −9~+4 dB）。
 #        最后一条是关键：素材换成录音之后，混音平衡只能靠它守 —— 只做统一归一化
 #        会让录音比合成音色低 8~13 dB，听起来就像「音效丢了」（见 ROADMAP §13.3）
+#    9f) 调音台覆盖运行时自检（tools/sfx_profile_check.gd）—— 网页调音台（tools/sfx_studio）
+#        写出的 user://sfx_profile.json 在游戏里到底认不认：没有文件时惰性、关闭 = 真的不播
+#        （连播放计数都不加）、偏移精确叠加、越界钳制、坏 JSON 静默降级、十条记录上限与
+#        回滚精确还原、WARBAND_SFX_PROFILE=0 关闭整层。本步跑完不留真实配置（只用临时文件）
 #    10) 主场景跑 900 帧 —— 无 ERROR，且生成统计与 tools/gen_fingerprint.json 基线一致
 #
 #  为什么是这些：本工程「一切由种子生成 + 运行时合成音效 + 纯代码 UI」，
@@ -102,6 +106,12 @@ $GODOT = if ($env:GODOT_BIN) { $env:GODOT_BIN } else { 'G:\godot_project\_godote
 # 而 4096 m 光生成一次就要 30 秒以上（25 项里有多项各生成一次）。想用门禁跑大图就显式给
 # WARBAND_MAP_SIZE=4096；4096 m 的实测另由 7d（WARBAND_BIG_MAP=1）单独触发。
 if (-not $env:WARBAND_MAP_SIZE) { $env:WARBAND_MAP_SIZE = '1024' }
+
+# 调音台覆盖（tools/sfx_studio 写的那份 user://sfx_profile.json）在门禁里必须**不生效**：
+# 门禁验的是「工程默认」那条路径，不该被本机上一次试听的结果左右（否则同一份代码在两台
+# 机器上结果不同，最要命的是 9b/9c/9e 的响度与 PCM 断言会莫名其妙变红）。9f 自己会临时
+# 改成 1 去验"生效"那条路径，跑完再改回来。
+$env:WARBAND_SFX_PROFILE = '0'
 $PROJ = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $BASELINE_JSON = Join-Path $PROJ 'tools\gen_fingerprint.json'
 $fail = New-Object System.Collections.Generic.List[string]
@@ -447,6 +457,17 @@ $rFoley = Invoke-GodotStep -Name 'sfx_foley_check' -Extra @('--script', 'res://t
 $foleyPass = @($rFoley.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rFoley.Ok -and -not $foleyPass) {
 	$fail.Add('录音素材  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 9f) 调音台覆盖运行时自检（tools/sfx_profile_check.gd）----
+# 网页调音台（tools/sfx_studio）写出来的那份 JSON，游戏到底认不认？这一步验的是运行时契约：
+# 没有文件时完全惰性、**关闭 = Sfx.play() 真的一声都不播**（连播放计数都不加）、单条/分类/
+# 总音量偏移精确叠加、越界钳制、JSON 坏掉静默降级、十条记录上限与回滚精确还原、环境变量开关。
+# 只用 user://sfx_profile_check_tmp.json，绝不碰真实配置。
+$rProfile = Invoke-GodotStep -Name 'sfx_profile_check' -Extra @('--script', 'res://tools/sfx_profile_check.gd')
+$profilePass = @($rProfile.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rProfile.Ok -and -not $profilePass) {
+	$fail.Add('调音台覆盖  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 10) 主场景 900 帧 + 生成统计比对基线 ----

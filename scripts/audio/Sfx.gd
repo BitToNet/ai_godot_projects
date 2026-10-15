@@ -69,6 +69,10 @@ static func setup(host: Node, c: AudioConfig = null) -> void:
 	if c != null:
 		_cfg = c
 	_rng.seed = 0x5F3A17
+	# 调音台覆盖（tools/sfx_studio）：分类 / 总音量 / BGM 偏移在这里写回 cfg，逐条的开关与
+	# 单条偏移留在 SfxProfile。必须在 AudioBus.apply 之前 —— 落到总线上的应当是覆盖之后的值；
+	# 也必须在下面 `if not cfg().enabled` 之前 —— 关掉音效合成不等于关掉覆盖（BGM 还要听它的）。
+	SfxProfile.load_into(cfg())
 	AudioBus.apply(cfg())        # 总音量 / 音乐音量先落到总线上（幂等）
 	if not cfg().enabled:
 		_ready = true
@@ -94,6 +98,7 @@ static func setup(host: Node, c: AudioConfig = null) -> void:
 			var cm := SfxSynth.meta(sid)
 			_bank[sid] = {
 				"stream": cached[sid],
+				"id": sid,
 				"cat": String(cm[0]),
 				"db": float(cm[1]),
 				"gap": float(cm[2]),
@@ -111,6 +116,7 @@ static func setup(host: Node, c: AudioConfig = null) -> void:
 		var m := SfxSynth.meta(String(id))
 		_bank[String(id)] = {
 			"stream": SfxSynth.build(String(id), _rng),
+			"id": String(id),
 			"cat": String(m[0]),
 			"db": float(m[1]),
 			"gap": float(m[2]),
@@ -281,6 +287,10 @@ static func _peek(id: String) -> Dictionary:
 		return {}
 	if not _bank.has(id):
 		return {}
+	# 调音台（tools/sfx_studio）把这条音效关掉了：直接丢弃。刻意放在"同音最短间隔"之前 ——
+	# 关掉的音效连"上次播放时刻"都不该记，否则重新打开时头几声会被一段根本没响过的历史节流掉。
+	if not SfxProfile.is_enabled(id):
+		return {}
 	var e: Dictionary = _bank[id]
 	var gap := float(e["gap"])
 	if gap > 0.0 and Time.get_ticks_msec() - int(_last_ms.get(id, -999999)) < int(gap * 1000.0):
@@ -322,7 +332,10 @@ static func _duck_for_fanfare(id: String) -> void:
 	AudioBus.duck(cfg().fanfare_duck_db, cfg().fanfare_duck_time)
 
 static func _final_db(e: Dictionary, extra: float) -> float:
-	return cfg().category_db(String(e["cat"])) + float(e["db"]) + extra
+	# 第四层：调音台的单条偏移（SfxProfile）。e["id"] 是建库时写进条目的（见 setup）。
+	# 第 1~3 层分别是 分类 dB / 音色基准 dB / 调用方 extra，master_db 在 Master 总线上。
+	return cfg().category_db(String(e["cat"])) + float(e["db"]) \
+			+ SfxProfile.sfx_db(String(e.get("id", ""))) + extra
 
 static func _pitch_of(e: Dictionary, pitch: float) -> float:
 	var j := cfg().pitch_jitter

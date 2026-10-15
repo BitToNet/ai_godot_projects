@@ -65,6 +65,16 @@ extends Resource
 @export var hoof_audible_range: float = 120.0
 
 
+@export_group("音频 · 调音台覆盖（tools/sfx_studio）")
+## 是否读取 `user://sfx_profile.json` —— 网页调音台（tools/sfx_studio）保存的逐条覆盖。
+## 关掉它就完全回到"工程默认音量"，是排查"为什么这条音效不响"的第一刀。
+## 环境变量 `WARBAND_SFX_PROFILE=0` 也能关（tools/run_checks.ps1 走的就是那条路：
+## 门禁必须验"工程默认"这条路径，不能因为某台机器上刚调过音就判红）。
+@export var use_sfx_profile: bool = true
+## 覆盖文件路径。一般不用改 —— 调音台与游戏读写的是同一个 user:// 文件。
+@export var sfx_profile_path: String = "user://sfx_profile.json"
+
+
 static func create() -> AudioConfig:
 	return AudioConfig.new()
 

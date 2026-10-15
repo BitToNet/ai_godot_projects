@@ -2860,3 +2860,117 @@ Variant 噪声调用与 Packed 成员写入，这些在 VM / 分配器 / 内存�
 5. `flatten_radius` 仍是**死参数**（上一批就记着）；地形 LOD 的 `LOD_QUADS / SKIRT / LOD_DIST`
    耦合在 4096 m 下仍未经实测；拾取射线的最大距离、100 部队的帧率、SSAO/glow/云的 GPU 开销
    —— 这四笔都是**旧欠账**，本批没有新增数据。
+
+---
+
+## 十八、第八轮变更记录（音效调音台：浏览器里试听调音 + 十条保存记录）
+
+### 目标（用户原话）
+
+> 「给我出一个整合工具，可以通过浏览器预览调节游戏中所有音效的相关设置，先有预览和音量大小设置，
+> 以及声音的开关，关闭代表不使用这个音效，然后附加保存按钮，还要记录十条保存记录，可以追溯回滚」
+
+拆成四条硬要求：**① 浏览器里的整合工具**、**② 覆盖全部音效**（不只试听，要能调）、
+**③ 关闭 = 游戏真的不播这条音效**（不是 UI 上把滑杆灰掉）、**④ 保存按钮 + 10 条记录可追溯回滚**。
+
+### 结论
+
+做完了，而且是**"游戏侧真的有挂载点"**的那一种：网页改的是一份 `user://sfx_profile.json`，
+游戏启动时由 `SfxProfile.load_into()` 读进来 —— 逐条的开关走 `Sfx._peek()`（关掉的音色
+**连播放计数都不加**），逐条的偏移走 `Sfx.volume_db_of()`，分类 / 总音量 / BGM 在载入时写回
+`AudioConfig` 并落到总线上。门禁新增第 9f 步（**85 条断言**）专门守这条契约。
+
+### 分层
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 页面 | `tools/sfx_studio/{index.html,style.css,app.js}` | 纯静态、无依赖、无构建：试听 / 音量 / 开关 / 分类 / BGM / 批量 / 搜索 / 保存记录 / 导入导出 |
+| 清单 | `tools/sfx_studio/manifest.json` | 由 `tools/sfx_studio_export.gd` 从代码导出（28 条音色 + 40 个录音变体 + 基准 dB + 上下限），**提交进仓库** |
+| 服务 | `tools/sfx_studio/serve.py` | Python 标准库：静态文件 + `/api/health` + `/api/profile` 读写（临时文件 + `os.replace` 原子写） |
+| 入口 | `tools/sfx_studio/start.ps1` | 一键：导出试听 wav → 生成清单 → 起服务并开浏览器（带 BOM，PS 5.1 可解析） |
+| 运行时 | `scripts/audio/SfxProfile.gd` | 游戏侧读取层：解析 / 钳制 / 稀疏合并 / 十条记录 / 回滚 / 坏文件降级 |
+| 挂载 | `Sfx.gd` / `Bgm.gd` / `AudioConfig.gd` | `setup()` 里载入一次；`_peek()` 闸门；`volume_db_of()` 偏移；BGM 开关 |
+| 门禁 | `tools/sfx_profile_check.gd` | 第 9f 步：85 条断言，验"游戏到底认不认" |
+
+### 为什么是"本地服务"而不是纯静态页
+
+浏览器的两条硬限制：**不能读 `file://` 下的音频与清单**（CORS）、**更碰不到 `user://`**
+（Windows 上是 `%APPDATA%\Godot\app_userdata\…`）。所以需要一个**本地小服务**：
+它从磁盘读清单、把用户已装的 wav/ogg 喂给页面（`decodeAudioData` 后走 Web Audio 精确试听），
+保存时把 JSON 原子写到游戏真正会读的那个路径。页面顶部横幅会显示**这次实际写入的绝对路径** ——
+"保存了但游戏读的是另一个文件"是这类工具最容易翻车的地方，所以直接把它印在脸上。
+
+退路也留了：没有服务时页面退化成 localStorage + 导出/导入 JSON + `<audio>` 试听，
+且**明确告诉用户"这样保存游戏读不到"**，而不是假装保存成功。
+
+### 三个关键决策
+
+1. **关闭 = 布尔闸门，不是音量 -80 dB**。`Sfx._peek()` 在**节流判断之前**就丢弃，
+   所以关掉再打开不会继承锈住的 `_last_ms`（否则"打开后第一声被节流吃掉"）；
+   也不加播放计数 —— 计数是联调脚本的断言依据，虚增会让 `sfx_battle_check` 那类检查失去意义。
+2. **单条是偏移（offset），不是绝对值**：`最终 dB = 分类 + 音色基准 + 单条偏移 + 调用方额外`。
+   基准值住在 `SfxSynth.SPECS` 里，是"设计值"；调音台不该把它抄一份到 JSON 里，
+   否则以后改音色基准就会出现"两份真相"。清单里的基准是**只读参考**，滑杆只写偏移。
+3. **记录是整份快照 + 中文差异摘要**，最多 10 条、超出淘汰最旧。回滚 = 整份替换（不是合并），
+   并且**立刻写盘**（回滚也要生效，不能只是页面上显示变了）；回滚本身不占记录名额，
+   撤销回滚另存一档（`undo`，网页端独有，游戏侧读到会安静忽略）。
+
+### 本轮抓到的三个真 bug（都只有真跑才看得见）
+
+1. **静态函数被内置方法静默顶掉**：`SfxProfile.set_path()` / `reload()` 与
+   `Resource.set_path()` / `Script.reload()` 同名 —— Godot 不报"重复定义"，而是**优先走内置**，
+   结果 `set_path()` 改的是**脚本资源自己的路径**、`reload()` 把脚本资源重新解析了一遍，
+   `class_name` 当场失效（`Class "SfxProfile" hides a global script class`）、静态变量归零。
+   已改名为 `set_profile_path()` / `reload_file()`，并在注释里写死"别再改回去"；
+   顺带用 `ClassDB.class_has_method()` 把 23 个静态 API 名全过了一遍，确认只剩这两个是雷。
+2. **回滚会把十条历史一起清掉**：`rollback_to()` 复用了 `_reset_state()`，而后者连
+   `_records` 一起清 —— 于是"点一次回滚，十条记录全没了"，正好打掉用户要求的"可追溯回滚"。
+   现在 `_reset_state()` 只清"当前覆盖"，历史由 `reset()` / `load_into()` 显式清。
+3. **坏 JSON 会在游戏日志里刷 ERROR**：`JSON.parse_string()` 解析失败会自己打一条
+   `ERROR: Parse JSON failed`。玩家手改坏一个配置文件不该在游戏日志里刷红字（门禁对 ERROR 零容忍），
+   改用 `JSON.new().parse()`（返回错误码、不打日志）。
+
+另外还踩到一个**测试自身的坑**：`_initialize()` 里 `add_child()` 之后节点要到**下一帧**才真正入树，
+不 `await process_frame` 就建播放池，第一声 `play()` 会报
+`Playback can only happen when a node is inside the scene tree` —— 自检脚本里已经加了这一帧。
+
+### 门禁第 9f 步（`tools/sfx_profile_check.gd`，85 条断言）
+
+分八组：**① 惰性**（没有文件时全开、偏移 0、总线不动）→ **② 关闭 = 真的不播**
+（`play()` 一声不响、计数为 0；同时校验"关掉的那条音量不变"：关的是"播不播"）→
+**③ 分类 / 总音量 / BGM 写回 `AudioConfig` 并落到 Master 总线** → **④ 钳制与非法值**
+（±999 钳到上下限；全是非法字段则整份不生效；开关类型不对按缺省开）→
+**⑤ 十条记录与回滚**（连存 12 条只留 10 条、最旧出局、每条都有摘要、回滚后 `state()` 与记录
+**逐字段一致**、写盘读回仍是 10 条、文件里塞 14 条也截到 10 条、坏记录被丢掉、
+越界回滚/删除返回 false）→ **⑥ 坏文件降级**（截断 JSON / 顶层数组 / 空文件 / `state` 不是对象 /
+路径指到目录；`state` 坏掉但记录完好时历史仍可追溯）→ **⑦ 环境变量**
+（`WARBAND_SFX_PROFILE=0` 与 `OFF` 都不生效）→ **⑧ 网页端契约**
+（把 `app.js` 真正写出的形状喂进来：稀疏 state、`saved_at` / `generator` / `records` / `undo`；
+关掉 + 调音量同时存在；全关 28 条跑一遍 `play()` 计数为 0）。
+
+它**只写 `user://sfx_profile_check_tmp.json`**，绝不碰真实配置；门禁里还统一设了
+`WARBAND_SFX_PROFILE=0`，保证 9b/9c/9e 这些响度与 PCM 断言验的是**工程默认**那条路径，
+不被本机上一次试听的残留左右。
+
+### 验收（2026-10-15）
+
+| 项 | 结果 |
+|---|---|
+| `powershell -File tools\run_checks.ps1` | **exit 0**，`== 全部通过（30 项，用时 58.6s）==`，零 `ERROR:` / 零 `SCRIPT ERROR` |
+| 新增第 9f 步 | `sfx_profile_check  PASS  exit=0  用时 0.5s`，85 / 85 断言通过 |
+| 生成指纹 | `958433c2f04c0e39…` 与基线一致（音频层改动没有污染地图生成） |
+| 原有音频步骤 | `audio_check` / `sfx_battle_check` / `sfx_map_check` / `bgm_check` / `sfx_pcm_check` / `audio_cache_check` / `sfx_foley_check` 全 PASS |
+| 浏览器真跑一遍 | 端口 8793 + 临时 profile 路径，12 步全 `completed`；**3 次 `POST /api/profile` 全 200**；**0 个页面错误 / 0 条 console 错误**；写出的文件 5 398 字节、2 条记录、回滚后 state 与记录一致 |
+| 真实配置是否被动过 | 否：`%APPDATA%\Godot\app_userdata\Warband Strategic Map\sfx_profile.json` **不存在**（玩家不点保存就永远没有这个文件） |
+| 布局 | 1600×1000 下逐条滑杆 / `实际` dB / 保存栏 / 记录列表均单行不折行（保存栏三个按钮曾折成两行，已修 CSS） |
+
+### 欠账
+
+1. **网页端没有自动化**：这一轮的浏览器验证是**人工驱动 + 一次脚本化 scenario**，
+   没有进 `run_checks.ps1`（它要 Python + 浏览器，不适合塞进 60 秒门禁）。游戏侧契约有 9f 守着，
+   页面侧仍是"改完目视 + 手动跑一遍"；
+2. 试听用的是 `audio_preview/*.wav`（合成音色的导出）与 `audio/sfx/foley/*.wav`（录音素材），
+   **BGM 试听走原始 ogg**（整首，不做段落循环），要精细试听还得进游戏；
+3. `pitch_jitter` / 间隔节流 / `warn_cues` 这类**行为参数故意不进调音台**（属玩法节奏，容易被顺手调坏）；
+4. 覆盖是**全局**的：没有"按场景分别调"（比如只在 Boss 战压低环境音），
+   `state` 结构留得下（多一层 `scenes` 即可），但本轮没做。
