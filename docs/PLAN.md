@@ -83,7 +83,11 @@
 **不要用 `Measure-Object -Line`** —— 它把空行算 0 行，会少算约 6–10%。
 （`docs/PM_BRIEF.md` 的"23 393 行"就是这个口径差的产物；真实值见本表，详见 §二十五.2。）
 
-**本表不含**其它会话正在进行、**尚未入库**的文件（2026-10-15：无在途 —— `docs/ARCHITECTURE.md` 与 `scripts/audio/SfxProfile.gd` 均已入库）。
+|**本表数字是「已入库口径」**，不含其它会话正在进行、**尚未入库**的文件。
+
+**2026-10-15 在途现状（另一会话）**：11 个已跟踪文件有改动 —— `scripts/core/MapConfig.gd`、`scripts/env/FogOfWar.gd`、`scripts/nav/PathQueue.gd`、`scripts/parties/AIParty.gd`、`tools/i18n_check.gd`、`tools/map_size_check.gd`、`tools/path_queue_check.gd`、`tools/perf_baseline.json`、`tools/perf_probe.gd`、`tools/run_checks.ps1`、`tools/sfx_studio/manifest.json`；外加 1 个新文件 `tools/fog_check.gd`（未跟踪）。
+
+> **带上这些在途改动实跑，门禁是 31 项 / 66.4 s / `exit 0`**（他们新增了 `fog_check` 等步骤，故比上表的 30 项多）—— 说明在途状态目前自洽、门禁仍然全绿。待其入库后，上表随之更新（那是他们的提交该记的一笔）。
 
 ---
 
