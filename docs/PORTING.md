@@ -269,6 +269,7 @@ $env:WARBAND_BIG_MAP="1"; powershell -ExecutionPolicy Bypass -File tools\run_che
 
 | 文档 | 状态 |
 |---|---|
+| `docs/ARCHITECTURE.md` | **架构说明书**（分层 / 生成流水线 / 每帧帧序 / 系统接线图 / 关键不变量）—— 第一次接手代码先读这份 |
 | `docs/PORTING.md`（本文） | 计划与进度看板 —— **要继续做这件事就看这一份** |
 | `docs/ROADMAP.md` §17 | 逐批详细记账（改动、实测数字、踩坑），本文的展开版 |
 | `docs/ROADMAP.md` §16 | 尺寸推导 / 换到 4096 m 世界的历史（含 `big_map_probe` 实测） |
