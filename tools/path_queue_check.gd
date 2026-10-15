@@ -14,6 +14,9 @@
 ##    4) 大预算一次排空；「每帧一个」与「一次排空」结果一致；
 ##    5) 请求方在等待期间被释放（失效 Callable）→ 只丢结果，不崩、不少记账；
 ##    6) clear() 清待办但不动累计计数。
+##    7) 【第七轮 ① 新增】冻结帧不发请求 / 流动帧才发请求 / 同一支部队只有一个在途请求；
+##    8) 【第七轮 ① 新增】重请求摊还：单个请求超 SPREAD_TRIGGER_US 后，后续帧空转还债，
+##       空转帧数 = min(SPREAD_MAX_FRAMES, 耗时/预算)，且不丢结果、不换顺序。
 ##
 ##  用真实的 1024 m 世界（与 gen_fingerprint.gd 同一入口），端点取真实部队与定居点位置，
 ##  所以量到的是真实的可达性分布。退出码：0 = 全部通过；1 = 有断言失败
@@ -22,6 +25,18 @@ extends SceneTree
 
 const SCENE := "res://scenes/Main.tscn"
 const WAIT_LIMIT := 6000
+
+## 只用于验证「摊还」的假寻路器：不查地图，单纯烧掉固定时间后返回空路径。
+## 这样摊还契约的验证与地图尺寸 / 机器速度无关，是确定性的。
+class _SlowFinder extends Pathfinder:
+	var burn_us: int = 20000
+	var calls: int = 0
+	func find_path(_from_world: Vector2, _to_world: Vector2) -> PackedVector3Array:
+		var t0 := Time.get_ticks_usec()
+		while Time.get_ticks_usec() - t0 < burn_us:
+			pass
+		calls += 1
+		return PackedVector3Array()
 
 var _fails: Array[String] = []
 var _total: int = 0
@@ -67,9 +82,15 @@ func _run() -> void:
 	if q == null:
 		_finish()
 		return
-	# 生成期 AI 已经在走这条队列（Main 每帧 pump），所以这里不是 0，而是「已排空 + 有历史」
 	_ok(q.pending == 0, "生成结束后队列已排空（pending %d）" % q.pending)
-	_ok(q.done_total >= 1, "生成期确实用过队列（累计完成 %d）" % q.done_total)
+	# 第七轮 ① 之前这里断言的是 `done_total >= 1`，而那个「1」恰恰来自「暂停时每帧重复入队」
+	# 这个 bug 本身：开局世界是冻结的（TimeFlowController 初始 FROZEN），修好之后生成期
+	# 一个请求都不该发。下面第 7 节把「冻结不发 / 流动才发」两个方向都钉死。
+	_ok(q.done_total == 0, "开局冻结期间不发任何寻路请求（累计完成 %d）" % q.done_total)
+
+	# 基础契约（结果 / FIFO / 饿死保护 / 记账）与「摊还」无关：先关掉摊还逐条验证，
+	# 摊还本身在第 8 节单独验证（用假寻路器，确定性）。
+	q.spread_enabled = false
 
 	var pf: Pathfinder = data.path_coarse
 	var pairs: Array = _pairs(24)
@@ -175,6 +196,65 @@ func _run() -> void:
 	var ms := float(Time.get_ticks_usec() - t0) / 1000.0
 	_ok(frames == 100, "100 个积压需要 100 次 pump（每帧一个，实测 %d）" % frames)
 	_ok(q.done_total > 0, "累计完成数为正（%d）" % q.done_total)
+
+	# ---- 7) 第七轮 ①：冻结帧不发请求 / 流动帧才发 / 同一支部队同时只有一个在途请求 ----
+	# 只碰一支领主/商队部队，副作用最小；不经过 Main._process，免得连带跑遭遇与战斗。
+	var probe: AIParty = null
+	for a in main.ai_parties:
+		if a != null and is_instance_valid(a) and a.kind != AIParty.Kind.BANDIT:
+			probe = a
+			break
+	_ok(probe != null, "世界里至少有一支领主 / 商队部队可供契约验证")
+	if probe != null:
+		var done0: int = q.done_total
+		for i in 8:
+			probe.step(0.0)
+		_ok(q.done_total == done0 and q.pending == 0,
+			"时间冻结时部队一帧也不提交请求（step(0) × 8：done %d → %d，pending %d）" % [done0, q.done_total, q.pending])
+		_ok(not probe.path_pending, "冻结帧不会把 path_pending 卡住")
+		probe._elapsed = 99.0     # 越过 start_delay，模拟「时间已经流动了一会儿」
+		probe.step(1.0 / 60.0)
+		_ok(q.pending == 1 and probe.path_pending,
+			"时间流动后当帧提交一个请求（pending %d，path_pending %s）" % [q.pending, str(probe.path_pending)])
+		for i in 3:
+			probe.step(1.0 / 60.0)
+		_ok(q.pending == 1, "同一支部队同时只有一个在途请求（pending 仍为 %d）" % q.pending)
+		q.pump(1 << 30)
+		_ok(not probe.path_pending and q.pending == 0,
+			"回调结算后 path_pending 归零（pending %d）" % q.pending)
+
+	# ---- 8) 第七轮 ①：重请求摊还（用假寻路器，确定性，与地图尺寸无关）----
+	q.spread_enabled = true
+	q.cooldown_skips = 0
+	var sf := _SlowFinder.new(data.nav_coarse)
+	sf.burn_us = 20000        # 20 ms ⇒ 冷却 = 20000 / 2000 = 10 帧
+	var order: Array = []
+	for i in 3:
+		q.enqueue(sf, Vector2.ZERO, Vector2.ONE, func(_pts: PackedVector3Array) -> void:
+			order.append(order.size()))
+	# 期望形态：1 个请求 → 10 帧空转 → 1 个请求 → 10 帧空转 → 1 个请求（共 23 帧）
+	var seq: Array = []
+	for i in 23:
+		seq.append(q.pump(PathQueue.DEFAULT_BUDGET_US))
+	var want_seq: Array = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+	_ok(seq == want_seq, "重请求后空转还债：帧形态 %s（期望 %s）" % [str(seq), str(want_seq)])
+	_ok(q.pending == 0 and sf.calls == 3, "摊还不丢请求、不重复（pending %d，实调 %d 次）" % [q.pending, sf.calls])
+	_ok(order.size() == 3, "摊还不丢回调（%d 次）" % order.size())
+	_ok(q.cooldown_skips == 20, "空转帧数 = min(12, 20 ms/2 ms) × 3 = 20（实测 %d）" % q.cooldown_skips)
+	_ok(sf.burn_us < PathQueue.SPREAD_TRIGGER_US or q.cooldown_skips > 0,
+		"≥8 ms 的请求确实触发了摊还")
+	# 关掉摊还后同样 3 个请求应当连做（证明摊还是可关的纯调度，不影响结果）
+	q.spread_enabled = false
+	q.clear()                 # clear() 会连冷却一起清掉（否则这里的第一个请求会白等 10 帧）
+	q.cooldown_skips = 0
+	sf.burn_us = 20000
+	for i in 3:
+		q.enqueue(sf, Vector2.ZERO, Vector2.ONE, Callable())
+	var fast := 0
+	while q.pending > 0 and fast < 10:
+		q.pump(PathQueue.DEFAULT_BUDGET_US)
+		fast += 1
+	_ok(fast == 3 and q.cooldown_skips == 0, "关掉摊还后 3 个请求 3 帧做完且不空转（%d 帧）" % fast)
 	print("[寻路队列] 100 个 coarse 请求共 %.1f ms（单次均值 %.2f ms；预算 2000 µs/帧 ⇒ 至少 %d 帧）" % [
 		ms, ms / 100.0, int(ms / 2.0) + 1])
 	print("[寻路队列] %s" % q.stats())

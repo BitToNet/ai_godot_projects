@@ -16,6 +16,11 @@
 ##  还是内部 id。
 ##
 ##  退出码：0 = 达标；1 = 有文件超出基线或 Strings.gd 表本身有问题
+##
+##  第七轮 ① 追加第 4 节：仓库里每个 .ps1 必须以 UTF-8 **BOM** 开头。PowerShell 5.1 在
+##  没有 BOM 时按系统 ANSI（本机 GBK）解码源文件，中文注释会被撕成乱码进而**语法错误**，
+##  整条门禁连第一步都跑不起来（2026-10-15 亲历：一次编辑吃掉 BOM，报错只写
+##  "Unexpected token '$detail' in expression"）。BOM 肉眼看不见，所以断言字节。
 ## =============================================================================
 extends SceneTree
 
@@ -192,6 +197,24 @@ func _run() -> void:
 				if int(ui[k]) > 0 and not base_files.has(String(k)):
 					_ok(false, "%s 出现基线里没有的 %d 条硬编码中文" % [String(k), int(ui[k])])
 
+	# ---- 4) 脚本编码纪律：仓库里每个 .ps1 都必须是 UTF-8 **带 BOM** ----
+	# 第七轮 ① 踩到的坑：tools/run_checks.ps1 原本是 UTF-8 带 BOM，一次编辑把 BOM 吃掉之后，
+	# PowerShell 5.1 会按系统 ANSI（本机 GBK）解码这个文件，中文注释被撕成乱码 → **语法错误**，
+	# 整条门禁连第一步都跑不起来，而报错只写 "Unexpected token '$detail' in expression"。
+	# 靠肉眼看不出 BOM 有没有，所以这里直接断言字节。新加的 .ps1 也一并覆盖。
+	var ps1: Array[String] = []
+	_collect_ps1("res://tools", ps1)
+	_ok(ps1.size() >= 3, "扫到至少 3 个 .ps1（当前 %d 个：%s）" % [ps1.size(), ", ".join(ps1)])
+	for rel in ps1:
+		var pf := FileAccess.open(rel, FileAccess.READ)
+		_ok(pf != null, "能读到 %s" % rel)
+		if pf == null:
+			continue
+		var head := pf.get_buffer(3)
+		pf.close()
+		var has_bom := head.size() == 3 and head[0] == 0xEF and head[1] == 0xBB and head[2] == 0xBF
+		_ok(has_bom, "%s 以 UTF-8 BOM 开头（PowerShell 5.1 否则按 GBK 读中文注释，语法直接崩）" % rel)
+
 	print("")
 	if _fails.is_empty():
 		print("PASS：i18n 棘轮达标（%d 项断言，ui_total=%d）" % [_total, ui_total])
@@ -199,3 +222,11 @@ func _run() -> void:
 	else:
 		print("FAIL：%d/%d 项断言未通过 —— %s" % [_fails.size(), _total, "; ".join(_fails)])
 		quit(1)
+
+## 递归收集 tools 下的 .ps1（含子目录），路径用 res:// 形式
+func _collect_ps1(dir: String, out: Array[String]) -> void:
+	for f in DirAccess.get_files_at(dir):
+		if String(f).ends_with(".ps1"):
+			out.append(dir.path_join(String(f)))
+	for sub in DirAccess.get_directories_at(dir):
+		_collect_ps1(dir.path_join(String(sub)), out)

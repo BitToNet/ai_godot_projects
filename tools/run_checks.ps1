@@ -5,9 +5,15 @@
 #    powershell -File tools/run_checks.ps1
 #    （本机只有 Windows PowerShell 5.1，没有 pwsh 7，不要写成 pwsh）
 #
-#  依次执行下列步骤（30 项，约 60~80 秒）；性能若超软容差会**额外**追加一行「性能基准 注意…」，
+#  依次执行下列步骤（约 30 项，本机实测 **62~71 秒**；第 7 步显式摘掉尺寸覆盖、按**出货默认**跑）；
+#  性能若超软容差会**额外**追加一行「性能基准 注意…」，
 #  首次运行（或换了机器 / 净克隆，.godot/ 还没建）还会**按需**先跑一次资源导入，
 #  所以汇总里的项数会在 29~31 之间浮动 —— 别把某一跑的行数当成脚本的固有常量。
+#
+#  ⚠ 本文件必须是 **UTF-8 带 BOM**：PowerShell 5.1 在没有 BOM 时按系统 ANSI（本机 GBK）解码源文件，
+#  中文注释会被撕成乱码进而**语法错误**（2026-10-15 实测：一次替换式编辑吃掉 BOM 后，门禁连第一步
+#  都跑不起来，报错却指向一行没被改过的老代码）。门禁第 5d 步（`tools/i18n_check.gd` 第 4 节）
+#  现在会断言仓库里每个 `.ps1` 的 BOM 存在 —— 改完这个文件记得确认首字节仍是 EF BB BF。
 #  任何一步「退出码不在预期内」「超时」「输出里出现 ERROR: / SCRIPT ERROR /
 #  Parse Error」都会记为失败：
 #    1) 生成指纹 A（跨进程双跑之一）
@@ -50,7 +56,12 @@
 #    6b) 遭遇选项表定式（tools/encounter_check.gd）—— 攻击 / 花钱买路 / 索要买路钱 / 撤退
 #        四条路的定价、可用性与代价，外加「不合法动作一律静默拒绝」与时间锁有没有解开。
 #        这张表同样在 900 帧里走不到：主场景里玩家不动，一次遭遇都不会触发
-#    7) 性能基准采样（tools/perf_probe.gd）
+#    7) 性能基准采样（tools/perf_probe.gd）—— **显式摘掉 WARBAND_MAP_SIZE 覆盖，按出货默认跑**
+#        （第七轮 ① 起出货默认 = 1024 m，与门禁同图；这一步仍然要"自己摘"，否则一旦有人用
+#        环境变量给门禁换尺寸，它测的就不是出货世界了）。除数值基线外还有三条与机器负载
+#        无关的硬断言：冻结期零寻路请求 / 没有 >100 ms 的尖刺帧 / 队列不积压。用户报的
+#        「大地图特别卡顿」正是**冻结期每帧重下寻路订单**造成的，而此前门禁一律跑小图 ——
+#        那三条断言就是补这个缺口的
 #    7b) 规模热点探针（tools/scale_probe.gd）—— 第六轮的三条主线：植被筛选 / 地形建块 /
 #        A* 寻路。结构量（实例数 / 区块数 / 变换指纹 / 展开节点数）与 tools/scale_baseline.json
 #        精确比对，耗时只做上界比对（1.6x 记 WARN / 2.5x 判失败）。它一上来就证伪了路线图
@@ -60,6 +71,9 @@
 #        拾取最远距离 / heightmap_res 导出上限」这类**纯数值**假设钉住。它们的失败方式不是报错，
 #        而是在 4096 m 图上「地形被裁掉 / 编辑器里根本调不上去」，而 1024 m 图上门禁全绿 ——
 #        只有「按尺寸推导」这层关系本身的断言抓得到。它不建世界、不渲染，跑得很快
+#    7c2) 战争迷雾逐字节自检（tools/fog_check.gd）—— 第七轮 ①：迷雾贴图会进三个 shader，
+#        而这次为性能改了 reveal() 的算式与 update() 的跳过策略，所以拿「改动前的原始循环」
+#        当参照实现逐字节比对（三个世界尺寸 × 三条轨迹，不建世界，<1 秒）
 #    7d) 4096 m 世界实测（tools/big_map_probe.gd）—— **可选**：$env:WARBAND_BIG_MAP = '1' 才跑。
 #        它不进默认流程：跑一次要 80~120 秒（真的建一个 4096 m 世界）。想换世界之前先看它
 #    6c) 存档定式（tools/save_check.gd）—— 存档格式 / 三道门（版本 / 种子 / 实体 id）/
@@ -102,9 +116,11 @@ $ErrorActionPreference = 'Continue'
 # 引擎路径：CI 用环境变量 GODOT_BIN 覆盖；本机默认走用户全局规则 2 的固定路径
 $GODOT = if ($env:GODOT_BIN) { $env:GODOT_BIN } else { 'G:\godot_project\_godotengine\Godot_v4.7-stable_win64_console.exe' }
 
-# 第六轮：出货默认世界是 4096 m，但一键门禁**继续跑 1024 m 小图** —— 25 项 60 余秒，
-# 而 4096 m 光生成一次就要 30 秒以上（25 项里有多项各生成一次）。想用门禁跑大图就显式给
-# WARBAND_MAP_SIZE=4096；4096 m 的实测另由 7d（WARBAND_BIG_MAP=1）单独触发。
+# 第七轮 ①：**出货默认世界 = 1024 m = 门禁口径**（用户本轮选定「地图规模前期不用特别大」），
+# 所以门禁跑的就是出货世界 —— 60~80 秒。出货世界与门禁曾经不是同一个世界（4096 m），
+# 那正是「出货配置零确定性守护」这个缺口的来源（PLAN §D.3 重要发现 A），现在两个口径重合。
+# 想用门禁跑更大的图就显式给 WARBAND_MAP_SIZE=4096（几十项里有多项各生成一次，会明显变慢）；
+# 4096 m 的实测另由 7d（WARBAND_BIG_MAP=1）单独触发。
 if (-not $env:WARBAND_MAP_SIZE) { $env:WARBAND_MAP_SIZE = '1024' }
 
 # 调音台覆盖（tools/sfx_studio 写的那份 user://sfx_profile.json）在门禁里必须**不生效**：
@@ -375,9 +391,21 @@ if ($rBus.Ok -and -not $busPass) {
 	$fail.Add('音频总线  FAIL  退出码为 0 但没打印 PASS')
 }
 
-# ---- 7) 性能基准 ----
-$r3 = Invoke-GodotStep -Name 'perf_probe' -Extra @('--script', 'res://tools/perf_probe.gd')
-$warn3 = @($r3.Lines | Where-Object { $_ -match 'WARN' })
+# ---- 7) 性能基准（**跑出货默认尺寸**，显式摘掉门禁的尺寸覆盖）----
+# 第七轮 ①：用户报的「大地图上特别卡顿」的机制已被修掉（见 scripts/parties/AIParty.gd 与
+# scripts/nav/PathQueue.gd 的注释：世界冻结时每支部队每帧重下寻路订单 + 队列的饥饿保护
+# ⇒ 静止画面每帧付一次满额 A*）。出货默认现在是 1024 m，与门禁同图；但这一步**仍然显式摘掉**
+# WARBAND_MAP_SIZE —— 一旦有人用环境变量给门禁换尺寸，它测的就该是出货世界而不是那个覆盖值。
+# 三条与机器负载无关的硬断言（冻结期零寻路请求 / 无 100 ms 尖刺 / 队列不积压）钉在出货口径上。
+# 跑完立刻恢复，后面的步骤继续用门禁尺寸。
+$savedMapSize = $env:WARBAND_MAP_SIZE
+$env:WARBAND_MAP_SIZE = ''
+$r3 = Invoke-GodotStep -Name 'perf_probe' -Extra @('--script', 'res://tools/perf_probe.gd') -TimeoutSec 300
+$env:WARBAND_MAP_SIZE = $savedMapSize
+# 只认 perf_probe 自己打的 `[性能] WARN`：引擎在退出时必打一行
+# `WARNING: 4 ObjectDB instances were leaked at exit`，用裸 'WARN' 匹配会把它当成
+# 「性能漂移 1 条」记进汇总（第七轮 ① 实测踩到，属误报，见 docs/PLAN.md §16.10）。
+$warn3 = @($r3.Lines | Where-Object { $_ -match '\[性能\].*WARN' })
 if ($r3.Ok -and $warn3.Count -gt 0) {
 	# 超容差才判失败；只是漂移就提示出来，别让"长期贴着容差上限"悄悄变成新常态
 	$pass.Add("性能基准  注意  有 $($warn3.Count) 条 WARN（未超容差，不判失败）")
@@ -386,7 +414,8 @@ if ($r3.Ok -and $warn3.Count -gt 0) {
 # ---- 7b) 规模热点探针 ----
 # 结构量必须与 tools/scale_baseline.json 精确一致；耗时超 1.6x 记 WARN、超 2.5x 判失败。
 $r3b = Invoke-GodotStep -Name 'scale_probe' -Extra @('--script', 'res://tools/scale_probe.gd')
-$warn3b = @($r3b.Lines | Where-Object { $_ -match 'WARN' })
+# 同 7)：只认探针自己打的 `[规模] WARN`，别把引擎退出时的 ObjectDB 警告算成规模漂移。
+$warn3b = @($r3b.Lines | Where-Object { $_ -match '\[规模\].*WARN' })
 if ($r3b.Ok -and $warn3b.Count -gt 0) {
 	$pass.Add("规模热点  注意  有 $($warn3b.Count) 条 WARN（未超硬容差，不判失败）")
 }
@@ -398,6 +427,16 @@ $rSize = Invoke-GodotStep -Name 'map_size_check' -Extra @('--script', 'res://too
 $sizePass = @($rSize.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
 if ($rSize.Ok -and -not $sizePass) {
 	$fail.Add('地图尺寸  FAIL  退出码为 0 但没打印 PASS')
+}
+
+# ---- 7c2) 战争迷雾逐字节自检（tools/fog_check.gd）----
+# 迷雾贴图会进地形 / 建筑 / 植被三个 shader，而第七轮 ① 为性能改了 reveal() 的算式与
+# update() 的跳过策略：这里拿「改动前的原始循环」当参照实现，逐字节比对 explored 与 RGBA
+# 缓冲（三个世界尺寸 × 三条轨迹，不生成世界，<1 秒）。
+$rFog = Invoke-GodotStep -Name 'fog_check' -Extra @('--script', 'res://tools/fog_check.gd')
+$fogPass = @($rFog.Lines | Where-Object { $_ -match 'PASS' }).Count -gt 0
+if ($rFog.Ok -and -not $fogPass) {
+	$fail.Add('迷雾自检  FAIL  退出码为 0 但没打印 PASS')
 }
 
 # ---- 7d) 4096 m 世界实测（tools/big_map_probe.gd）—— **可选**，默认跳过 ----

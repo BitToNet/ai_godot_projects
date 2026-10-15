@@ -17,6 +17,11 @@ var enabled: bool = true
 var _accum: float = 0.0
 var _bytes: PackedByteArray = PackedByteArray()   ## 常驻 RGBA 缓冲（不再每次重建 Image + 16k 次脚本循环）
 var _dirty: bool = false                          ## 自上次上传后是否有格子被揭开
+## 上一轮 update 时各点的位置 + 当时的揭示半径（第七轮 ①：位置逐位不变的点整轮跳过）
+var _last_points: Array = []
+var _last_radius: float = -1.0
+## 累计因「位置没变」而被整轮跳过的点数（诊断用；tools/fog_check.gd 据此确认快路径真的走到了）
+var skip_total: int = 0
 
 func setup(p_cfg: MapConfig) -> void:
 	cfg = p_cfg
@@ -30,6 +35,9 @@ func setup(p_cfg: MapConfig) -> void:
 	image = Image.create_from_data(RES, RES, false, Image.FORMAT_RGBA8, _bytes)
 	texture = ImageTexture.create_from_image(image)
 	_dirty = false
+	_last_points = []
+	_last_radius = -1.0
+	skip_total = 0
 
 ## 把单个格子的探索度写进常驻缓冲（只动被揭开的那一格）
 func _write_cell(i: int, v: float) -> void:
@@ -44,18 +52,26 @@ func reveal(p: Vector2, radius: float) -> void:
 	var cx := int(p.x / cell)
 	var cz := int(p.y / cell)
 	var cr := int(ceil(radius / cell)) + 1
+	var inner := radius * 0.55
+	# 每行只算一次行坐标与行偏移（原来是每格算一次 float(z) * cell 与 z * RES）。
+	# 注意：**不许**把这里的浮点算式换成等价写法 —— 迷雾贴图要逐字节可复现，
+	# tools/fog_check.gd 会拿本函数与「未优化前的原始循环」逐字节比对。
 	for dz in range(-cr, cr + 1):
+		var z := cz + dz
+		if z < 0 or z >= RES:
+			continue
+		var zf := float(z) * cell
+		var row := z * RES
 		for dx in range(-cr, cr + 1):
 			var x := cx + dx
-			var z := cz + dz
-			if x < 0 or z < 0 or x >= RES or z >= RES:
+			if x < 0 or x >= RES:
 				continue
-			var q := Vector2(float(x) * cell, float(z) * cell)
+			var q := Vector2(float(x) * cell, zf)
 			var d := q.distance_to(p)
 			if d > radius:
 				continue
-			var v := 1.0 - smoothstep(radius * 0.55, radius, d)
-			var i := z * RES + x
+			var v := 1.0 - smoothstep(inner, radius, d)
+			var i := row + x
 			if v > explored[i]:
 				explored[i] = v
 				_write_cell(i, v)
@@ -67,8 +83,27 @@ func update(delta: float, points: Array) -> void:
 	if _accum < 0.2:
 		return
 	_accum = 0.0
-	for p in points:
-		reveal(p, cfg.fog_reveal_radius_m())
+	var radius := cfg.fog_reveal_radius_m()
+	# ---- 第七轮 ①：位置逐位不变的点整轮跳过 ----
+	# 世界暂停 / 部队站住时点的位置一个 bit 都不变 ⇒ 同一个圆、同一批格子、同一个 v，
+	# 而 explored 只增不减，再扫一遍的结果就是「一个格子也写不进去」。2048 m + 37 支部队实测：
+	# 每 0.2 秒一次 ~40k 格「Vector2 + 平方根 + smoothstep」≈ 11 ms 尖刺（idle p95 11.3 ms），
+	# 而 idle 场景里全部点都是静止的 —— 跳过之后这一项归零。
+	# 只跳过**完全相同**的位置，因此与原实现逐位一致（tools/fog_check.gd 断言这件事）。
+	# 半径变了（换世界尺寸 / 读档）就整表作废，免得拿旧半径的结果当「已揭开」。
+	var next: Array = []
+	next.resize(points.size())
+	if absf(radius - _last_radius) > 0.0001:
+		_last_points = []
+		_last_radius = radius
+	for i in points.size():
+		var p: Vector2 = points[i]
+		next[i] = p
+		if i < _last_points.size() and _last_points[i] == p:
+			skip_total += 1
+			continue
+		reveal(p, radius)
+	_last_points = next
 	if not _dirty:
 		return          # 没有新揭开的格子就不上传：原地不动时原来每 0.2 秒都会重建 + 上传一次
 	_dirty = false

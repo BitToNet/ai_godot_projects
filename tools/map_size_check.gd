@@ -11,9 +11,11 @@
 ##  所以门禁里那 25 项一条都抓不到。这一条把「按尺寸推导」这层关系本身钉住。
 ##
 ##  它断言的是**数值关系**，不建世界、不建相机、不渲染：
-##    1) 1024 m 图（当前世界）的推导结果必须**逐位等于**改造前的旧常量（行为不变）；
-##    2) 4096 m 图（目标世界）的推导结果必须覆盖对角线（地形不被裁掉）；
-##    3) heightmap_res 的 @export_range 上限必须放得下 2049，且步进仍只产生奇数分辨率。
+##    1) **出货默认**（无环境变量覆盖时的 `MapConfig`）必须钉死：1024 m / 高度图 513 / 2 m 间距，
+##       且与门禁口径（`WARBAND_MAP_SIZE=1024`）是**同一个世界**（否则「出货配置零守护」会回来）；
+##    2) 1024 m 图的推导结果必须**逐位等于**改造前的旧常量（行为不变）；
+##    3) 4096 m 图（目标世界，仍可显式跑）的推导结果必须覆盖对角线（地形不被裁掉）；
+##    4) heightmap_res 的 @export_range 上限必须放得下 2049，且步进仍只产生奇数分辨率。
 ##  它**不**证明渲染效果、也不证明拾取在地形上真的命中 —— 那些属于实机观察，见 §12.5 的说明。
 ##
 ##  退出码：0 = 全部通过；1 = 有断言失败
@@ -40,7 +42,7 @@ func _diagonal(size: float) -> float:
 	return sqrt(2.0) * size
 
 ## 拿到「不带 WARBAND_MAP_SIZE 覆盖」的**出货默认**配置：一键门禁带着覆盖跑小图，
-## 但那不是出货值 —— 默认世界刚换成 4096 m，这个区别必须显式测。
+## 但那不是出货值 —— 默认世界是 1024 m（第七轮 ① 起，与门禁口径**同一个世界**），这个区别必须显式测。
 func _cfg_no_env() -> MapConfig:
 	var saved_ms := OS.get_environment("WARBAND_MAP_SIZE")
 	var saved_hr := OS.get_environment("WARBAND_HM_RES")
@@ -53,20 +55,34 @@ func _cfg_no_env() -> MapConfig:
 
 func _run() -> void:
 	# 门禁会带 WARBAND_MAP_SIZE=1024 跑小图；这里先拿「不带覆盖」的出货默认值，再单独造 1024 m 实例。
-	var cfg := _cfg_no_env()
+	var ship := _cfg_no_env()                      # 出货默认世界（第七轮 ① 起 = 1024 m）
+	var cfg := _cfg_no_env()                       # 本检查谈的是**尺寸推导定式**，参照固定为 4096 m
+	cfg.map_size = TARGET_SIZE
+	cfg.heightmap_res = cfg.scaled_heightmap_res()
 	var cfg_small := MapConfig.new()
 	cfg_small.map_size = 1024.0
 	cfg_small.heightmap_res = 513
 
-	# ---- 1) 出货默认世界：第六轮从 1024 m 换成 4096 m / 1025 点（4 m 间距，与地形网格同分辨率）----
-	_ok(is_equal_approx(cfg.map_size, 4096.0), "默认地图尺寸是 4096 m（%.1f）" % cfg.map_size)
-	_ok(cfg.heightmap_res == 1025, "默认高度图分辨率是 1025（%d）" % cfg.heightmap_res)
-	var spacing_now := cfg.map_size / float(cfg.heightmap_res - 1)
-	_ok(absf(spacing_now - 4.0) < 0.0001, "默认高度图间距是 4.0 m（%.4f）" % spacing_now)
+	# ---- 1) 出货默认世界：第七轮 ① 从 4096 m 收到 **1024 m** ----
+	# 收口的三条理由在 MapConfig.map_size 的注释里（寻路单次搜索地板 / 水系与聚落的关系被稀释 /
+	# 出货世界必须落进门禁与指纹的守护范围），这里只钉数值：
+	# 1024 m 的块边长 = max(128, 1024/16) = 128 m、四边形边长 2 m ⇒ 高度图 513 点（与地形网格同分辨率）。
+	_ok(is_equal_approx(ship.map_size, 1024.0), "默认地图尺寸是 1024 m（%.1f）" % ship.map_size)
+	_ok(ship.heightmap_res == 513, "默认高度图分辨率是 513（%d）" % ship.heightmap_res)
+	var spacing_now := ship.map_size / float(ship.heightmap_res - 1)
+	_ok(absf(spacing_now - 2.0) < 0.0001, "默认高度图间距是 2.0 m（%.4f）" % spacing_now)
+	_ok(ship.scaled_heightmap_res() == 513, "按尺寸推导在 1024 m 给出 513（%d）" % ship.scaled_heightmap_res())
+	_ok(absf(ship.size_scale() - 1.0) < 0.0001 and absf(ship.area_scale() - 1.0) < 0.0001,
+		"出货默认是 1× 边长 / 1× 面积（%.1f / %.1f）—— 即 SIZE_REF 本身" % [ship.size_scale(), ship.area_scale()])
+	# 出货默认与门禁口径必须是同一个世界：否则「出货配置零守护」的老问题会回来
+	_ok(is_equal_approx(ship.map_size, cfg_small.map_size)
+			and ship.heightmap_res == cfg_small.heightmap_res,
+		"出货默认世界 == 门禁小图世界（%.0f m / %d 点）" % [cfg_small.map_size, cfg_small.heightmap_res])
+	# 目标尺寸 4096 m 的定式一条都不能松：它仍然是「尺寸推导是否推得上去」的参照
 	_ok(cfg.scaled_heightmap_res() == 1025, "按尺寸推导在 4096 m 给出 1025（%d）" % cfg.scaled_heightmap_res())
 	_ok(cfg_small.scaled_heightmap_res() == 513, "按尺寸推导在 1024 m 给出 513（%d）" % cfg_small.scaled_heightmap_res())
 	_ok(absf(cfg.size_scale() - 4.0) < 0.0001 and absf(cfg.area_scale() - 16.0) < 0.0001,
-		"尺寸倍率 4× / 面积倍率 16×（%.1f / %.1f）" % [cfg.size_scale(), cfg.area_scale()])
+		"目标尺寸 4× / 面积倍率 16×（%.1f / %.1f）" % [cfg.size_scale(), cfg.area_scale()])
 
 	# ---- 1b) 尺寸推导的量：在 1024 m 上必须回落到旧常量本身（旧世界行为不变的正式证据）----
 	_ok(cfg_small.river_half_width() == 11.0 and cfg.river_half_width() == 44.0,
@@ -103,14 +119,19 @@ func _run() -> void:
 			- cfg.fog_reveal_radius_m() / cfg.map_size) < 0.0001,
 		"迷雾半径 / 地图边长 的比值不随尺寸变（小地图雾圈同大）")
 
-	# 遭遇率曲线：两端锚点必须分别落在旧世界与第六轮验收值上
-	_ok(cfg_small.party_count() == 14, "1024 m 的 AI 部队数回落到旧世界的 14 支（%d）" % cfg_small.party_count())
-	_ok(cfg.party_count() == 100, "4096 m 的 AI 部队数是 100 支（%d）" % cfg.party_count())
+	# 遭遇率曲线：三端锚点必须分别落在出货默认（= 旧世界 1024 m）/ 中间档 / 第六轮目标世界
+	_ok(cfg_small.party_count() == 14, "1024 m 的 AI 部队数是 14 支（%d，也是第七轮出货默认）" % cfg_small.party_count())
+	_ok(ship.party_count() == 14, "出货默认（1024 m）的 AI 部队数是 14 支（%d）" % ship.party_count())
+	var cfg_mid := MapConfig.new()
+	cfg_mid.map_size = 2048.0
+	_ok(cfg_mid.party_count() == 37, "2048 m 的 AI 部队数是 37 支（%d）" % cfg_mid.party_count())
+	_ok(cfg.party_count() == 100, "4096 m 目标世界的 AI 部队数是 100 支（%d）" % cfg.party_count())
 
-	# 节奏量不推导：速度与接触距离保持绝对值（横穿 4096 m 要 89 s，旧世界 22 s）—— 这是决定，不是遗漏
-	_ok(cfg.player_speed == 46.0 and cfg.ai_speed == 34.0 and cfg.encounter_distance == 7.0,
-		"移动速度与接触距离保持绝对值（%.0f / %.0f / %.1f m）" % [cfg.player_speed, cfg.ai_speed, cfg.encounter_distance])
-	_ok(cfg_small.party_count() < cfg.party_count(), "部队数随尺寸单调增（%d < %d）" % [cfg_small.party_count(), cfg.party_count()])
+	# 节奏量不推导：速度与接触距离保持绝对值（横穿出货默认的 1024 m 要 22 s）—— 这是决定，不是遗漏
+	_ok(ship.player_speed == 46.0 and ship.ai_speed == 34.0 and ship.encounter_distance == 7.0,
+		"移动速度与接触距离保持绝对值（%.0f / %.0f / %.1f m）" % [ship.player_speed, ship.ai_speed, ship.encounter_distance])
+	_ok(cfg_small.party_count() < cfg_mid.party_count() and cfg_mid.party_count() < cfg.party_count(),
+		"部队数随尺寸单调增（%d < %d < %d）" % [cfg_small.party_count(), cfg_mid.party_count(), cfg.party_count()])
 
 	# 这两条是「行为不变」的正式证据：推导函数在 1024 m 下必须回落到旧常量本身
 	_ok(CameraRig.far_for(cfg_small.map_size) == LEGACY_FAR,
@@ -286,10 +307,11 @@ func _run() -> void:
 
 	# ---- 9) 内存量级（只报告，不判定）：高度图与寻路栅格 ----
 	# 用十进制 MB，跟 ROADMAP §12.5 #4 写的「≈16.8 MB」同口径（MiB 会显示成 16.0，容易被当成不一致）。
-	# 注意这里报的是**2 m 间距那个选项**的内存（2049²，出货默认是 4 m/1025²，只有约 4.2 MB）。
+	# 注意这里报的是**2 m 间距铺满 4 倍图那个选项**的内存（2049²）；出货默认是 1024 m / 513²。
 	var bytes := want_res * want_res * 4
-	print("[地图尺寸] 4096 m / 2 m 间距（非默认）⇒ 高度图 %d² × 4 B = %.1f MB；默认 1025² 约 %.1f MB"
-		% [want_res, float(bytes) / 1000000.0, 1025.0 * 1025.0 * 4.0 / 1000000.0])
+	print("[地图尺寸] 4096 m / 2 m 间距（非默认）⇒ 高度图 %d² × 4 B = %.1f MB；1024 m 默认 513² 约 %.1f MB"
+		% [want_res, float(bytes) / 1000000.0, 513.0 * 513.0 * 4.0 / 1000000.0])
+	print("[地图尺寸] 出货默认 1024 m ⇒ 高度图 513²（2 m 间距）× 4 B ≈ %.1f MB" % [513.0 * 513.0 * 4.0 / 1000000.0])
 	print("[地图尺寸] 4096 m ⇒ 地形 %d×%d = %d 块 × %d 四边（LOD0 顶点 %d/块，间距 %.1f m）"
 		% [n_target, n_target, n_target * n_target, TerrainManager.lod_quads_for(TARGET_SIZE)[0],
 			v4096, TerrainManager.MESH_SPACING])

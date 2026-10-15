@@ -19,6 +19,12 @@ var kind: int = Kind.BANDIT
 var vision: float = 90.0
 var repath_timer: float = 0.0
 var repath_interval: float = 9.0
+## 该部队是否有**在途**的寻路请求（入队到回调之间为 true）。
+## 第七轮 ① 新增：没有它时，`not moving` 每帧都成立，同一支部队会反复往队列里塞同一个请求。
+var path_pending: bool = false
+## 首次寻路的错峰延迟（0~3 s）。**不抽随机数**，直接用出生点散列 —— 抽签会扰动各部队的
+## RNG 序列（强盗游荡点、选点阈值都吃同一股流），而错峰只需要「彼此不同」，不需要随机性。
+var start_delay: float = 0.0
 var last_goal: Vector2 = Vector2(-1, -1)
 var fail_cell: Vector2i = Vector2i(-1, -1)  ## 上次寻路失败的粗栅格格子
 var fail_until: float = 0.0                 ## 该格子的退避截止时刻（_elapsed 秒）
@@ -43,6 +49,7 @@ func setup_ai(p_data: MapData, p_cfg: MapConfig, p_kind: int, p_name: String, p_
 	repath_interval = rng.randf_range(7.0, 13.0)
 	wander_center = Vector2(position.x, position.z)
 	vision = p_cfg.bandit_vision_m() * rng.randf_range(0.8, 1.25)
+	start_delay = fposmod(position.x * 0.0173 + position.z * 0.0311, 3.0)
 	refresh_label()
 
 func ai_kind() -> String:
@@ -57,10 +64,22 @@ func ai_kind() -> String:
 func step(delta: float) -> void:
 	repath_timer -= delta
 	_elapsed += delta
-	if kind == Kind.BANDIT:
-		_bandit_think(delta)
-	else:
-		if not moving or repath_timer <= 0.0:
+	# ---- 第七轮 ①：世界时间冻结时**不再思考** ----
+	# delta == 0（暂停 / 开局 / 遭遇锁）时，部队不会移动、repath_timer 也不会减少，于是
+	# `not moving` 恒为真 —— 修之前每帧都朝寻路队列里塞一次请求；而队列的契约是
+	# 「每帧至少完成一个」（PathQueue 的饿死保护），暂停期间就变成**每帧付一整次粗栅格 A\***。
+	# 4096 m 出货图的实测（临时探针 tools/frame_bisect_tmp.gd，60 帧/档）：
+	#   idle（时间冻结）avg 184.9 / p50 42.0 / p95 1070.0 / max 1495.4 ms   ← 用户报的「特别卡」
+	#   把 Main._process 关掉后同场景 avg 0.40 ms ⇒ 全部代价都在 _process 里，且 AI 清空后
+	#   avg 减半、p50 掉到 0.42 ms ⇒ 主体是寻路请求风暴，不是迷雾/地形/小地图。
+	# 对照：1024 m 只有 avg 0.803 / p95 5.4 ms（14 支部队，风暴规模小两个数量级）。
+	# 冻结期间跳过思考不丢任何状态：位置、计时器、moving 本来就不变，时间一恢复当帧照常思考。
+	if delta > 0.0:
+		if kind == Kind.BANDIT:
+			_bandit_think(delta)
+		elif not path_pending and _elapsed >= start_delay and (not moving or repath_timer <= 0.0):
+			# start_delay 只影响「开局第一次」：此后每支部队各自的 repath_interval 已经错开。
+			# 没有它的话，开局第一次解除暂停时全部 31~100 支部队会在同一帧抛出请求。
 			_route_think()
 	super.step(delta)
 
@@ -130,6 +149,12 @@ func _repath_to(goal: Vector2, interval: float) -> bool:
 	# 「不掉帧」与「一次卡 200~730 ms」的区别。
 	# data.path_queue 为空（个别检查直接构造 MapData）时退回同步，行为与旧版完全一致。
 	if data.path_queue != null:
+		# 第七轮 ①：同一支部队同时只允许**一个**在途请求。
+		# 没有这条时，`not moving` 每帧成立 ⇒ 每帧重复入队同一个目标，队列的 pending 永远掉不到 0，
+		# 「每帧至少完成一个」就退化成每帧一次满额 A*。回调里会把 path_pending 清掉。
+		if path_pending:
+			return false
+		path_pending = true
 		repath_timer = interval
 		data.path_queue.enqueue(data.path_coarse, my, goal, func(pts: PackedVector3Array) -> void:
 			_apply_path(pts, goal, gcell, interval))
@@ -139,6 +164,7 @@ func _repath_to(goal: Vector2, interval: float) -> bool:
 ## 寻路结果的统一结算：同步与队列两条路共用，保证两条路的成功/失败行为一致
 ## （成功则 set_path 并清零失败计数；失败则按指数退避记住这个目标格）。
 func _apply_path(pts: PackedVector3Array, goal: Vector2, gcell: Vector2i, interval: float) -> bool:
+	path_pending = false   # 请求已结算（成功或失败），下一帧可以再提交
 	if pts.size() >= 1:
 		set_path(pts)
 		last_goal = goal
