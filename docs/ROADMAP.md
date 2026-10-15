@@ -2887,7 +2887,7 @@ Variant 噪声调用与 Packed 成员写入，这些在 VM / 分配器 / 内存�
 | 页面 | `tools/sfx_studio/{index.html,style.css,app.js}` | 纯静态、无依赖、无构建：试听 / 音量 / 开关 / 分类 / BGM / 批量 / 搜索 / 保存记录 / 导入导出 |
 | 清单 | `tools/sfx_studio/manifest.json` | 由 `tools/sfx_studio_export.gd` 从代码导出（28 条音色 + 40 个录音变体 + 基准 dB + 上下限），**提交进仓库** |
 | 服务 | `tools/sfx_studio/serve.py` | Python 标准库：静态文件 + `/api/health` + `/api/profile` 读写（临时文件 + `os.replace` 原子写） |
-| 入口 | `tools/sfx_studio/start.ps1` | 一键：导出试听 wav → 生成清单 → 起服务并开浏览器（带 BOM，PS 5.1 可解析） |
+| 入口 | `tools/sfx_studio/start.cmd` + `start.ps1` | 双击 `.cmd` 即可（ASCII 薄壳，透传参数；不写 chcp 的理由见 README）；`.ps1` 一键：导出试听 wav → 生成清单 → 起服务并开浏览器（带 BOM，PS 5.1 可解析） |
 | 运行时 | `scripts/audio/SfxProfile.gd` | 游戏侧读取层：解析 / 钳制 / 稀疏合并 / 十条记录 / 回滚 / 坏文件降级 |
 | 挂载 | `Sfx.gd` / `Bgm.gd` / `AudioConfig.gd` | `setup()` 里载入一次；`_peek()` 闸门；`volume_db_of()` 偏移；BGM 开关 |
 | 门禁 | `tools/sfx_profile_check.gd` | 第 9f 步：85 条断言，验"游戏到底认不认" |
@@ -2963,6 +2963,7 @@ Variant 噪声调用与 Packed 成员写入，这些在 VM / 分配器 / 内存�
 | 浏览器真跑一遍 | 端口 8793 + 临时 profile 路径，12 步全 `completed`；**3 次 `POST /api/profile` 全 200**；**0 个页面错误 / 0 条 console 错误**；写出的文件 5 398 字节、2 条记录、回滚后 state 与记录一致 |
 | 真实配置是否被动过 | 否：`%APPDATA%\Godot\app_userdata\Warband Strategic Map\sfx_profile.json` **不存在**（玩家不点保存就永远没有这个文件） |
 | 布局 | 1600×1000 下逐条滑杆 / `实际` dB / 保存栏 / 记录列表均单行不折行（保存栏三个按钮曾折成两行，已修 CSS） |
+| `start.cmd` 入口 | 参数透传（`-Port 8802 -NoOpen -SkipExport` → `/api/health` 200）· 失败路径退出码 **1** 且 `pause` 留住报错 · 路径含空格时 `%~dp0` 引号正确 · PowerShell 中文输出经 cmd 仍是可读的 936 字节 |
 
 ### 欠账
 

@@ -93,6 +93,9 @@ godot --headless --path /path/to/godot_opus5.5 --script res://tools/sfx_profile_
 
 #### 4b. 音效调音台（浏览器界面，可选）
 
+**双击 `tools\sfx_studio\start.cmd`**（命令行等价：`tools\sfx_studio\start.cmd -Port 8790`；
+`.cmd` 后面的开关原样透传给 `start.ps1`）。也可以直接调 PowerShell：
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\sfx_studio\start.ps1
 ```

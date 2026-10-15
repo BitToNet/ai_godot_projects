@@ -10,6 +10,19 @@
 
 ## 怎么开
 
+**双击 `tools\sfx_studio\start.cmd`** —— 最简单，什么都不用敲。它是个薄壳：找到 PowerShell →
+把参数原样转给同目录的 `start.ps1` → **失败时停住**让你看清报错（成功时窗口就是服务本身，关掉窗口即结束）。
+
+命令行里也一样（`cmd` 和 PowerShell 都能跑）：
+
+```bat
+tools\sfx_studio\start.cmd
+tools\sfx_studio\start.cmd -Port 8790
+```
+
+`.cmd` 后面的开关会**原样透传给 `start.ps1`**，所以下面这张参数表两种入口通用。
+不想经过 `.cmd` 也行：
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\sfx_studio\start.ps1
 ```
@@ -110,6 +123,7 @@ powershell -ExecutionPolicy Bypass -File tools\sfx_studio\start.ps1
 | 右上角不是`本地服务已连接` | 服务器没起（或端口被占）。保存只会进 localStorage，游戏读不到 |
 | 试听没声音 | 先点一下页面（浏览器要求用户交互后才允许出声）；确认 `audio_preview/` 有 wav，或重跑 `start.ps1` |
 | 保存后游戏没变化 | 游戏只在启动时读一次，重启游戏；再确认横幅里的路径就是游戏真正在用的 `user://` |
+| 关掉黑窗口后服务还在跑吗 | 不会。服务是这个窗口的子进程，关窗即结束，端口立刻释放（`start.cmd` 失败时才会 `pause` 等你按键） |
 | 某条音效试听是合成的、没有录音变体 | 那条还没有 foley 素材（正常，13 个动作类才有） |
 | 改了音量但`实际`没变 | 单条偏移只在**开启**状态下才影响播放；关掉的条目仍然显示"如果开着会是多少" |
 
@@ -127,5 +141,16 @@ powershell -ExecutionPolicy Bypass -File tools\sfx_studio\start.ps1
 | `index.html` / `style.css` / `app.js` | 页面本体（纯静态，无依赖、无构建） |
 | `manifest.json` | 由 `tools/sfx_studio_export.gd` 生成的音色清单（**提交**） |
 | `serve.py` | 本地服务：静态文件 + `/api/health` + `/api/profile`（读/写配置，原子写） |
+| `start.cmd` | **双击入口**：纯 ASCII 的薄壳，透传参数给 `start.ps1`（Windows 上双击即可用） |
 | `start.ps1` | 一键：导出试听音频 → 生成清单 → 起服务并开浏览器 |
 | `tools/sfx_profile_check.gd` | 门禁第 9f 步：85 条断言，验游戏侧到底认不认这份配置 |
+
+### 为什么 `start.cmd` 里一个中文都没有
+
+cmd 是按**当前控制台代码页**解码批处理文件的：这份文件里的中文只有存成 GBK 字节，
+才能在中文 Windows 的 936 控制台上显示正常 —— 机器相关，而且在 `git diff` / 代码审阅里是乱码。
+所以它保持 **7-bit ASCII**；用户看到的中文全部来自 `start.ps1`（UTF-8 + BOM，PowerShell 5.1 下正确）
+和本 README。
+
+同理，`start.cmd` **故意不写 `chcp 65001`**：那不会修好中文，反而会把 `start.ps1` 输出的中文
+（PowerShell 5.1 走控制台代码页输出）变成乱码。
