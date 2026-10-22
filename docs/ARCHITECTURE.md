@@ -625,7 +625,7 @@ flowchart TB
     RIVER --> RN
     SB --> AP["MapTextureBaker<br/>splat 512² / height RF / minimap 256² / territory 128²"]
     RN --> AP
-    AP --> MF["MaterialFactory<br/>4 个世界材质（唯一构造点）<br/>+ 2 张无缝细节贴图"]
+    AP --> MF["MaterialFactory<br/>4 个世界材质（唯一构造点）<br/>数值全部来自 ToonStyle.gd<br/>（阶梯光 / 调色板 / 外壳描边）"]
     MF --> TM["TerrainManager<br/>分块 + 4 级 LOD + 8 m 裙边"]
     HM --> WB["WaterBuilder<br/>海洋大平面 / 湖面 / 河道 ribbon"]
     SB --> VG["VegetationScatter<br/>7 m 候选格 + 拒绝采样<br/>4×4 分块 MultiMesh + visibility_range"]
@@ -637,7 +637,7 @@ flowchart TB
 |---|---|
 | 地形网格 | 分块 `max(128, map_size/16)` 米；每块 `LOD_QUADS=[32,16,8,4]` 随尺寸等比放大，**顶点间距恒为 4 m**；LOD 距离 `[220, 400, 660, ∞]`；四周 8 m 裙边遮缝 |
 | 植被 | 候选格 `CELL=7.0` **绝对值不变**（保持「每平方公里多少棵」的密度属性）；每类分 4×4 块，`cast_shadow=OFF`，远处整块消失，战略视图直接隐藏根节点 |
-| 材质 | `MaterialFactory` 是 4 个世界材质 + 2 张细节贴图的**唯一构造点**；细节贴图存的是**原始高度 0~1**，区间映射 `[0.60, 1.40]` 在 shader 里做（8 位通道存不下 >1.0，直接存会被静默钳掉一半） |
+| 材质 | `MaterialFactory` 是 4 个世界材质的**唯一构造点**，所有数值（三档阶梯 / 9 色 / 描边宽度 / 面着色）取自 `ToonStyle.gd`；旧版的 2 张无缝细节贴图已在 ⑮ 删除 —— 微缩沙盒的质感来自大色块 + 硬光影 + 干净轮廓，颗粒贴图只会把它拉回写实 |
 | 夜灯 | 只有城堡 / 城镇点灯（村庄不点）；能量由 `DayNightCycle` 按夜色推 |
 | 建筑 | 程序化几何（`MeshKit` 方块/棱柱/圆锥，顶点 alpha 约定 0=建材 / 1=窗（夜里自发光）/ 0.5=旗帜（风动））+ **村庄部分换成外部 GLB** |
 | 外部模型 | `AssetManifest`（要什么 / 应该多大 / 三角形数）+ `ModelLibrary`（加载 / 缓存 / **尺度推导** / 接地偏移）。尺度 = `target_m ÷ 几何实测 AABB 高度`，不是手抄倍率；加载失败**返回 null 让调用方整套回退程序化几何**，且先用 `ResourceLoader.exists` 再 load，避免一次回退就在门禁刷出 ERROR |
@@ -763,6 +763,7 @@ classDiagram
 | `settlement.gdshader` | 程序化建筑：顶点 alpha 通道约定（1=窗自发光、0.5=旗帜风动） | `night_glow`、`fog_map` |
 | `settlement_model.gdshader` | 外部 GLB 建筑（与上面**逐字对齐**的迷雾语义） | `night_glow`、`fog_map`/`fog_enabled`/`map_size` |
 | `sky_clouds.gdshader` | 程序化天空 + 白云，按太阳高度角在四套配色间插值 | `SKY_CONSTANTS`（GDScript 显式设一遍） |
+| `toon_outline.gdshader` | 反向外壳描边（`cull_front` + `unshaded`，沿**平滑法线**膨胀） | 由 `ToonStyle.attach_outline()` 挂到闭合几何的 `next_pass` |
 
 三条约定：
 
@@ -775,6 +776,9 @@ classDiagram
 3. **天空常量由 GDScript 显式设一遍**：`get_shader_parameter` 对「从未被赋值过」的 uniform 返回 `null`，
    自检读回来会以为参数丢了；`cloud_speed` 必须是 0，云一动就每帧重算天空辐照度，
    而环境光取自天空 → 整个场景漫反射在抖。
+4. **NPR 的数值只有一个来源**：`scripts/world/ToonStyle.gd`（阶梯 3 档 / 64×1 梯度图 / 9 色调色板 /
+   描边宽度与墨色）。shader 里的 `uniform ... = vec3(...)` 只是默认值，真正生效的是 `MaterialFactory`
+   逐条写进去的 `ToonStyle.C_*`；改配色必须两处一起改，`tools/visual_check.gd` 会逐条比对。
 
 ---
 

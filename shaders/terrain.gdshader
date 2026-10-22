@@ -1,68 +1,63 @@
 // =============================================================================
-//  地形 Shader —— 按「高度 + 坡度 + 生物群系 splat 图」自动混合：
-//  沙滩 / 草地 / 干草 / 泥土 / 岩石 / 雪 / 土路
-//  全部为程序化着色：没有使用任何贴图资源，细节由 GLSL 内的值噪声生成。
+//  terrain.gdshader —— NPR 低多边形地形（微缩手办风）
 //
-//  splat_map 通道约定（由 GDScript 在运行时生成 ImageTexture）：
-//    R = 道路遮罩       (0..1)
-//    G = 沙漠/干旱因子  (0..1)
-//    B = 裸岩/碎石因子  (0..1)
-//    A = 湿度（草地浓密程度）(0..1)
+//  ---- 这一版和旧版的三点不同（旧的写实混合已经全部退场）----
+//  1. **面着色（Faceted）**：法线不再用顶点平滑法线，而是在片元里用屏幕空间导数
+//     把每个三角形拍成一块平面 —— 这就是 three.js 里 `geometry.toNonIndexed()` +
+//     `computeVertexNormals()` 的等价效果，但**不动几何体**：顶点位置、索引、LOD 分块
+//     与探针指纹全部保持原样（scale_probe 的 terrain_pos_hash / idx_hash 不变）。
+//     为什么不用真的去索引：那会让 LOD0 每块从 1089 顶点涨到 6144，建块耗时与
+//     显存一起翻几倍，而画面上一个像素都不差。
+//  2. **三阶阶梯光照**：不用内置 lambert，改用 `light()` + gradient_map 把 N·L 量化成
+//     暗 / 中 / 亮三档（见 ToonStyle.RAMP_BANDS）。阴影仍然走引擎的 shadow map，
+//     所以 ATTENUATION 是硬的、边缘干脆。
+//  3. **高饱和纯色带**：海滨浅滩柠檬黄 → 低地苹果绿 → 高山松石青 → 雪顶纯白。
+//     没有任何贴图与法线细节（旧版的 detail_map / detail_normal 已删除）：
+//     微缩沙盒的质感来自**大色块 + 硬光影 + 干净轮廓**，颗粒贴图只会把它拉回写实。
 //
-//  height_map：R 通道 = 世界高度（米），用于相邻像素级的细节判断
+//  splat_map 通道约定（由 MapTextureBaker 烘焙，未改动）：
+//    R = 道路遮罩  G = 沙漠/干旱  B = 裸岩/碎石  A = 湿度（未使用）
 //
-//  第七轮 ② 起多了一张**无缝细节贴图**（detail_map，灰度，均值 ~1.0）与它的法线图：
-//  参考项目的原话是「大片单色地形看着像色纸」—— 程序化噪声负责的是大色斑，
-//  高频颗粒交给贴图更便宜也更清楚（一趟 texture() 换掉两次 vnoise 的四次哈希）。
-//  铺法用 UV2 那种「按世界尺寸平铺」的做法（这里没有网格 UV，直接拿 w_pos.xz 当 UV）。
+//  ---- 为什么地形没有反向外壳描边 ----
+//  反向外壳依赖"背面"：它把网格沿法线膨胀后只画背面。地形是一张**开放的**高度场曲面，
+//  从上方看根本没有背面可画，膨胀只会得到一片什么都不剩的壳。
+//  所以地形的"线稿感"用另外两件事表达：面着色的硬转折 + 海岸线的深色湿沙带
+//  （h ∈ [-0.7, 0.7] 的一圈深柠檬）。植被 / 建筑 / 部队这些闭合几何体才挂 next_pass 描边。
 // =============================================================================
 shader_type spatial;
-render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+render_mode cull_back, diffuse_lambert, specular_schlick_ggx;
 
 uniform sampler2D splat_map : filter_linear, repeat_disable;
 uniform sampler2D fog_map : filter_linear, repeat_disable;
-// 细节贴图与法线图必须 repeat + mipmap：前者要平铺，后者在远处靠 mipmap 抗摩尔纹
-uniform sampler2D detail_map : filter_linear_mipmap, repeat_enable;
-uniform sampler2D detail_normal : filter_linear_mipmap, repeat_enable;
+uniform sampler2D gradient_map : filter_nearest, repeat_disable;
 uniform float fog_enabled = 0.0;
 uniform float fog_darkness = 0.62;
 
 uniform float map_size = 1024.0;
 uniform float sea_level = 0.0;
-uniform float snow_line = 118.0;      // 雪线高度（米）
-uniform float mountain_line = 88.0;   // 岩石开始占主导的高度
-uniform float slope_rock = 0.42;      // 坡度阈值（0 = 平地, 1 = 垂直）
-uniform float beach_width = 6.0;      // 沙滩带宽（米）
-uniform float detail_strength = 0.55; // 法线细节强度（程序化那一层）
-uniform float night_amount = 0.0;     // 0 = 白天, 1 = 深夜（由昼夜循环写入）
-uniform float day_amount = 1.0;       // 1 = 白天, 0 = 天黑（由昼夜循环写入，见 register_shader）
-// 细节贴图的平铺尺寸（米/份）与混合强度：推导见 MaterialFactory 顶部注释
-uniform float detail_tile_a = 9.0;
-uniform float detail_tile_b = 13.0;
-uniform float detail_tile_macro = 70.0;     // 第三层：同一张贴图放大成大色斑
-uniform float detail_lo = 0.60;             // 细节值域映射：贴图里存的是 0~1 原始高度
-uniform float detail_hi = 1.40;             // （8 位通道存不下 >1.0，映射必须放在这里）
-uniform float detail_strength_tex = 0.95;   // 贴图法线的强度
-uniform float detail_albedo = 0.70;         // 细节贴图混进底色的比例（0 = 关）
-uniform float normal_strength = 1.0;
-// 地面自发光的「地板」：不进光照计算，所以阴影/坡向明暗全保留
-uniform vec3 ground_emission_color : source_color = vec3(0.13, 0.15, 0.12);
-uniform float ground_emission_energy = 0.60;
-uniform float albedo_saturation = 1.10;
+uniform float snow_line = 118.0;       // 雪线（米，由高度场分位数推导）
+uniform float mountain_line = 88.0;    // 岩石/松石青开始占主导的高度
+uniform float slope_rock = 0.42;       // 坡度阈值（1 = 垂直）：陡坡强制算岩石
+uniform float beach_width = 6.0;       // 沙滩带宽（米）
+uniform float night_amount = 0.0;      // 0 = 白天, 1 = 深夜
+uniform float day_amount = 1.0;        // 1 = 白天, 0 = 天黑
 
-uniform vec3 color_sand : source_color = vec3(0.84, 0.78, 0.58);
-uniform vec3 color_grass : source_color = vec3(0.26, 0.38, 0.15);
-uniform vec3 color_grass_dry : source_color = vec3(0.55, 0.51, 0.26);
-uniform vec3 color_dirt : source_color = vec3(0.38, 0.30, 0.21);
-uniform vec3 color_rock : source_color = vec3(0.44, 0.42, 0.40);
-uniform vec3 color_rock_dark : source_color = vec3(0.27, 0.26, 0.26);
-uniform vec3 color_snow : source_color = vec3(0.94, 0.96, 1.0);
-uniform vec3 color_road : source_color = vec3(0.47, 0.38, 0.26);
+// ---- 调色板（默认值与 ToonStyle.gd 的常量逐位一致，门禁会比对）----
+uniform vec3 color_seabed : source_color = vec3(0.42, 0.82, 0.72);
+uniform vec3 color_sand : source_color = vec3(0.96, 0.88, 0.44);
+uniform vec3 color_grass : source_color = vec3(0.45, 0.77, 0.29);
+uniform vec3 color_grass_dark : source_color = vec3(0.30, 0.60, 0.25);
+uniform vec3 color_rock : source_color = vec3(0.30, 0.72, 0.66);
+uniform vec3 color_rock_dark : source_color = vec3(0.18, 0.53, 0.55);
+uniform vec3 color_snow : source_color = vec3(0.97, 0.99, 1.00);
+uniform vec3 color_road : source_color = vec3(0.93, 0.82, 0.60);
+uniform vec3 color_desert : source_color = vec3(0.98, 0.86, 0.48);
+// 湿沙 / 海岸线的深色圈：柠檬黄压暗一档，勾出「水与陆」的分界
+uniform vec3 color_tide : source_color = vec3(0.72, 0.58, 0.22);
 
 varying vec3 w_pos;
 varying vec3 w_norm;
 
-// ---------- 程序化噪声（无贴图） ----------
 float hash21(vec2 p) {
 	p = fract(p * vec2(123.34, 345.45));
 	p += dot(p, p + 34.345);
@@ -80,133 +75,84 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-float fbm4(vec2 p) {
-	float s = 0.0;
-	float a = 0.5;
-	for (int i = 0; i < 4; i++) {
-		s += a * vnoise(p);
-		p *= 2.03;
-		a *= 0.5;
-	}
-	return s;
-}
-
 void vertex() {
 	w_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// 平滑法线先算好：它只用来判坡度（片元里再用导数拍平）
 	w_norm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 }
 
 void fragment() {
-	vec2 uv = clamp(w_pos.xz / map_size, vec2(0.0), vec2(1.0));
-	vec4 sp = texture(splat_map, uv);
-	float road = sp.r;
-	float desert = sp.g;
-	float rocky = sp.b;
-	float moist = sp.a;
+	// ---------- 面着色：把三角形拍平 ----------
+	// VERTEX 在片元里是**视图空间**位置，对 x / y 求导的叉积就是面法线（视图空间）。
+	// 背面要反过来，否则从下面看地形会全黑。
+	vec3 face_n = normalize(cross(dFdx(VERTEX), dFdy(VERTEX)));
+	if (!FRONT_FACING) {
+		face_n = -face_n;
+	}
+	NORMAL = face_n;
 
-	vec3 wn = normalize(w_norm);
-	float slope = 1.0 - clamp(wn.y, 0.0, 1.0);
-	float h = w_pos.y;
+	// ---------- 分类：高度 + 坡度 + splat ----------
+	vec2 suv = clamp(w_pos.xz / map_size, vec2(0.0), vec2(1.0));
+	vec4 splat = texture(splat_map, suv);
+	float rmask = splat.r;          // 道路
+	float dmask = splat.g;          // 干旱
+	float bmask = splat.b;          // 裸岩
+	float slope = 1.0 - clamp(w_norm.y, 0.0, 1.0);
+	float h = w_pos.y - sea_level;
 
-	// 远处衰减高频细节：否则 1m 级噪声在远景会变成摩尔纹/噪点
-	float cam_dist = distance(CAMERA_POSITION_WORLD, w_pos);
-	float lod_fade = 1.0 - smoothstep(170.0, 760.0, cam_dist);
+	vec3 col = color_grass;
+	// 低地：苹果绿，用一条硬边界分成「向阳 / 背阴」两档（不是渐变）
+	float low = clamp((h - beach_width) / max(1.0, mountain_line * 0.55), 0.0, 1.0);
+	col = mix(color_grass, color_grass_dark, step(0.55, low));
+	// ---- 大尺度草色斑块（两色硬切）----
+	// 只在 90 m 战略视角看得出来的问题：整片低地都是同一个苹果绿，地形起伏
+	// 被"平涂"吃掉了。参考风格里草地本身就有深浅两种色块，所以这里用一层
+	// 约 40 m 尺度的程序噪声在两种绿之间硬切 —— 不加贴图、不改几何、
+	// 不碰任何 RNG，纯粹是片元着色。阈值取 0.5（噪声中位数）保证任何一块
+	// 视野里都有深浅两种斑块，不会整片落在同一个值上。
+	float patch = vnoise(w_pos.xz * 0.025) * 0.65 + vnoise(w_pos.xz * 0.08) * 0.35;
+	float lowland = 1.0 - step(0.90, low);
+	col = mix(col, color_grass_dark, step(0.50, patch) * lowland * 0.90);
+	// 干旱带：奶油黄（只在低地出现，高山上不该有沙漠色）
+	col = mix(col, color_desert, step(0.5, dmask) * (1.0 - step(mountain_line * 0.75, h)));
+	// 岩石 / 高山：松石青。高度线以上或陡坡都算（陡坡用更深的青）
+	float rocky = max(step(mountain_line, h), step(slope_rock, slope));
+	float steep = step(0.62, slope);
+	col = mix(col, mix(color_rock, color_rock_dark, steep), rocky);
+	// 裸岩遮罩再压一层，让山脊碎石更明显
+	col = mix(col, color_rock_dark, step(0.55, bmask) * 0.65);
+	// 雪：雪线以上纯白；雪线附近用一条硬边界，不要羽化
+	col = mix(col, color_snow, step(snow_line, h));
+	// 沙滩：海滨一圈柠檬黄（水下也铺沙子，水面会透过它）
+	col = mix(col, color_sand, 1.0 - step(beach_width, h));
+	// 水下：越深越偏青绿（水本身是半透明的，这里只是给水底一个干净的底色）
+	float depth = clamp(-h / 9.0, 0.0, 1.0);
+	col = mix(col, color_seabed, step(h, 0.0) * (1.0 - depth * 0.55));
+	// 海岸线：水陆交界的一条深柠檬，代替地形的描边
+	float tide = 1.0 - step(0.7, abs(h));
+	col = mix(col, color_tide, tide * 0.85);
+	// 土路：暖奶黄（旧版是棕色土路，在这套配色里会显脏）
+	col = mix(col, color_road, rmask * 0.92);
 
-	// 宏观色斑 + 微观颗粒
-	float macro = fbm4(w_pos.xz * 0.010);
-	float meso = vnoise(w_pos.xz * 0.09);
-	float micro = mix(0.55, vnoise(w_pos.xz * 0.85), lod_fade);
-	float micro2 = mix(0.5, vnoise(w_pos.xz * 2.7), lod_fade);
+	// ---------- 昼夜 + 战争迷雾（语义与旧版逐字一致）----------
+	col *= 1.0 - 0.55 * night_amount;
+	float fog_v = texture(fog_map, suv).r;
+	col *= mix(1.0, 1.0 - fog_darkness * (1.0 - fog_v), fog_enabled);
 
-	// ---------- 各材质权重 ----------
-	// 沙滩：低海拔平坦处 + 沙漠生物群系
-	float beach = 1.0 - smoothstep(1.0, beach_width, h - sea_level);
-	beach *= 1.0 - smoothstep(0.12, 0.34, slope);
-	float w_sand = clamp(desert * 1.2 + beach * 0.9, 0.0, 1.0);
-
-	// 雪：高度 + 宏观噪声扰动，陡壁挂不住雪
-	float snow_jitter = (macro - 0.5) * 26.0 + (meso - 0.5) * 8.0;
-	float w_snow = smoothstep(snow_line - 16.0, snow_line + 26.0, h + snow_jitter);
-	w_snow *= 1.0 - smoothstep(0.52, 0.86, slope);
-
-	// 岩石：坡度主导，高海拔裸岩，以及 splat 的碎石因子
-	float w_rock = smoothstep(slope_rock - 0.10, slope_rock + 0.16, slope);
-	w_rock = max(w_rock, smoothstep(mountain_line, mountain_line + 48.0, h) * 0.85 * (1.0 - w_snow));
-	w_rock = max(w_rock, rocky * 0.6 * (1.0 - w_snow));
-	w_rock = clamp(w_rock, 0.0, 1.0);
-
-	// 草地：其余低地，湿度越高越浓绿
-	float w_grass = clamp((1.0 - w_snow) * (1.0 - w_rock) * (1.0 - w_sand) * (0.35 + 0.9 * moist), 0.0, 1.0);
-
-	// 泥土：兜底 / 过渡材质，让混合更平滑
-	float w_dirt = clamp((1.0 - w_snow) * (1.0 - w_rock) * (1.0 - w_sand) * (1.0 - w_grass) + 0.10, 0.0, 1.0);
-
-	float sum = w_sand + w_snow + w_rock + w_grass + w_dirt + 0.0001;
-	w_sand /= sum;
-	w_snow /= sum;
-	w_rock /= sum;
-	w_grass /= sum;
-	w_dirt /= sum;
-
-	// ---------- 各材质颜色（用噪声做色斑变化） ----------
-	vec3 c_sand = color_sand * (0.88 + 0.24 * micro2);
-	vec3 c_grass = mix(color_grass_dry, color_grass, clamp(moist + (macro - 0.5) * 0.8, 0.0, 1.0));
-	c_grass *= 0.82 + 0.36 * micro;
-	vec3 c_rock = mix(color_rock_dark, color_rock, micro2 * 0.7 + meso * 0.3);
-	vec3 c_snow = color_snow * (0.96 + 0.08 * micro);
-	vec3 c_dirt = mix(color_dirt, color_sand, 0.3 * micro2);
-
-	vec3 albedo = c_sand * w_sand + c_grass * w_grass + c_rock * w_rock + c_snow * w_snow + c_dirt * w_dirt;
-
-	// 近岸潮湿 —— 略微压暗，模拟湿沙
-	float wet = 1.0 - smoothstep(0.5, 4.0, h - sea_level);
-	albedo *= 1.0 - wet * 0.18 * (1.0 - w_snow);
-
-	// ---------- 土路 ----------
-	float redge = road + (micro2 - 0.5) * 0.30 + (meso - 0.5) * 0.12;
-	float rmask = smoothstep(0.35, 0.70, redge);
-	vec3 c_road = color_road * (0.86 + 0.28 * mix(0.5, vnoise(w_pos.xz * 1.3), lod_fade));
-	albedo = mix(albedo, c_road, rmask * 0.92);
-
-	// ---------- 细节贴图（取值域映射后均值 ~1.0，MUL 混合）----------
-	// 两份贴图取不同的平铺尺寸（9 m / 13 m，互相不整除），错开之后不会叠出规则图案
-	vec2 duv_b = w_pos.xz / detail_tile_b;
-	vec2 duv_a = w_pos.xz / detail_tile_a;
-	vec3 detail_rgb = mix(vec3(detail_lo), vec3(detail_hi), texture(detail_map, duv_b).rgb);
-	albedo *= mix(vec3(1.0), detail_rgb, detail_albedo * lod_fade);
-	// 第三层：同一张贴图按 ~70 m 平铺，给大片单色地形一点大尺度色斑。
-	// 省一张贴图 —— 放大到 70 m 后 mipmap 正好只留低频内容；同样过一遍值域映射，
-	// 否则均值 0.5 的原始高度会把整张图压暗 17%。
-	float macro_detail = mix(detail_lo, detail_hi, texture(detail_map, w_pos.xz / detail_tile_macro).r);
-	albedo *= mix(1.0, macro_detail, 0.35);
-
-	// 底色饱和度补偿（天空环境光偏蓝会把地表洗灰，见 MaterialFactory 注释）。
-	// 只动 albedo：光照、阴影、昼夜亮度都不受影响。
-	float lum = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
-	albedo = clamp(mix(vec3(lum), albedo, albedo_saturation), vec3(0.0), vec3(1.0));
-
-	ALBEDO = albedo * (1.0 - 0.55 * night_amount);
-	// 战争迷雾：未探索区域压暗
-	float fog_v = texture(fog_map, uv).r;
-	ALBEDO *= mix(1.0, 1.0 - fog_darkness * (1.0 - fog_v), fog_enabled);
-	// 地面自发光地板：把最暗处从死黑抬到「微微透光」。它跟**白昼权重**走 ——
-	// 夜里归零，否则整张地图会自己发亮；清晨如果按「1 - night_amount」算会几乎是满值，
-	// 天光的层次会整个糊掉（实测黎明近黑像素 31.6% → 3.2%）。
-	EMISSION = ground_emission_color * ground_emission_energy * day_amount;
-	ROUGHNESS = mix(0.92, 0.42, w_snow);
-	SPECULAR = mix(0.08, 0.25, w_snow * 0.6 + rmask * 0.2);
+	ALBEDO = col;
+	ROUGHNESS = 1.0;
+	SPECULAR = 0.0;
 	METALLIC = 0.0;
+	EMISSION = vec3(0.0);
+}
 
-	// ---------- 法线细节 ----------
-	// 两层：程序化低频（大地形起伏感）+ 贴图高频（颗粒感）。
-	// 两者都只扰动视觉，不影响寻路。
-	float d1 = (vnoise(w_pos.xz * 0.55) - 0.5) * lod_fade;
-	float d2 = (vnoise(w_pos.xz * 0.19) - 0.5) * lod_fade;
-	vec3 bump_w = vec3(d1 * 0.7 + d2 * 0.5, 0.0, d1 * 0.35 + d2 * 0.8);
-	bump_w *= detail_strength * (0.35 + 0.9 * w_rock) * (1.0 - rmask * 0.7);
-	// 贴图法线解回 [-1,1]，直接当世界空间的水平扰动（这片地形是高度场，切线近似 XZ 平面）
-	vec3 ntex = texture(detail_normal, duv_a).rgb * 2.0 - 1.0;
-	bump_w += vec3(ntex.x, 0.0, ntex.y) * detail_strength_tex * normal_strength
-			* lod_fade * (0.35 + 0.9 * w_rock) * (1.0 - rmask * 0.5);
-	NORMAL = normalize(NORMAL + (VIEW_MATRIX * vec4(bump_w, 0.0)).xyz);
+// ---------- 三阶阶梯光 ----------
+// Godot 每个光源调用一次：DIRECTIONAL 的 LIGHT 是「指向光源」的方向（视图空间）。
+// ATTENUATION 里含 shadow map 的结果，所以硬阴影 = 亮部直接掉到暗部，正是要的效果。
+void light() {
+	float ndl = dot(normalize(NORMAL), normalize(LIGHT));
+	float lit = clamp(ndl, 0.0, 1.0);
+	// 阶梯查表：x = N·L，y 随便（1 像素高的图）
+	float band = texture(gradient_map, vec2(lit, 0.5)).r;
+	DIFFUSE_LIGHT += band * ATTENUATION * LIGHT_COLOR;
 }

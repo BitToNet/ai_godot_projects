@@ -1,21 +1,30 @@
 // =============================================================================
-//  水面 Shader —— 海面 / 湖泊 / 河流共用
-//  · 顶点波动（多重正弦叠加，无需贴图）
-//  · 菲涅尔反射（视角越斜越像天空的镜子）
-//  · 用 height_map 采样水底高度 → 浅水偏亮偏透明，岸边泛白泡沫
-//  · flow_dir 用于河流：让波形沿水流方向滚动
+//  water.gdshader —— NPR 清透水体（海 / 湖 / 河共用）
+//
+//  这套水体要的是「一眼见底的动画水面」，不是写实反射：
+//   · 深浅按**三档硬边带**切开（浅 / 中 / 深），不做连续插值；
+//   · 岸边浪花是一条**阶梯化的白边**（深度阈值 + 噪声打碎），不是柔和的泡沫渐变；
+//   · 天空反射用一个**量化过的菲涅尔台阶**（step），只在很斜的视角突然出现一条亮带；
+//   · 波形仍然靠顶点位移（低多边形海面的起伏），近处再用导数把三角形拍平 ——
+//     和地形同一套面着色手法，于是海面和陆地是同一种"低多边形"语言。
+//
+//  保留的接口（WaterBuilder / DayNightCycle 在写，改名会静默丢参数）：
+//   height_map / map_size / water_level / wave_scale / wave_height / wave_speed /
+//   flow_dir / foam_strength / foam_near / foam_far / transparency / shallow_alpha /
+//   shallow_color / deep_color / sky_tint / foam_color / night_amount
 // =============================================================================
 shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
+render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_lambert, specular_schlick_ggx;
 
 uniform sampler2D height_map : filter_linear, repeat_disable;
+uniform sampler2D gradient_map : filter_nearest, repeat_disable;
 uniform float map_size = 1024.0;
 uniform float water_level = 0.0;
 
-uniform vec3 shallow_color : source_color = vec3(0.34, 0.60, 0.60);
-uniform vec3 deep_color : source_color = vec3(0.02, 0.11, 0.22);
-uniform vec3 sky_tint : source_color = vec3(0.55, 0.72, 0.95);
-uniform vec3 foam_color : source_color = vec3(0.93, 0.97, 0.99);
+uniform vec3 shallow_color : source_color = vec3(0.40, 0.88, 0.78);
+uniform vec3 deep_color : source_color = vec3(0.10, 0.55, 0.72);
+uniform vec3 sky_tint : source_color = vec3(0.55, 0.82, 0.98);
+uniform vec3 foam_color : source_color = vec3(0.97, 1.00, 0.98);
 
 uniform float wave_height = 0.35;
 uniform float wave_speed = 1.0;
@@ -61,43 +70,74 @@ void vertex() {
 }
 
 void fragment() {
+	// ---------- 低多边形水面：近处拍平三角形，远处回到平滑 ----------
+	vec3 face_n = normalize(cross(dFdx(VERTEX), dFdy(VERTEX)));
+	if (!FRONT_FACING) {
+		face_n = -face_n;
+	}
+	vec3 smooth_n = NORMAL;
+	float dist = distance(CAMERA_POSITION_WORLD, w_pos);
+	float facet = 1.0 - smoothstep(220.0, 620.0, dist);
+	NORMAL = normalize(mix(smooth_n, face_n, facet));
+
+	// ---------- 水深 ----------
 	vec2 uv = clamp(w_pos.xz / map_size, vec2(0.0), vec2(1.0));
 	float bed = texture(height_map, uv).r;
 	float depth = max(w_pos.y - bed, 0.0);
 
-	float t = TIME * wave_speed;
-	// 远处衰减程序噪声细节：否则高频噪声在远景会变成摩尔纹/白点
-	float cam_dist = distance(CAMERA_POSITION_WORLD, w_pos);
-	float det = 1.0 - smoothstep(150.0, 640.0, cam_dist);
+	// ---------- 三档色带（硬边，不插值）----------
+	// 分界按**这张地图的水深分布**定：近岸 0~1.5 m 是大片浅滩，1.5~6 m 才是常见的
+	// 近海，6 m 以上才算深水。旧版 3 / 11 m 的分界让整个可见近海都落在"浅"档，
+	// 海面于是是一整片均匀的淡色，看不出"由浅入深"的三档。
+	vec3 col = shallow_color;
+	float mid = step(1.5, depth);
+	float deep = step(6.0, depth);
+	col = mix(col, mix(shallow_color, deep_color, 0.55), mid);
+	col = mix(col, deep_color, deep);
 
-	// 波浪法线（双频噪声 + 行波）
-	vec2 p = w_pos.xz * 0.35;
-	float n1 = vnoise(p + vec2(t * 0.35, t * 0.22));
-	float n2 = vnoise(p * 2.3 - vec2(t * 0.5, t * 0.3));
-	float nx = ((n1 - 0.5) + (n2 - 0.5) * 0.5) * det;
-	float nz = (vnoise(p + vec2(13.7, 4.2) + vec2(-t * 0.28, t * 0.4)) - 0.5) * 1.5 * det;
-	vec3 n = normalize(vec3(nx * 0.55, 1.0, nz * 0.55));
-	NORMAL = normalize((VIEW_MATRIX * vec4(n, 0.0)).xyz);
+	// ---------- 天空反射：量化菲涅尔，只留一条硬亮带 ----------
+	// 阈值必须"很掠射"：0.62 对应离水面 38°，那几乎是整片远海 —— 实测会把浅滩
+	// 整块染成灰白，沙子透不出来。0.88（约 17°）才是真正的水天线。
+	vec3 vdir = normalize(VIEW);
+	float fres = 1.0 - clamp(dot(normalize(NORMAL), vdir), 0.0, 1.0);
+	float sky_band = step(0.88, fres) * 0.45;
+	col = mix(col, sky_tint, clamp(sky_band, 0.0, 0.45));
 
-	// 菲涅尔
-	float fres = pow(1.0 - clamp(dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0), 4.0);
+	// ---------- 岸边浪花：阶梯白边 + 噪声打碎 ----------
+	// 浪花必须由**岸坡**驱动，而不是"浅水就算浪"。这片地图有几个巨大的平坦浅滩
+	// （水深 0~0.2 m 铺出去上百米）—— 只按深度判断的话整片浅滩都被当成水线刷成
+	// 白板，实测连海底的沙纹都看不见。这里补一个海底坡度：平坦浅滩 slope≈0.02，
+	// 真正的沙滩坡 > 0.15，于是只有"紧贴沙滩、并且坡在往上走"的那一圈才出白边。
+	vec2 duv = vec2(0.5 / map_size, 0.0);
+	vec2 dvv = vec2(0.0, 0.5 / map_size);
+	float bx = texture(height_map, uv + duv).r - texture(height_map, uv - duv).r;
+	float bz = texture(height_map, uv + dvv).r - texture(height_map, uv - dvv).r;
+	float bed_slope = length(vec2(bx, bz));
+	float shore = (1.0 - step(0.35, depth)) * step(0.10, bed_slope);
+	// 河流用 flow_dir 让浪花沿水流方向滚动（海/湖传的是默认值，等于不动）
+	vec2 flow = normalize(flow_dir + vec2(1e-4));
+	float chop = vnoise(w_pos.xz * 0.9 + flow * TIME * 0.7);
+	float foam = step(0.45, shore * (0.55 + 0.55 * chop) * foam_strength);
+	col = mix(col, foam_color, foam * 0.95);
 
-	// 深浅颜色
-	vec3 col = mix(shallow_color, deep_color, smoothstep(0.8, 16.0, depth));
-	col = mix(col, sky_tint * 1.02, fres * 0.34);
+	// ---------- 昼夜 ----------
+	col *= 1.0 - 0.60 * night_amount;
 
-	// 岸边泡沫：浅水 + 噪声破碎的白边
-	float band = 1.0 - smoothstep(foam_near, foam_far, depth);
-	float chop = mix(0.62, vnoise(w_pos.xz * 0.55 + vec2(t * 0.6, -t * 0.4)), det);
-	float foam = clamp(band * (0.45 + 0.85 * chop) * foam_strength, 0.0, 1.0);
-	col = mix(col, foam_color, foam * 0.85);
-
-	ALBEDO = col * (1.0 - 0.60 * night_amount);
-	ALPHA = mix(shallow_alpha, transparency, smoothstep(0.0, 9.0, depth));
-	ALPHA = clamp(ALPHA + foam * 0.5, 0.0, 1.0);
-	ROUGHNESS = mix(0.09, 0.40, foam * 0.6);
-	SPECULAR = 0.45 - foam * 0.3;
+	ALBEDO = col;
+	// 浅滩要"一眼见底"：alpha 低到能看清沙纹；泡沫只额外加一点，否则白边会把沙滩盖住
+	ALPHA = clamp(mix(shallow_alpha, transparency, step(1.5, depth)) + foam * 0.30, 0.0, 1.0);
+	ROUGHNESS = 1.0;
+	SPECULAR = 0.0;
 	METALLIC = 0.0;
-	// 水体自发光极弱，仅让夜间不显得死黑
-	EMISSION = col * 0.11 * night_amount;
+	EMISSION = vec3(0.0);
+}
+
+// 三阶阶梯光：水面也吃同一套 ramp，于是浪峰的明暗是三档而不是渐变。
+// **水面不吃投影**（不乘 ATTENUATION）：树影 / 屋影落在水面上会变成一块块深色
+// "油斑"——水面本来就在动，硬阴影投上去既不物理也不好看；参考风格里的水面
+// 只有色带 + 白边，没有花的影子。地形 / 建筑仍然照常接收阴影。
+void light() {
+	float lit = clamp(dot(normalize(NORMAL), normalize(LIGHT)), 0.0, 1.0);
+	float band = texture(gradient_map, vec2(lit, 0.5)).r;
+	DIFFUSE_LIGHT += band * LIGHT_COLOR;
 }

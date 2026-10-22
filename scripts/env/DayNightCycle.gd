@@ -20,13 +20,20 @@ const SKY_SHADER := "res://shaders/sky_clouds.gdshader"
 ## 能量取值照参考项目（那边 1.20 / 0.22）但都压低了：环境光抬的是**均匀光**，
 ## 抬过头地形就发灰发白（实测 1.05 时正午均亮度比旧版高 8%、饱和度反而低 12%）；
 ## 而方向光的对比度才是「不飘」的来源，所以这里把环境光让出来的部分给了太阳。
+##
+## 第十五轮（NPR）再降一档：阶梯光照的亮档已经是 1.0，环境光 0.90 + 太阳 1.35
+## 相当于把反照率乘 2.25 —— 纯色被推到接近白，色块直接糊掉（实测截图草绿变荧光绿、
+## 树冠变薄荷白）。现在总光照 ≈ 1.1（亮面）/ 0.34（背光面），比例 3.2:1：
+## 平涂色保持饱和，阴影面只是同色压暗，而不是靠"更亮"来堆对比。
 const AMBIENT_SKY_CONTRIBUTION := 0.60
-const AMBIENT_ENERGY_DAY := 0.90
+const AMBIENT_ENERGY_DAY := 0.26
 ## 夜里给一点点底：环境光取自天光，深夜天空几乎全黑，纯物理的话地面一片死黑玩不了
-const AMBIENT_ENERGY_NIGHT := 0.36
+const AMBIENT_ENERGY_NIGHT := 0.20
 ## 白天太阳光强的斜率和上限（旧值是 1.25 / 1.25）
-const SUN_SLOPE := 1.35
-const SUN_MAX := 1.35
+const SUN_SLOPE := 0.90
+const SUN_MAX := 0.90
+## 光照用的太阳高度角上限（度）。见 _apply() 里的说明：不封顶的话正午是一块死平的纯色。
+const SUN_ELEV_CAP_DEG := 58.0
 
 ## 天空里与时刻无关的常量参数。集中在一处、由 GDScript 显式设一遍（理由同
 ## MaterialFactory）：shader 里的默认值只当兜底 —— get_shader_parameter 对
@@ -92,34 +99,30 @@ func setup(p_cfg: MapConfig, p_data: MapData) -> void:
 	env.ambient_light_sky_contribution = AMBIENT_SKY_CONTRIBUTION
 	env.ambient_light_color = Color(0.55, 0.56, 0.60)
 	env.ambient_light_energy = AMBIENT_ENERGY_DAY
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_white = 4.0
-	# 环境光遮蔽：树根 / 墙脚 / 山坳的接触阴影全靠它。没有它，模型与地面之间没有
-	# 过渡，整片地形看着「飘」在半空 —— 参考项目那边同样按这个理由开着
-	env.ssao_enabled = true
-	env.ssao_radius = 3.0
-	env.ssao_intensity = 1.35
-	env.ssao_power = 1.4
-	env.ssao_detail = 0.6
-	env.ssao_light_affect = 0.25
-	# 轻微辉光：让水面高光和天空过渡柔和一点（不开高，否则整体发灰）
-	env.glow_enabled = true
-	env.glow_intensity = 0.24
-	env.glow_bloom = 0.05
-	env.glow_hdr_threshold = 1.15
+	# NPR：改用线性色调映射。filmic 会把高饱和色往灰里拉（雪顶 / 松石青首当其冲），
+	# 而阶梯光照的亮部本来就不该被"胶片曲线"再压一次 —— 平涂要的是干净的三档。
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	env.tonemap_exposure = 1.0
+	# 环境光遮蔽：NPR 里 AO 的脏边会把平涂色块弄脏，而且与阶梯光影互相打架。
+	# 手办的接触阴影交给硬阴影本身（下面是 0 角径的太阳）。
+	env.ssao_enabled = false
+	# 辉光同理：白雪花一开 bloom 就糊成一团，色块边界会消失
+	env.glow_enabled = false
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_DEPTH
-	env.fog_depth_begin = 420.0
-	env.fog_depth_end = 2600.0
-	env.fog_density = 1.0
+	# 雾往后推：微缩沙盒要看清楚每一块地的颜色，雾只用来藏地图切边
+	env.fog_depth_begin = 700.0
+	env.fog_depth_end = 3400.0
+	env.fog_density = 0.70
 	# 雾对天空的影响从 0.6 降到 0.10：可见天空只有地平线上一条窄带，
 	# 0.6 会把那条带整个洗成雾色，蓝天和云都看不见了
-	env.fog_sky_affect = 0.10
+	env.fog_sky_affect = 0.06
 	# 空气透视：远处的雾带一点天空色，山看起来「在空气里」而不是被一层灰罩住
-	env.fog_aerial_perspective = 0.35
+	env.fog_aerial_perspective = 0.25
 	env.adjustment_enabled = true
-	env.adjustment_saturation = 1.06
-	env.adjustment_contrast = 1.04
+	# 高饱和：这是整套 NPR 调色板的兜底（局部色已经在 shader 里了）
+	env.adjustment_saturation = 1.16
+	env.adjustment_contrast = 1.03
 	env_node.environment = env
 	add_child(env_node)
 
@@ -127,15 +130,28 @@ func setup(p_cfg: MapConfig, p_data: MapData) -> void:
 	sun = DirectionalLight3D.new()
 	sun.name = "Sun"
 	sun.shadow_enabled = true
-	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	sun.directional_shadow_max_distance = 340.0
-	sun.directional_shadow_split_1 = 0.06
-	sun.directional_shadow_split_2 = 0.18
-	sun.directional_shadow_split_3 = 0.42
+	# **PSSM 4 级联**，不用 SHADOW_ORTHOGONAL。原因不是性能，是正确性：
+	# 正交相机的视锥没有透视收拢，SHADOW_ORTHOGONAL 那条"把阴影相机拟合到视锥"的
+	# 路径在正交下会把深度范围拉得极扁，硬阴影（无 PCF 柔化）于是沿等高线出现
+	# 一圈圈自阴影麻点 —— 实测截图里整片草坡像等高线地图，bias 加到 0.10、
+	# 覆盖缩到 110 m 都不消失，换 PSSM 立刻干净（tools/shadow_probe.gd 的对照图）。
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	# 正交等距会把相机拉远（高 400 m 时离注视点 ~690 m），阴影覆盖距离要跟上，
+	# 否则拉远以后"脚下没影子、远处有影子"。但也不能一味加：覆盖越大 → 每个阴影
+	# 纹素管的世界尺寸越大 → 硬阴影（无 PCF）会在缓坡上留下等高线状的自阴影麻点。
+	# 360 m + 下面加大 bias，是这两条约束的折中。
+	sun.directional_shadow_max_distance = 360.0
+	sun.directional_shadow_split_1 = 0.08
+	sun.directional_shadow_split_2 = 0.22
+	sun.directional_shadow_split_3 = 0.48
+	# **硬阴影 + 抗自阴影麻点**：角径 0 + 模糊 0 让边缘像刀切（柔和阴影会把三档
+	# 光影揉回连续渐变）。地形已整块关掉投影（TerrainManager 里有说明），所以这里
+	# 只需要压住树冠 / 屋顶这类凸包几何的自阴影：0.06 / 1.4 足够，
+	# 再大就会让树影和树根"分家"（peter-panning）。
 	sun.shadow_bias = 0.06
 	sun.shadow_normal_bias = 1.4
-	sun.light_angular_distance = 1.2
-	sun.shadow_blur = 1.2
+	sun.light_angular_distance = 0.0
+	sun.shadow_blur = 0.0
 	add_child(sun)
 	_apply()
 
@@ -191,7 +207,13 @@ func _apply() -> void:
 	var elev_deg := rad_to_deg(asin(clampf(elev, -1.0, 1.0)))
 	# 东升 → 南中天 → 西落（北半球）：yaw 在白天扫过 180°
 	var yaw_deg := 90.0 - (time_of_day - 0.25) * 360.0
-	sun.rotation = Vector3(-deg_to_rad(maxf(elev_deg, -8.0)), deg_to_rad(yaw_deg), 0.0)
+	# 第十五轮（NPR）：**光照用的太阳高度角封顶 58°**。
+	# 正午真正的天文高度角会到 90°（太阳在头顶），这时地面 N·L ≈ 1，
+	# 三阶阶梯全部落进"亮"档 —— 整张地图变成一块没有起伏的纯绿，
+	# 树和房子也不投影（影子缩到脚下）。微缩手办风要的是"永远有一点斜光"，
+	# 所以只对**光源方向**封顶；天空里的太阳方位 / 天色插值仍按真实角度算。
+	var light_elev_deg := minf(elev_deg, SUN_ELEV_CAP_DEG)
+	sun.rotation = Vector3(-deg_to_rad(maxf(light_elev_deg, -8.0)), deg_to_rad(yaw_deg), 0.0)
 
 	var day_f := clampf(elev * 3.2, 0.0, 1.0)
 	day_amount = day_f

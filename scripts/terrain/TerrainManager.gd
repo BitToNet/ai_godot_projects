@@ -69,7 +69,13 @@ func setup(p_cfg: MapConfig, p_data: MapData, p_mat: ShaderMaterial, focus: Vect
 			var node := MeshInstance3D.new()
 			node.name = "Chunk_%d_%d" % [cx, cz]
 			node.material_override = mat
-			node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			# 第十五轮（NPR）：**地形不投影，只接收影子**。
+			# 高度场是一整张开放曲面，开着投影就等于让它给自己打阴影：硬阴影（无柔化）
+			# 在缓坡上会沿等高线冒出成片的"梯田"和棋盘状麻点 —— 实测 bias 加到 0.20、
+			# 阴影图放到 8192 都压不干净（tools/shadow_probe.gd 的对照图）。
+			# 关掉以后山体不再互相遮挡，但地形起伏本来由**三阶光影 + 面着色**表达，
+			# 而"缩微感"要的树影 / 屋影 / 部队影依然投在地面上，一个不少。
+			node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(node)
 			var c := Vector3(float(cx) * cs + cs * 0.5, 0.0, float(cz) * cs + cs * 0.5)
 			_chunks.append({"node": node, "cx": cx, "cz": cz, "lod": -1, "cache": {}, "center": c})
@@ -89,7 +95,17 @@ func _process(delta: float) -> void:
 	if cam == null:
 		return
 	_rebuild_budget = 2
-	_update_lods(cam.global_position, false)
+	_update_lods(_lod_origin(cam), false)
+
+## LOD 的"观察点"用相机的**注视点**，而不是相机自身位置。
+## 正交等距下相机被推得很远（高 90 m 时水平偏移 90/tan(35.26°) ≈ 127 m，
+## 旧版俯角 55° 时只有 63 m），拿相机位置量距离会让整张图的 LOD 无端降一档。
+## 注视点就是屏幕上真正在看的那个地面点，用它量距离与旧版口径完全一致。
+func _lod_origin(cam: Camera3D) -> Vector3:
+	var parent := cam.get_parent()
+	if parent is CameraRig:
+		return (parent as CameraRig).focus_point()
+	return cam.global_position
 
 func _update_lods(cam_pos: Vector3, force: bool) -> void:
 	# 先算出「想换到哪一级」，再按距离从近到远处理：缓存命中的换级是免费的（见 _apply_lod），
@@ -129,8 +145,8 @@ func _apply_lod(ch: Dictionary, lod: int) -> void:
 		cache[lod] = mesh
 		_rebuild_budget -= 1
 	ch.node.mesh = mesh
-	# LOD2/3 只在远处出现：关掉它们的阴影投射（远处地形的阴影本来也糊成一团）
-	ch.node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if lod >= 2 else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	# 地形一律不投影（理由见 _ready 里建块那段注释：高度场自阴影会出麻点）
+	ch.node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	ch.lod = lod
 
 func _build_chunk_mesh(cx: int, cz: int, quads: int) -> ArrayMesh:

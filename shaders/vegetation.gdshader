@@ -1,17 +1,23 @@
 // =============================================================================
-//  植被 Shader —— 针叶林 / 阔叶林 / 仙人掌 / 枯木 / 岩石 共用
-//  · 顶点色给出树干/树冠等固有色
-//  · 用实例世界原点的哈希做每棵树的色调扰动（无需 MultiMesh instance color）
-//  · 顶点风动：按局部高度加权，树干不动树梢摆动
-//  · 支持季节性/夜间整体压暗
+//  vegetation.gdshader —— NPR 植被（针叶林 / 阔叶林 / 仙人掌 / 枯木 / 岩石）
+//
+//  与旧版的差别：
+//   · 加入 3 阶阶梯光（gradient_map），树冠不再有连续的明暗过渡；
+//   · 每棵树的色调扰动从「连续随机」改成**两档硬切换**（同一片林子只有两种绿），
+//     否则一片针叶林会变成几十种绿，看着像噪点而不是手绘；
+//   · 反向外壳描边由材质工厂挂到 next_pass 上（见 shaders/toon_outline.gdshader），
+//     网格本身是 MeshKit 逐三角形发散的（面法线），所以外壳的膨胀方向是连续的 ——
+//     这点很重要：树冠一旦按面法线裂开，描边会变成毛刺。
+//   · 保留风动 / 昼夜压暗 / 战争迷雾 / 战略视图淡出（fade_start）四条既有接线。
 // =============================================================================
 shader_type spatial;
-render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+render_mode cull_back, diffuse_lambert, specular_schlick_ggx;
 
+uniform sampler2D gradient_map : filter_nearest, repeat_disable;
 uniform float wind_strength = 1.0;
 uniform float wind_speed = 1.1;
 uniform float sway_height = 7.0;    // 达到最大摆幅的局部高度
-uniform float tint_range = 0.22;    // 每实例色调扰动幅度
+uniform float tint_range = 0.22;    // 每实例色调扰动幅度（两档硬切换）
 uniform float night_amount = 0.0;
 uniform float fade_start = 0.0;     // 战略视图淡出用（0 = 不淡出）
 uniform sampler2D fog_map : filter_linear, repeat_disable;
@@ -31,7 +37,9 @@ float hash21(vec2 p) {
 void vertex() {
 	vec3 inst = MODEL_MATRIX[3].xyz;
 	float h = hash21(inst.xz * 0.37);
-	v_tint = 1.0 - tint_range * 0.5 + h * tint_range;
+	// 两档硬切换：0.5 以下是「浅一档」，以上是「深一档」。不做 lerp ——
+	// 连续扰动会让同一片林子出现几十种绿，反而失去手绘感。
+	v_tint = 1.0 - tint_range * step(0.5, h);
 
 	// 风：相位取决于实例位置，幅度取决于局部高度
 	float ph = inst.x * 0.11 + inst.z * 0.09;
@@ -50,7 +58,13 @@ void fragment() {
 	float fog_v = texture(fog_map, fuv).r;
 	base *= mix(1.0, 1.0 - fog_darkness * (1.0 - fog_v), fog_enabled);
 	ALBEDO = base;
-	ROUGHNESS = 0.92;
-	SPECULAR = 0.05;
+	ROUGHNESS = 1.0;
+	SPECULAR = 0.0;
 	METALLIC = 0.0;
+}
+
+void light() {
+	float lit = clamp(dot(normalize(NORMAL), normalize(LIGHT)), 0.0, 1.0);
+	float band = texture(gradient_map, vec2(lit, 0.5)).r;
+	DIFFUSE_LIGHT += band * ATTENUATION * LIGHT_COLOR;
 }

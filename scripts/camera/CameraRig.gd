@@ -1,12 +1,19 @@
 ## =============================================================================
-##  CameraRig —— 骑砍式战略相机
-##  · 始终注视「玩家部队 + 平移偏移」的地面点，默认俯角 55°
-##  · 滚轮缩放高度 18~400 米，俯角联动：越近越平视(26°)，越远越俯瞰(72°)
-##  · 鼠标中键 / 右键拖拽旋转；手柄右摇杆或 Q / E 也能转（左右改朝向，上下改俯角）
-##  · move_* 动作平移（WASD / 方向键 / 左摇杆 / 十字键）+ 屏幕边缘平移；focus_party 回到玩家部队
-##  · 键位不写死：滚轮 / L1 / R1 / Back 等全部来自 project.godot 的 [input] 段
+##  CameraRig —— 骑砍式战略相机（第十五轮改为**正交等距**）
+##  · 始终注视「玩家部队 + 平移偏移」的地面点
+##  · **正交投影（PROJECTION_ORTHOGONAL）**：没有近大远小，远近物体一样大，
+##    这就是微缩沙盒 / 手办感最核心的一条 —— 透视会把远景压扁，正交不会。
+##  · 俯角**固定 35.264°**（真正的等距角，atan(1/√2)）：等距视角的关键是"所有方向
+##    等缩"，俯角一旦随缩放联动就不再是等距了。所以旧的「越近越平视、越远越俯瞰」
+##    被删除；滚轮改为调**正交尺寸** cam.size（可视高度，米）。
+##  · 滚轮缩放的视觉尺度与旧版一致：size = zoom_height × 1.19，默认 90 m 高度 →
+##    可视高度 ≈ 107 m（旧版 fov 52° / 俯角 55° / 高 90 m 时算出来也是 107 m）。
+##    因此 zoom_height 仍然可以当"缩放级别"用：标签缩放、平移速度、战略视图阈值
+##    全部沿用旧口径，一处没改。
+##  · 中键 / 右键拖拽、Q/E、手柄右摇杆：**只转朝向（yaw）**，不再改俯角。
 ##  · 高度超过 strategic_view_height_m() 进入「战略视图」（通知 Main 放大标签、剔除植被）
-##  · 提供 ray_to_terrain()：屏幕坐标 → 地形世界坐标（供点击移动 / 悬停提示）
+##  · 提供 ray_to_terrain()：屏幕坐标 → 地形世界坐标（供点击移动 / 悬停提示）。
+##    正交下射线是平行的，逐步推进 + 二分的算法不变，仍然收敛。
 ## =============================================================================
 class_name CameraRig
 extends Node3D
@@ -18,6 +25,13 @@ signal strategic_changed(is_strategic: bool)
 const RAY_STEP_MAX := 22.0
 const RAY_GUARD := 4000
 
+## 正交等距的固定俯角：atan(1/√2) = 35.264°，斜 45° + 俯 35.264° 才是 1:1:1 等距
+const ISO_PITCH_DEG := 35.264
+## 默认朝向：45° 让地块呈菱形铺开（等距的标志性构图）
+const ISO_YAW_DEG := 45.0
+## 缩放高度 → 正交可视高度（米）的换算：与旧版 fov 52°/俯角 55° 的观感对齐
+const ORTHO_SIZE_PER_HEIGHT := 1.19
+
 var cam: Camera3D
 var data: MapData
 var cfg: MapConfig
@@ -25,7 +39,9 @@ var player: Node3D
 
 var yaw: float = 0.0
 var zoom_height: float = 90.0
-var pitch_deg: float = 55.0
+## 俯角：默认锁在等距角。**不要**在缩放路径里改它 —— 改了就不是等距了。
+## 保留成成员变量是因为 tools/visual_shot.gd 的机位表要能指定俯角拍对比图。
+var pitch_deg: float = ISO_PITCH_DEG
 var pan_offset: Vector2 = Vector2.ZERO
 
 var _dragging: bool = false
@@ -39,26 +55,28 @@ func setup(p_cfg: MapConfig, p_data: MapData, p_player: Node3D) -> void:
 	player = p_player
 	cam = Camera3D.new()
 	cam.name = "StrategicCamera"
-	cam.fov = 52.0
+	# 正交投影：微缩沙盒的"平"来自这里（透视会让远处的山缩成一点）
+	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+	cam.keep_aspect = Camera3D.KEEP_HEIGHT   # size = 可视高度（米），宽度按窗口比例自动推
 	cam.near = 0.5
 	cam.far = far_for(cfg.map_size)
 	add_child(cam)
+	yaw = deg_to_rad(ISO_YAW_DEG)
 	zoom_height = cfg.cam_default_height_m()
-	_update_pitch_from_zoom()
+	pitch_deg = ISO_PITCH_DEG
+	_apply_projection()
 	_apply()
 
 func _process(delta: float) -> void:
 	if cam == null:
 		return
 	var pan := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	# 右摇杆 / Q E 旋转与俯仰。摇杆力度是模拟量，所以按「每秒」标定：
+	# 右摇杆 / Q E 旋转。摇杆力度是模拟量，所以按「每秒」标定：
 	# cam_rotate_speed 是「每像素」的鼠标灵敏度，乘 300 换算成满杆每秒的弧度。
+	# 上下（cam_rotate_up / down）在等距视角下不再改俯角 —— 那是旧版的自由机位行为。
 	var rot := Input.get_axis("cam_rotate_left", "cam_rotate_right")
 	if absf(rot) > 0.01:
 		yaw -= rot * cfg.cam_rotate_speed * 300.0 * delta
-	var tilt := Input.get_axis("cam_rotate_up", "cam_rotate_down")
-	if absf(tilt) > 0.01:
-		pitch_deg = clampf(pitch_deg + tilt * 70.0 * delta, 12.0, 86.0)
 	# 屏幕边缘平移
 	var vp := get_viewport()
 	var mouse := vp.get_mouse_position()
@@ -76,7 +94,7 @@ func _process(delta: float) -> void:
 				pan.y += 1.0
 	if pan.length_squared() > 0.0:
 		pan = pan.normalized()
-		# 按相机朝向平移，速度随高度缩放（越高移动越快）
+		# 按相机朝向平移，速度随缩放缩放（越高移动越快）
 		var speed := cfg.cam_pan_speed_m() * clampf(zoom_height / cfg.cam_default_height_m(), 0.35, 4.0) * delta
 		var fwd := Vector3(sin(yaw), 0, cos(yaw))
 		var right := Vector3(cos(yaw), 0, -sin(yaw))
@@ -100,28 +118,24 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 	if event is InputEventMouseMotion and _dragging:
 		yaw -= event.relative.x * cfg.cam_rotate_speed
-		if absf(event.relative.y) > 0.0:
-			pitch_deg = clampf(pitch_deg + event.relative.y * cfg.cam_rotate_speed * 90.0, 12.0, 86.0)
+		# 竖直拖拽不再改俯角：等距视角的俯角是构图的一部分，不该被手滑改掉
 		return
 	# 缩放与回中走动作表：滚轮 / 手柄 L1 R1 / Back 键都在 project.godot 的 [input] 段里定义
 	if event.is_action_pressed("zoom_in"):
 		zoom_height = clampf(zoom_height * 0.88, cfg.cam_min_height_m(), cfg.cam_max_height_m())
-		_update_pitch_from_zoom()
+		_apply_projection()
 	elif event.is_action_pressed("zoom_out"):
 		zoom_height = clampf(zoom_height / 0.88, cfg.cam_min_height_m(), cfg.cam_max_height_m())
-		_update_pitch_from_zoom()
+		_apply_projection()
 	elif event.is_action_pressed("focus_party"):
 		recenter()
 
-func _update_pitch_from_zoom() -> void:
-	var h := zoom_height
-	var mid := maxf(cfg.cam_default_height_m(), cfg.cam_min_height_m() + 1.0)
-	if h <= mid:
-		var t := (h - cfg.cam_min_height_m()) / maxf(1.0, mid - cfg.cam_min_height_m())
-		pitch_deg = lerpf(cfg.cam_pitch_near, 55.0, clampf(t, 0.0, 1.0))
-	else:
-		var t := (h - mid) / maxf(1.0, cfg.cam_max_height_m() - mid)
-		pitch_deg = lerpf(55.0, cfg.cam_pitch_far, clampf(t, 0.0, 1.0))
+## 把 zoom_height 换算成正交可视高度。缩放只改这一个数，不改俯角 —— 这就是"等距"。
+## 函数名保留 _update_pitch_from_zoom 的历史调用点已全部改掉，现在是语义准确的 _apply_projection。
+func _apply_projection() -> void:
+	if cam == null:
+		return
+	cam.size = maxf(1.0, zoom_height * ORTHO_SIZE_PER_HEIGHT)
 
 func _apply() -> void:
 	if player == null:

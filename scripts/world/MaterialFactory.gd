@@ -1,75 +1,49 @@
 ## =============================================================================
 ##  MaterialFactory —— 4 个世界着色器材质的唯一构造点
 ##
-##  从 Main.gd 的 _make_materials() 原样搬出：材质、shader 路径、参数名与
-##  **设置顺序**都保持一致。它是纯函数式的（只读 cfg 与 data.splat_texture，
-##  不碰任何 RNG），所以搬动它不可能改变生成指纹。
+##  从 Main.gd 的 _make_materials() 原样搬出，至今仍是「大地图长什么样」的全部开关：
+##  昼夜把 night_amount / night_glow 注册进去、迷雾往里塞 fog_map。
 ##
-##  为什么值得单独一个类：这四个材质是「大地图长什么样」的全部开关
-##  （昼夜把 night_amount / night_glow 注册进去、迷雾往里塞 fog_map），
-##  以前和造城堡、播种植被混在一个 850 行的文件里。
+##  ---- 第十五轮：全盘迁移到 NPR（卡通渲染 / 微缩手办）----
+##  这一版删掉了旧版的**两张无缝细节贴图**（灰度细节 + 法线凹凸）与地面自发光地板：
+##  它们的作用是「把大色块打碎成写实质感」，与目标风格正好相反。现在地形靠
+##  高饱和色带 + 面着色 + 三阶硬光影成立，一片 1.4 m 的颗粒贴图只会把它拉回塑料感。
+##  删除的同时也带走了 3 个常量与 1 个 4 倍频噪声生成器 —— 开局少一次 256² 的
+##  GDScript 逐像素循环（实测 ~120 ms）。
 ##
-##  第七轮 ② 起，地形的两张**无缝细节贴图**也在这里生成（见文件末）：
-##  它们是「地形长什么样」的一部分，而且与地图尺寸、种子完全无关，所以整局只做一次。
+##  三条统一约定（与 scripts/world/ToonStyle.gd 一致）：
+##   1. 所有世界材质都吃同一张 3 阶阶梯贴图 gradient_map；
+##   2. 闭合几何体（建筑 / 部队 / 植被 / 真模型）挂反向外壳描边 next_pass；
+##      地形是开放曲面，没有背面可膨胀，它的轮廓靠面着色与海岸带色彩（见 terrain.gdshader）；
+##   3. 参数一律**显式赋初值**：Godot 里没赋过的 uniform，get_shader_parameter() 返回 null，
+##      shader 会静默用默认值 —— tools/visual_check.gd 的整节断言就是为这条服务的。
+##
+##  纯函数式：只读 cfg 与 data.splat_texture，不碰任何 RNG，所以搬动不影响生成指纹。
 ## =============================================================================
 class_name MaterialFactory
 extends RefCounted
 
-# ---------- 地形细节贴图参数（照参考项目 world_map.gd 的推导，别凭感觉改）----------
-# 那边的尺度推导：默认视距下一个屏幕像素约覆盖 0.10 世界单位。本项目实测同为
-# 0.119 世界单位/像素（1600×900、相机高 90 m、俯角 55°、fov 52），所以参数可以照搬：
-#   贴图 256px 的环面周长 = 256，特征数 ≈ 256 × freq，
-#   特征世界尺寸 = TILE / 特征数。
-# 细节特征要占 6~14 像素才看得见 —— 也就是 0.7~1.7 世界单位：
-#   detail: freq 0.035 → 9 个特征 / 13 m 的一份 → 每个 1.44 m ≈ 12 像素
-#   normal: freq 0.055 → 14 个特征 / 9 m 的一份 → 每个 0.64 m ≈ 5 像素
-const DETAIL_TILE_A := 9.0          ## 法线（凹凸）用：一份贴图覆盖 9 m
-const DETAIL_TILE_B := 13.0         ## 细节反照率用：13 m。与 A 取不整除，避免叠出规则图案
-const DETAIL_TILE_MACRO := 70.0     ## 同一张贴图放大成大色斑的那一层（~70 m 一份）
-const DETAIL_TEX_SIZE := 256
-const DETAIL_FREQ := 0.035
-const DETAIL_SEED := 4421
-## 灰度细节的取值区间：均值 ~1.0，MUL 混合不会整体压暗。
-## **区间映射在做 shader 里**（detail_lo / detail_hi 两个 uniform），贴图里存的是
-## 原始高度 0~1 —— 8 位无符号通道存不下 1.0 以上的值，直接存 [0.60, 1.40] 会被
-## 静默钳到 1.0：提亮那一半全丢，整张图反而整体压暗 4%
-## （tools/visual_check.gd 的值域断言就是这么把这个坑挖出来的）。
-const DETAIL_LO := 0.60
-const DETAIL_HI := 1.40
-const NORMAL_FREQ := 0.055
-const NORMAL_SEED := 9137
-const NORMAL_STRENGTH := 1.0
+## 沙滩带宽（米）：水陆交界的柠檬黄带子。6 m 在默认视距下约 50 像素，是一条清楚的边。
+const BEACH_WIDTH := 6.0
+## 陡坡转岩石的坡度阈值（1 - N.y）：0.42 ≈ 32.5°
+const SLOPE_ROCK := 0.42
 
-## 地面自发光的「地板」能量（参考项目 atmosphere.ground_emission）。
-## 它不进光照计算，所以阴影 / 坡向明暗全保留，只是把最暗处从死黑抬到微微透光；
-## 夜里由 shader 用 night_amount 自动归零，否则整张地图会自己发亮。
-const GROUND_EMISSION_COLOR := Color(0.13, 0.15, 0.12)
-const GROUND_EMISSION_ENERGY := 0.60
-
-## 底色饱和度补偿：天空环境光偏蓝，会把地表底色洗掉一档（实测正午整屏
-## 平均饱和度从 0.40 掉到 0.35）。只补 albedo，不动光照，夜里不会跟着变艳。
-const ALBEDO_SATURATION := 1.10
-
-## ---- 第③批-2：真模型（外部 GLB）的材质 ----
 ## 势力染色强度：mix(vec3(1.0), tint, k) 里的 k。乘色只改色相、不改明暗，
 ## 调 0.0 就等于完全不染 —— 是个可以放心拧的旋钮，不是结构。
-## 这里与 shaders/settlement_model.gdshader 的默认值写同一个数：万一哪天忘了赋值，
+## 与 shaders/settlement_model.gdshader 的默认值写同一个数：万一忘了赋值，
 ## 退化成 shader 默认值也不会突变。tools/asset_check.gd 会断言这个 uniform 被赋过值。
 const MODEL_TINT_STRENGTH := 0.22
-
-## 无缝贴图的进程内缓存：内容与地图尺寸 / 种子完全无关，整局只生成一次。
-## （settlement_check 之类一次建多个世界的自检也只付一次生成成本。）
-static var _tex_cache: Dictionary = {}
+## 真模型图集的色阶数：5 档刚好把写实明暗压成手绘平涂，又保留窗框/木纹的层次
+const MODEL_POSTERIZE := 5.0
 
 ## 真模型材质：**每种势力一个**，该势力所有建筑的 MeshInstance3D 共用。
 ## 为什么能共用：KayKit 这批模型内嵌同一张图集（asset_check 用内容哈希钉住这条前提），
-## 所以材质只有「势力染色」一个变量 —— 3 个势力 = 3 个 ShaderMaterial，
-## 而不是「每栋楼一个」。键是染色色的 html 串（tint 是纯数据，不需要额外结构体）。
+## 所以材质只有「势力染色」一个变量 —— 3 个势力 = 3 个 ShaderMaterial。
 static var _model_mats: Dictionary = {}
 ## 图集贴图（4 个模型内嵌的是同一张，取第一个能拿到的即可；拿不到就是 null）
 static var _model_atlas: Texture2D = null
 
-## 地形（splat 混合 + 细节贴图 + 昼夜 + 迷雾）
+## 地形（色带 + 面着色 + 昼夜 + 迷雾）
 var terrain: ShaderMaterial
 ## 建筑（城堡 / 城镇 / 村庄 / 桥梁共用）
 var settlement: ShaderMaterial
@@ -79,45 +53,57 @@ var party: ShaderMaterial
 var vegetation: ShaderMaterial
 
 func build(cfg: MapConfig, data: MapData) -> void:
+	var ramp := ToonStyle.gradient_map()
+
 	terrain = ShaderMaterial.new()
 	terrain.shader = load("res://shaders/terrain.gdshader")
+	terrain.set_shader_parameter("gradient_map", ramp)
 	terrain.set_shader_parameter("splat_map", data.splat_texture)
 	terrain.set_shader_parameter("map_size", cfg.map_size)
 	terrain.set_shader_parameter("sea_level", cfg.sea_level)
-	# 第七轮 ②：岩石线 / 雪线改成**高度场实测分位数**（岩石带 = 最高的 12% 陆地、
-	# 雪 = 最高的 4%），而不是绝对高度。旧值 88/118 m 在 1024 m 图上只覆盖
-	# 5.5% / 1.1% 的陆地 —— 山几乎不会变成岩石色、更不会积雪，
-	# 整张图看起来就是"一大片绿"。分位数口径换 1024/2048/4096 都成立。
+	# 岩石线 / 雪线是**高度场实测分位数**（岩石带 = 最高的 12% 陆地、雪 = 最高的 4%），
+	# 而不是绝对高度：分位数口径换 1024/2048/4096 都成立（第七轮 ②）。
 	terrain.set_shader_parameter("snow_line", cfg.snow_line_of(data.gen))
 	terrain.set_shader_parameter("mountain_line", cfg.rock_line_of(data.gen))
+	terrain.set_shader_parameter("beach_width", BEACH_WIDTH)
+	terrain.set_shader_parameter("slope_rock", SLOPE_ROCK)
 	terrain.set_shader_parameter("night_amount", 0.0)
-	# 第七轮 ②：细节贴图 + 自发光地板 + 底色饱和度
-	terrain.set_shader_parameter("detail_map", seamless_detail_texture())
-	terrain.set_shader_parameter("detail_normal", seamless_normal_texture())
-	terrain.set_shader_parameter("detail_tile_a", DETAIL_TILE_A)
-	terrain.set_shader_parameter("detail_tile_b", DETAIL_TILE_B)
-	terrain.set_shader_parameter("detail_tile_macro", DETAIL_TILE_MACRO)
-	terrain.set_shader_parameter("detail_lo", DETAIL_LO)
-	terrain.set_shader_parameter("detail_hi", DETAIL_HI)
-	terrain.set_shader_parameter("normal_strength", NORMAL_STRENGTH)
-	terrain.set_shader_parameter("ground_emission_color", GROUND_EMISSION_COLOR)
-	terrain.set_shader_parameter("ground_emission_energy", GROUND_EMISSION_ENERGY)
-	terrain.set_shader_parameter("albedo_saturation", ALBEDO_SATURATION)
+	terrain.set_shader_parameter("day_amount", 1.0)
+	# 调色板：**逐条**显式赋值（默认值只是兜底，门禁会比对两处是否一致）
+	_apply_terrain_palette(terrain)
 
 	settlement = ShaderMaterial.new()
 	settlement.shader = load("res://shaders/settlement.gdshader")
+	settlement.set_shader_parameter("gradient_map", ramp)
 	settlement.set_shader_parameter("map_size", cfg.map_size)
 	settlement.set_shader_parameter("night_glow", 0.0)
+	ToonStyle.attach_outline(settlement, ToonStyle.OUTLINE_W_SETTLEMENT)
 
 	party = ShaderMaterial.new()
 	party.shader = load("res://shaders/settlement.gdshader")
+	party.set_shader_parameter("gradient_map", ramp)
 	party.set_shader_parameter("map_size", cfg.map_size)
 	party.set_shader_parameter("night_glow", 0.0)
+	ToonStyle.attach_outline(party, ToonStyle.OUTLINE_W_PARTY)
 
 	vegetation = ShaderMaterial.new()
 	vegetation.shader = load("res://shaders/vegetation.gdshader")
+	vegetation.set_shader_parameter("gradient_map", ramp)
 	vegetation.set_shader_parameter("map_size", cfg.map_size)
 	vegetation.set_shader_parameter("night_amount", 0.0)
+	ToonStyle.attach_outline(vegetation, ToonStyle.OUTLINE_W_VEGETATION)
+
+## 地形调色板（与 shaders/terrain.gdshader 的同名 uniform 默认值逐位一致）
+static func _apply_terrain_palette(m: ShaderMaterial) -> void:
+	m.set_shader_parameter("color_seabed", ToonStyle.C_SEABED)
+	m.set_shader_parameter("color_sand", ToonStyle.C_SAND)
+	m.set_shader_parameter("color_grass", ToonStyle.C_GRASS)
+	m.set_shader_parameter("color_grass_dark", ToonStyle.C_GRASS_DARK)
+	m.set_shader_parameter("color_rock", ToonStyle.C_ROCK)
+	m.set_shader_parameter("color_rock_dark", ToonStyle.C_ROCK_DARK)
+	m.set_shader_parameter("color_snow", ToonStyle.C_SNOW)
+	m.set_shader_parameter("color_road", ToonStyle.C_ROAD)
+	m.set_shader_parameter("color_desert", ToonStyle.C_DESERT)
 
 # =========================================================
 #  真模型材质（第③批-2）
@@ -135,9 +121,8 @@ static func model_atlas() -> Texture2D:
 			return _model_atlas
 	return null
 
-## 势力染色材质（按颜色缓存）。map_size / fog_enabled / night_glow 都**显式赋初值**：
-## Godot 的坑是「没赋过的 uniform，get_shader_parameter() 返回 null，shader 里静默用默认值」
-## —— visual_check 就是踩了这个坑才加的。asset_check 会逐条断言这里赋过值。
+## 势力染色材质（按颜色缓存）。map_size / fog_enabled / night_glow / gradient_map
+## 都**显式赋初值**（理由见文件头）。asset_check 会逐条断言这里赋过值。
 static func model_material(cfg: MapConfig, tint: Color) -> ShaderMaterial:
 	var key := tint.to_html(false)
 	if _model_mats.has(key):
@@ -145,11 +130,14 @@ static func model_material(cfg: MapConfig, tint: Color) -> ShaderMaterial:
 	var m := ShaderMaterial.new()
 	m.shader = load("res://shaders/settlement_model.gdshader")
 	m.set_shader_parameter("albedo_tex", model_atlas())
+	m.set_shader_parameter("gradient_map", ToonStyle.gradient_map())
 	m.set_shader_parameter("tint", tint)
 	m.set_shader_parameter("tint_strength", MODEL_TINT_STRENGTH)
+	m.set_shader_parameter("posterize", MODEL_POSTERIZE)
 	m.set_shader_parameter("night_glow", 0.0)
 	m.set_shader_parameter("map_size", cfg.map_size)
 	m.set_shader_parameter("fog_enabled", 0.0)
+	ToonStyle.attach_outline(m, ToonStyle.OUTLINE_W_SETTLEMENT)
 	_model_mats[key] = m
 	return m
 
@@ -162,78 +150,3 @@ static func model_materials() -> Array:
 static func clear_model_materials() -> void:
 	_model_mats.clear()
 	_model_atlas = null
-
-# =========================================================
-#  无缝细节贴图（灰度细节 + 法线）
-# =========================================================
-
-## 灰度细节图：贴图里存的是**原始高度 0~1**，[DETAIL_LO, DETAIL_HI] 的映射在 shader 里做。
-## 为什么不直接把 [0.60, 1.40] 烘进 8 位贴图：8 位无符号通道存不下 1.0 以上的值，
-## `lerpf(0.60, 1.40, h)` 一旦超过 1.0 就被钳成 1.0 —— 提亮那一半全丢，均值从 1.0 掉到 0.958，
-## 整张地图被悄悄压暗一档（这是 tools/visual_check.gd 的值域断言抓出来的真事故）。
-static func seamless_detail_texture() -> ImageTexture:
-	if _tex_cache.has("detail"):
-		return _tex_cache["detail"]
-	var h := _seamless_height(DETAIL_TEX_SIZE, DETAIL_SEED, DETAIL_FREQ)
-	var img := Image.create(DETAIL_TEX_SIZE, DETAIL_TEX_SIZE, true, Image.FORMAT_RGB8)
-	for y in DETAIL_TEX_SIZE:
-		for x in DETAIL_TEX_SIZE:
-			var g := h[y * DETAIL_TEX_SIZE + x]
-			img.set_pixel(x, y, Color(g, g, g))
-	# 必须生成 mipmap：这份贴图在世界里 1.4 m 一份，拉到几百米外就是一片摩纹，
-	# 没有 mipmap 只能靠 shader 里的 lod_fade 一刀切掉（中距离仍然会闪）
-	img.generate_mipmaps()
-	var tex := ImageTexture.create_from_image(img)
-	_tex_cache["detail"] = tex
-	return tex
-
-## 由无缝高度场中心差分生成法线贴图（切线空间，+Z 朝外）
-static func seamless_normal_texture() -> ImageTexture:
-	if _tex_cache.has("normal"):
-		return _tex_cache["normal"]
-	var size := DETAIL_TEX_SIZE
-	var h := _seamless_height(size, NORMAL_SEED, NORMAL_FREQ)
-	var img := Image.create(size, size, true, Image.FORMAT_RGB8)
-	for y in size:
-		var yp := (y + 1) % size
-		var ym := (y + size - 1) % size
-		for x in size:
-			var xp := (x + 1) % size
-			var xm := (x + size - 1) % size
-			var nrm := Vector3(
-				(h[y * size + xm] - h[y * size + xp]) * NORMAL_STRENGTH,
-				(h[ym * size + x] - h[yp * size + x]) * NORMAL_STRENGTH,
-				1.0).normalized()
-			img.set_pixel(x, y, Color(nrm.x * 0.5 + 0.5, nrm.y * 0.5 + 0.5, nrm.z * 0.5 + 0.5))
-	img.generate_mipmaps()
-	var tex := ImageTexture.create_from_image(img)
-	_tex_cache["normal"] = tex
-	return tex
-
-## 在 3D 环面上采样噪声，得到 u/v 两个方向都无缝的二维高度场。
-##
-## 为什么不直接用 FastNoiseLite 的 2D 噪声：它铺开会看到网格状接缝，而接缝本身
-## 又是一圈规则线条 —— 等于把刚消掉的「方块感」换个形式加回来。把采样点映射到
-## 环面（两个方向都首尾相接）就天然无缝了。
-static func _seamless_height(size: int, noise_seed: int, freq: float) -> PackedFloat32Array:
-	var fn := FastNoiseLite.new()
-	fn.seed = noise_seed
-	fn.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	fn.frequency = freq
-	fn.fractal_octaves = 4
-	fn.fractal_lacunarity = 2.1
-
-	var out := PackedFloat32Array()
-	out.resize(size * size)
-	var big_r := float(size) / TAU
-	var small_r := big_r * 0.62
-	for y in size:
-		var v := TAU * float(y) / float(size)
-		var cv := cos(v)
-		var sv := sin(v)
-		for x in size:
-			var u := TAU * float(x) / float(size)
-			var rr := big_r + small_r * cv
-			var nz := fn.get_noise_3d(rr * cos(u), rr * sin(u), small_r * sv)
-			out[y * size + x] = 0.5 + 0.5 * nz
-	return out

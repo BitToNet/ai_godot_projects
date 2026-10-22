@@ -63,7 +63,7 @@
 
 | 项 | 实测值 | 口径 / 备注 |
 |---|---|---|
-| 一键门禁 | **`exit 0`，33 项全 PASS，95.8 s** | 第 7 步按**出货默认**尺寸跑（第七轮 ① 起与门禁同图 1024 m）；① 加 `fog_check` 0.5 s、② 加 `map_design_check` 6.7 s、③ 加 `party_model_check` 0.5 s（另因部队换成蒙皮模型，建世界那几步变重） |
+| 一键门禁 | **`exit 0`，33 项全 PASS，73.7 s** | 第 7 步按**出货默认**尺寸跑（第七轮 ① 起与门禁同图 1024 m）；① 加 `fog_check` 0.5 s、② 加 `map_design_check` 6.7 s、③ 加 `party_model_check` 0.5 s（另因部队换成蒙皮模型，建世界那几步变重）；**⑮ NPR 之后 `visual_check` 断言 60 → 63 项**（PSSM / 阴影距离 / 正午压角 / 地形不投影 / 地形无描边），总步数与耗时不变 |
 | 生成物指纹 | `3d2a1dd217ec1e49112ccc5a32fb29aa2c42b065a288dc5949c1404736d07ba5` | 与 `tools/gen_fingerprint.json` **存档一致**；且跨进程双跑一致 —— 只比"A=B"是**假**安全网。② 地形重设计后**有意重录**（见 §16.11） |
 | 门禁口径的生成内容 | 定居点 **18** / 桥梁 **5** / 植被实例 **11007** | `map_seed = 20250929`；**出货默认世界现在就是这个世界**（② 重设计后河网改线 ⇒ 桥 7 → 5） |
 | **出货口径（默认 1024 m）** | 定居点 **18** / 桥梁 **5** / 植被实例 **11007** / 部队 **14** | 与门禁口径**同一个世界** ⇒ §D.3 发现 A 的缺口就此关闭 |
@@ -72,7 +72,7 @@
 | 帧时间（4096 m，同探针仅记录） | idle **1.321 / 2.533 / 5.622 ms**（修前 **213.040 / 1106.172**） | 修后仍有 11 帧 >100 ms（march，max 1480 ms）：单次满额 A* 的地板，见 §16.10 遗留 |
 | 地图设计度量（② 新增） | 平均坡度 **3.9°** / ≥40° 悬崖 **0.0%** / 海岸等周商 **0.582** / 岩石线覆盖陆地 **12.0%** / 雪线 **4.0%** / 河流入海 **2/2** / 植被 **10 497 个每平方公里** | `tools/map_design_check.gd`（22 项断言，进门禁第 7c3 步）；阈值动机与 before→after 见 §16.11 |
 | 部队数 | 默认 **14**；1024 / 2048 / 4096 → **14 / 37 / 100** | 由 `cfg.party_count()` 按尺寸幂律推导（指数 1.42）；② 未动它（加密度是独立一批，见 §16.11 遗留） |
-| 代码规模 | **117 个 `.gd` / 26420 行** + **6 个 shader / 587 行** | `scripts/` 86 / 17258 + `tools/` 31 / 9162（③ 新增 `PartyModels.gd` 92 行、`party_model_check.gd` 244 行）；**按逐文件行数求和**（`(Get-Content).Count`）—— 旧值用 `Measure-Object -Line` 口径，二者对同一文件能差 6%（见 §D.4 #7 / #10） |
+| 代码规模 | **118 个 `.gd` / 27844 行** + **7 个 shader / 665 行** | `scripts/` 87 / 18167 + `tools/` 31 / 9677（③ 新增 `PartyModels.gd` 92 行、`party_model_check.gd` 244 行；**⑮ 新增 `ToonStyle.gd` + `shaders/toon_outline.gdshader`**）；**按逐文件行数求和**（`(Get-Content).Count`）—— 旧值用 `Measure-Object -Line` 口径，二者对同一文件能差 6%（见 §D.4 #7 / #10） |
 | 最大脚本 | `HeightmapGenerator.gd` **762** / `BattleScene.gd` 693 / `SettlementBuilder.gd` 629 / `Main.gd` 527 / `scale_probe.gd` 523 | ② 给高度场加"山脉带 / 海湾 / 平滑 / 分位阈值"后它成了第一名 —— 这个文件该拆了（见 §16.11 遗留） |
 | `project.godot` | 227 行，`[input]` **31 个动作** | 已不再"键位全硬编码"（旧文档写 28 / 29，见 §D.4） |
 | i18n 棘轮 | `scripts/ui` 硬编码中文 **0** 条；`scripts/core` 等仍有 **631** 条 | 见 `tools/i18n_baseline.json`；第 4 节另钉「每个 `.ps1` 必须带 BOM」 |
@@ -81,6 +81,7 @@
 | 音效调音台 | `tools/sfx_studio`（浏览器）+ `user://sfx_profile.json`；第 9f 步 **85 条断言** | 关闭 = `Sfx._peek()` 真丢弃（连计数都不加）；`WARBAND_SFX_PROFILE=0` 关闭整层 |
 | 4096 m 生成耗时 | 管线内 **24.3 s** / 墙钟 **30.7 s**（出货 1024 m 为 **3.9 s**） | 旧文档记的"83 秒"已过期（§D.4） |
 | 版本 / 仓库 | `0.6.0`；`main` 与上游同步 | — |
+| **美术风格（⑮ NPR 微缩手办）** | 三阶阶梯光（`MeshToonMaterial` 等价）+ 反向外壳描边 + 高饱和平色 + 硬阴影（PSSM 4 级 / PCF5）+ 正交等距 | 数值单一来源 = `scripts/world/ToonStyle.gd`；`visual_check` 63 项断言钉住接线；地形**不投影**（自阴影会出梯田麻点）；详见 `docs/ART_STYLE.md` |
 
 **计数口径（踩过，别重复）**：统计行数用 `[System.IO.File]::ReadAllLines($p).Count` 或 `(Get-Content $f).Count`，
 **不要用 `Measure-Object -Line`** —— 它把空行算 0 行，会少算约 6–10%。

@@ -1,15 +1,18 @@
 // =============================================================================
-//  定居点建筑 Shader
-//  顶点色约定（MeshBuilder 写入）：
+//  settlement.gdshader —— NPR 定居点建筑（程序化几何）
+//  顶点色约定（MeshKit 写入，未改动）：
 //    rgb   = 固有色
 //    a = 0.0  普通建材
 //    a = 1.0  窗户（夜间自发光，暖色）
 //    a = 0.5  旗帜（顶点风动）
-//  材质统一为一个，因此每座定居点只有 1 个 draw call。
+//
+//  NPR 改造：3 阶阶梯光 + 建筑固有色直接当反照率（不做 PBR 那套高光）。
+//  描边由 MaterialFactory 挂 next_pass（所有建筑共用一个描边材质，宽度 0.16 m）。
 // =============================================================================
 shader_type spatial;
-render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+render_mode cull_back, diffuse_lambert, specular_schlick_ggx;
 
+uniform sampler2D gradient_map : filter_nearest, repeat_disable;
 uniform float night_glow = 0.0;   // 由 DayNightCycle 写入：夜晚为 1
 uniform float flag_wind = 1.0;
 uniform sampler2D fog_map : filter_linear, repeat_disable;
@@ -39,9 +42,15 @@ void fragment() {
 	float fog_v = texture(fog_map, fuv).r;
 	base *= mix(1.0, 1.0 - fog_darkness * (1.0 - fog_v), fog_enabled);
 	ALBEDO = base;
-	ROUGHNESS = mix(0.90, 0.65, glow);
-	SPECULAR = 0.12;
+	ROUGHNESS = 1.0;
+	SPECULAR = 0.0;
 	METALLIC = 0.0;
-	// 夜间窗户发光（暖色），并在强光周围叠加一点自发光溢色
-	EMISSION = COLOR.rgb * glow * night_glow * 3.2;
+	// 夜间窗户发光（暖色）：NPR 里这是唯一的"自发光"，用来点出"有人住"
+	EMISSION = COLOR.rgb * glow * night_glow * 2.4;
+}
+
+void light() {
+	float lit = clamp(dot(normalize(NORMAL), normalize(LIGHT)), 0.0, 1.0);
+	float band = texture(gradient_map, vec2(lit, 0.5)).r;
+	DIFFUSE_LIGHT += band * ATTENUATION * LIGHT_COLOR;
 }

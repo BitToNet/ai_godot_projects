@@ -27,8 +27,13 @@ func setup(p_cfg: MapConfig, p_data: MapData) -> void:
 	ocean = MeshInstance3D.new()
 	ocean.name = "Ocean"
 	ocean.mesh = pm
-	ocean.material_override = _make_mat(cfg.sea_level, 1.0, 0.42, 0.85, 0.90, 0.40, 3.4,
-		Color(0.30, 0.58, 0.60), Color(0.015, 0.075, 0.170))
+	# 第十五轮（NPR）：**外海不刷浪花**（foam_strength = 0）。
+	# 这张地图的海岸是一整片"潟湖"—— 海底在 0~0.2 m 之间铺出去上百米，任何基于
+	# 水深的浪花判据都会把这整片浅滩算成水线，实测要么整片全白、要么满海白斑。
+	# 干净的做法是让外海只保留"浅滩透出沙底"的薄荷色；浪花留给有真实坡度的
+	# 河流与湖泊（它们仍然带白边）。
+	ocean.material_override = _make_mat(cfg.sea_level, 1.0, 0.42, 0.0, 0.90, 0.52, 3.4,
+		ToonStyle.C_WATER_SHALLOW, ToonStyle.C_WATER_DEEP)
 	ocean.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(ocean)
 
@@ -44,7 +49,7 @@ func setup(p_cfg: MapConfig, p_data: MapData) -> void:
 		mi.mesh = lm
 		mi.position = Vector3(l.center.x, l.water_level, l.center.y)
 		mi.material_override = _make_mat(l.water_level, 0.35, 0.16, 0.9, 0.80, 0.34, 1.6,
-			Color(0.30, 0.56, 0.58), Color(0.03, 0.13, 0.22))
+			ToonStyle.C_WATER_SHALLOW, ToonStyle.C_WATER_DEEP)
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(mi)
 
@@ -83,7 +88,7 @@ func setup(p_cfg: MapConfig, p_data: MapData) -> void:
 			avg_dir += d3
 		avg_dir = avg_dir.normalized() if avg_dir.length() > 0.01 else Vector2(0, 1)
 		var m := _make_mat(cfg.sea_level, 0.25, 0.10, 0.55, 0.72, 0.26, 0.55,
-			Color(0.33, 0.55, 0.56), Color(0.06, 0.18, 0.25))
+			ToonStyle.C_WATER_SHALLOW, ToonStyle.C_WATER_DEEP)
 		m.set_shader_parameter("flow_dir", avg_dir)
 		m.set_shader_parameter("wave_speed", 2.6)
 		mi2.material_override = m
@@ -94,6 +99,7 @@ func _make_mat(level: float, wscale: float, wheight: float, foam: float, alpha: 
 		foam_far: float, shallow_col: Color, deep_col: Color) -> ShaderMaterial:
 	var m := ShaderMaterial.new()
 	m.shader = load("res://shaders/water.gdshader")
+	m.set_shader_parameter("gradient_map", ToonStyle.gradient_map())
 	m.set_shader_parameter("height_map", data.height_texture)
 	m.set_shader_parameter("map_size", cfg.map_size)
 	m.set_shader_parameter("water_level", level)
@@ -106,8 +112,8 @@ func _make_mat(level: float, wscale: float, wheight: float, foam: float, alpha: 
 	m.set_shader_parameter("foam_near", foam_far * 0.06)
 	m.set_shader_parameter("shallow_color", shallow_col)
 	m.set_shader_parameter("deep_color", deep_col)
-	m.set_shader_parameter("sky_tint", Color(0.58, 0.74, 0.95))
-	m.set_shader_parameter("foam_color", Color(0.94, 0.97, 0.99))
+	m.set_shader_parameter("sky_tint", ToonStyle.C_WATER_SKY)
+	m.set_shader_parameter("foam_color", ToonStyle.C_WATER_FOAM)
 	mats.append(m)
 	return m
 

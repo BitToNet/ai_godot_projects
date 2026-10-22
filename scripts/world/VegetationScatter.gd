@@ -260,7 +260,11 @@ func _emit_chunks(kind: String, mesh: Mesh, list: Array, mat: ShaderMaterial, ra
 		mmi.name = "%s_%d" % [kind, key]
 		mmi.multimesh = mm
 		mmi.material_override = mat
-		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# 第十五轮（NPR）：**投影打开**。旧版为了阴影 pass 的开销把植被整体关掉投影，
+		# 结果微缩沙盒里"树没有影子"，地面只剩一片纯绿 —— 而树影恰恰是这套画风
+		# 里最重要的地表纹理（不靠贴图，靠影子）。visibility_range 仍会把远处区块
+		# 连阴影一起剔掉，所以开销是按可见块走的，不是按 11007 个实例。
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mmi.visibility_range_end = range_end
 		mmi.visibility_range_end_margin = 40.0
 		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
